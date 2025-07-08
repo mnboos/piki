@@ -1,80 +1,77 @@
-#!/usr/bin/env python3
+import cv2
+import ncnn
+from ncnn.model_zoo import get_model
+import os
+import time  # Import the time module
 
-# Source: https://github.com/apivovarov/ssd-tflite
+# --- Create a placeholder for cat.jpg if it doesn't exist ---
+if not os.path.exists("cat.jpg"):
+    print("Creating a placeholder 'cat.jpg'. Please replace with your own image.")
+    import numpy as np
+    dummy_cat_image = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(dummy_cat_image, "Placeholder for cat.jpg", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.imwrite("cat.jpg", dummy_cat_image)
 
-from ai_edge_litert.interpreter import Interpreter
-import time
-import numpy as np
-from PIL import Image
-from coco import image_classes
+# --- COCO Class Names ---
+COCO_CLASSES = [
+    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+    'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+    'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+    'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+    'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+    'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+    'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+    'hair drier', 'toothbrush'
+]
 
-ms = lambda: int(round(time.time() * 1000))
+# --- Main Script ---
+try:
+    # 1. Load the NCNN model (NanoDet)
+    print("Loading model...")
+    net = get_model(
+        "nanodet",
+        target_size=320,
+        prob_threshold=0.4,
+        nms_threshold=0.5,
+        num_threads=4,
+        use_gpu=False,
+    )
+    print("Model loaded.")
 
-model_path = "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
+    # 2. Load the image
+    image_path = "cat.jpg"
+    image = cv2.imread(image_path)
+    
+    if image is None:
+        raise FileNotFoundError(f"Could not read the image file: {image_path}. Please ensure it exists and is a valid image.")
 
-is_quant = "quant" in model_path.lower()
-
-def get_mobilenet_input(f, out_size=(300, 300), is_quant=True):
-    img = Image.open(f)
-    original_size = img.size # Get original image size (width, height)
-    resized_img = img.resize(out_size)
-    img_arr = np.array(resized_img)
-    if not(is_quant):
-        img_arr = img_arr.astype(np.float32) / 128 - 1
-    return np.array([img_arr]), original_size
-
-
-def print_coco_label(cl_id, t):
-    print("class: {}, label: {}, time: {:,} ms".format(cl_id, image_classes[cl_id], t))
-
-
-def print_output(inp_files, res, original_img_size):
-    boxes, classes, scores, num_det = res
-    img_width, img_height = original_img_size
-
-    for i, fname in enumerate(inp_files):
-      n_obj = int(num_det[i])
-
-      print("{} - found objects:".format(fname))
-      for j in range(n_obj):
-        cl_id = int(classes[i][j]) + 1
-        label = image_classes[cl_id]
-        score = scores[i][j]
-        if score < 0.5:
-            continue
-        box = boxes[i][j]
-        ymin, xmin, ymax, xmax = box
-
-        # Calculate absolute coordinates
-        abs_xmin = int(xmin * img_width)
-        abs_ymin = int(ymin * img_height)
-        abs_xmax = int(xmax * img_width)
-        abs_ymax = int(ymax * img_height)
-
-        print("  ", cl_id, label, score, [abs_xmin, abs_ymin, abs_xmax, abs_ymax])
+    # 3. Perform object detection and measure inference time
+    print("\nStarting inference...")
+    start_time = time.perf_counter()
+    
+    objects = net(image) # This is the line we are timing
+    
+    end_time = time.perf_counter()
+    inference_time_ms = (end_time - start_time) * 1000
+    print(f"Inference complete in {inference_time_ms:.2f} ms.")
 
 
-ip = Interpreter(model_path=model_path)
-ip.allocate_tensors()
-inp_id = ip.get_input_details()[0]["index"]
-out_det = ip.get_output_details()
-out_id0 = out_det[0]["index"]
-out_id1 = out_det[1]["index"]
-out_id2 = out_det[2]["index"]
-out_id3 = out_det[3]["index"]
+    # 4. Print the detection results as text
+    if objects:
+        print("\n--- Object Detection Results ---")
+        for i, obj in enumerate(objects):
+            class_name = COCO_CLASSES[obj.label] if obj.label < len(COCO_CLASSES) else f"Unknown_ID_{obj.label}"
+            bbox = obj.rect
 
-#image_f = 'dog.jpg'
-image_f = 'cat.jpg'
+            print(f"Object {i+1}:")
+            print(f"  - Label: {class_name}")
+            print(f"  - Confidence: {obj.prob:.2%}")
+            print(f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})")
+        print("------------------------------")
+    else:
+        print("\nNo objects detected in the image.")
 
-img, original_dims = get_mobilenet_input(image_f, is_quant=is_quant)
-for i in range(1,100):
-  t0 = ms()
-  ip.set_tensor(inp_id, img)
-  ip.invoke()
-  tt = ms() - t0
-  print("Time:", tt, "ms")
-  boxes = ip.get_tensor(out_id0)
-  classes = ip.get_tensor(out_id1)
-  scores = ip.get_tensor(out_id2)
-  num_det = ip.get_tensor(out_id3)
-  print_output([image_f], [boxes, classes, scores, num_det], original_dims)
+except Exception as e:
+    print(f"\nAn error occurred: {e}")
+    print("Please ensure you have run 'pip install ncnn-python opencv-python numpy'")
