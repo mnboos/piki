@@ -2,7 +2,7 @@
 
 # Source: https://github.com/apivovarov/ssd-tflite
 
-import tflite_runtime.interpreter as tflite
+from ai_edge_litert.interpreter import Interpreter
 import time
 import numpy as np
 from PIL import Image
@@ -42,7 +42,7 @@ def print_output(inp_files, res):
         print("  ", cl_id, label, score, box)
 
 
-ip = tflite.Interpreter(model_path=model_path)
+ip = Interpreter(model_path=model_path)
 ip.allocate_tensors()
 inp_id = ip.get_input_details()[0]["index"]
 out_det = ip.get_output_details()
