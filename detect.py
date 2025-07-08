@@ -31,8 +31,8 @@ try:
     print("Loading model...")
     net = get_model(
         "nanodet",
-        target_size=320,
-        prob_threshold=0.4,
+        target_size=240,
+        prob_threshold=0.5,
         nms_threshold=0.5,
         num_threads=4,
         use_gpu=False,
