@@ -9,7 +9,11 @@ uv venv --system-site-packages
 uv install picamera2
 ```
 
-Then modify `/boot/firmware/config.txt` according to: 
+Then [modify `/boot/firmware/config.txt`](https://www.waveshare.com/wiki/RPi_Camera_(H)): 
+```
+camera_auto_detect=0
+dtoverlay=ov5647
+```
 
 Then
 
