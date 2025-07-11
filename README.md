@@ -8,3 +8,10 @@ apt install -y build-essential libcap-dev rpicam-apps-lite
 uv venv --system-site-packages
 uv install picamera2
 ```
+
+Then modify `/boot/firmware/config.txt` according to: 
+
+Then
+
+> Run dietpi-config, go into Display Options and activate RPi Camera and then reboot the device and try again.
+Source: https://dietpi.com/forum/t/want-to-connect-camera-module-3-to-raspberry-pi-3/19973
