@@ -2,6 +2,8 @@
 
 See: [rpicam-apps(-lite)](https://www.raspberrypi.com/documentation/computers/camera_software.html#install-libcamera-and-rpicam-apps)
 
+**Note:** Make sure to use the system python3 and not a python managed by uv, as there will be problems by uv-managed-python not detecting libcamera.
+
 ```bash
 apt update -y
 apt install -y python3-picamera2 --no-install-recommends
