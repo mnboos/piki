@@ -8,7 +8,8 @@ apt install -y \
   libcap-dev \
   rpicam-apps-lite \
   libcamera-dev \
-  cmake
+  cmake \
+  python3-libcamera
 
 uv venv --system-site-packages
 uv install picamera2
