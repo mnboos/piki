@@ -19,3 +19,14 @@ Then
 
 > Run dietpi-config, go into Display Options and activate RPi Camera and then reboot the device and try again.
 Source: https://dietpi.com/forum/t/want-to-connect-camera-module-3-to-raspberry-pi-3/19973
+
+
+## RTSP Streaming
+
+**Start stream**
+```bash
+libcamera-vid -t 0 --inline --listen -o tcp://0.0.0.0:8888
+```
+
+**View stream**
+Using VLC or simmilar open `tcp/h264://<ip>:8888` 
