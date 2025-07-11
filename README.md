@@ -15,7 +15,7 @@ apt install -y \
   python3-libcamera
 
 uv venv --system-site-packages
-#uv install picamera2
+uv add picamera2
 ```
 
 Then [modify `/boot/firmware/config.txt`](https://www.waveshare.com/wiki/RPi_Camera_(H)): 
