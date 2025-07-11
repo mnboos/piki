@@ -3,6 +3,9 @@
 See: [rpicam-apps(-lite)](https://www.raspberrypi.com/documentation/computers/camera_software.html#install-libcamera-and-rpicam-apps)
 
 ```bash
+apt update -y
+apt install -y python3-picamera2 --no-install-recommends
+
 apt install -y \
   build-essential \
   libcap-dev \
@@ -12,7 +15,7 @@ apt install -y \
   python3-libcamera
 
 uv venv --system-site-packages
-uv install picamera2
+#uv install picamera2
 ```
 
 Then [modify `/boot/firmware/config.txt`](https://www.waveshare.com/wiki/RPi_Camera_(H)): 
