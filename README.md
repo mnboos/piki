@@ -41,3 +41,15 @@ libcamera-vid -t 0 --inline --listen -o tcp://0.0.0.0:8888
 
 **View stream**
 Using VLC or simmilar open `tcp/h264://<ip>:8888` 
+
+## Streaming with `ffmpeg`
+
+**Stream**
+```bash
+rpicam-vid --nopreview -t 0 --codec yuv420 --width 640 --height 480 --framerate 30 -o - | ffmpeg -f rawvideo -pix_fmt yuv420p -s 640x480 -r 30 -i - -c:v h264_v4l2m2m -b:v 90k -f mpegts -fflags nobuffer -analyzeduration 0 -probesize 32 udp://192.168.1.146:8888
+```
+
+**Play**
+```bash
+ffplay udp://192.168.1.147:8888 -fflags nobuffer -flags low_delay -framedrop
+```
