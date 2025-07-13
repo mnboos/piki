@@ -36,7 +36,7 @@ Source: https://dietpi.com/forum/t/want-to-connect-camera-module-3-to-raspberry-
 
 **Start stream**
 ```bash
-libcamera-vid -t 0 --inline --listen -o tcp://0.0.0.0:8888
+libcamera-vid --awbgain 1,1 -t 0 --inline --listen -o tcp://0.0.0.0:8888
 ```
 
 **View stream**
@@ -46,7 +46,7 @@ Using VLC or simmilar open `tcp/h264://<ip>:8888`
 
 **Stream**
 ```bash
-rpicam-vid --nopreview -t 0 --codec yuv420 --width 640 --height 480 --framerate 30 -o - | ffmpeg -f rawvideo -pix_fmt yuv420p -s 640x480 -r 30 -i - -c:v h264_v4l2m2m -b:v 90k -f mpegts -fflags nobuffer -analyzeduration 0 -probesize 32 udp://192.168.1.146:8888
+rpicam-vid --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 768 --framerate 30 -o - | ffmpeg -f rawvideo -pix_fmt yuv420p -s 1024x768 -r 30 -i - -c:v h264_v4l2m2m -b:v 2000k -f mpegts -fflags nobuffer udp://192.168.1.146:8888
 ```
 
 **Play**
