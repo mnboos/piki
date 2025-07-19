@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pi Servo Control & Camera</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; flex-direction: column; }
+        .container { display: flex; gap: 20px; align-items: flex-start; }
+        .controls { border: 1px solid #ccc; padding: 20px; }
+        img { border: 1px solid #ccc; max-width: 640px; }
+    </style>
+</head>
+<body>
+    <h1>Pi Servo & Camera Interface</h1>
+    <div class="container">
+        <div>
+            <h2>Camera Feed</h2>
+            <img src="{{ url_for('video_feed') }}" width="640" height="480">
+        </div>
+        <div class="controls">
+            <h2>Servo Control</h2>
+            <form action="/move_servo" method="post">
+                <label for="slider">Position:</label><br>
+                <input type="range" id="slider" name="slider" min="-100" max="100" value="0" style="width: 200px;"><br><br>
+                <input type="submit" value="Set Position">
+            </form>
+            <hr>
+            <h3>Quick Actions:</h3>
+            <form action="/move_servo" method="post">
+                <button type="submit" name="slider" value="-100">Min</button>
+                <button type="submit" name="slider" value="0">Mid</button>
+                <button type="submit" name="slider" value="100">Max</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
