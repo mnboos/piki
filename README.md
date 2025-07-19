@@ -1,3 +1,39 @@
+## Servo setup
+
+1. Install the dependencies
+```bash
+apt install pigpio python3-pigpio
+
+uv add gpiozero pigpio
+```
+
+2. Start the gpio daemon
+```bash
+gpiod
+```
+
+3. Run the following python script
+
+```python
+from gpiozero.pins.pigpio import PiGPIOFactory
+from gpiozero import Device, AngularServo
+from time import sleep
+
+Device.pin_factory = PiGPIOFactory()
+
+servo = AngularServo(12, min_angle=-170, max_angle=170)
+
+while True:
+    servo.min()
+    sleep(1)
+    servo.mid()
+    sleep(1)
+    servo.max()
+    sleep(1)
+
+```
+
+
 ## Install `Picamera2`
 
 See: [rpicam-apps(-lite)](https://www.raspberrypi.com/documentation/computers/camera_software.html#install-libcamera-and-rpicam-apps)
