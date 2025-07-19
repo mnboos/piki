@@ -46,10 +46,10 @@ Using VLC or simmilar open `tcp/h264://<ip>:8888`
 
 **Stream**
 ```bash
-rpicam-vid --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 768 --framerate 30 -o - | ffmpeg -f rawvideo -pix_fmt yuv420p -s 1024x768 -r 30 -i - -c:v h264_v4l2m2m -b:v 2000k -f mpegts -fflags nobuffer udp://192.168.1.146:8888
+picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 768 --framerate 30 -o - | ffmpeg -f rawvideo -pix_fmt yuv420p -s 1024x768 -r 30 -i - -c:v h264_v4l2m2m -b:v 2000k -f mpegts -fflags flush_packets -preset ultrafast -tune zerolatency udp://192.168.1.148:8888
 ```
 
 **Play**
 ```bash
-ffplay udp://192.168.1.147:8888 -fflags nobuffer -flags low_delay -framedrop
+ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
