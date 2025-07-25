@@ -1,0 +1,92 @@
+<!-- stream/templates/stream/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pi Servo Control & Camera</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; flex-direction: column; }
+        .container { display: flex; gap: 20px; align-items: flex-start; }
+        .controls { border: 1px solid #ccc; padding: 20px; }
+        img { border: 1px solid #ccc; max-width: 640px; }
+    </style>
+</head>
+<body>
+    <h1>Pi Servo & Camera Interface</h1>
+    <div class="container">
+        <div>
+            <h2>Camera Feed</h2>
+            <!-- Changed url_for('video_feed') to Django's url tag -->
+            <img id="camera-feed" src="{% url 'video_feed' %}" width="640" height="480">
+            <canvas id="snapshot-canvas" width="640" height="480" style="display: none;"></canvas>
+        </div>
+        <div class="controls">
+            <h2>Servo Control</h2>
+            <!-- Changed action to use Django's url tag and added csrf_token -->
+            <form action="{% url 'move_servo' %}" method="post">
+                {% csrf_token %}
+                <label for="slider">Position:</label><br>
+                <input type="range" id="slider" name="slider" min="-100" max="100" value="0" style="width: 200px;"><br><br>
+                <input type="submit" value="Set Position">
+            </form>
+            <hr>
+            <h3>Quick Actions</h3>
+            <!-- Changed action to use Django's url tag and added csrf_token -->
+            <form action="{% url 'move_servo' %}" method="post">
+                {% csrf_token %}
+                <button type="submit" name="slider" value="-100">Min</button>
+                <button type="submit" name="slider" value="0">Mid</button>
+                <button type="submit" name="slider" value="100">Max</button>
+            </form>
+                        <hr>
+            <h3>Strema</h3>
+            <!-- This is now a regular button, not a link -->
+            <button id="download-button" class="action-button">Capture</button>
+        </div>
+    </div>
+</body>
+<footer>
+        <script>
+        // Wait for the document to be fully loaded
+        document.addEventListener('DOMContentLoaded', (event) => {
+
+            // Get references to the HTML elements
+            const cameraFeed = document.getElementById('camera-feed');
+            const downloadButton = document.getElementById('download-button');
+            const canvas = document.getElementById('snapshot-canvas');
+            const context = canvas.getContext('2d');
+
+            // Add a click event listener to the download button
+            downloadButton.addEventListener('click', () => {
+                // 1. Draw the current image from the video feed onto the hidden canvas
+                // The cameraFeed element acts as a valid source for drawImage
+                context.drawImage(cameraFeed, 0, 0, canvas.width, canvas.height);
+
+                // 2. Convert the canvas content to a Blob (Binary Large Object)
+                // This is the modern and recommended way to handle binary data.
+                canvas.toBlob((blob) => {
+                    // 3. Create a temporary URL for the Blob
+                    const url = URL.createObjectURL(blob);
+
+                    // 4. Create a temporary anchor (link) element
+                    const tempLink = document.createElement('a');
+
+                    // 5. Set the link's href to our temporary Blob URL
+                    tempLink.href = url;
+
+                    // 6. Set the 'download' attribute to suggest a filename
+                    tempLink.setAttribute('download', 'capture.jpg');
+
+                    // 7. Programmatically click the link to trigger the download
+                    tempLink.click();
+
+                    // 8. Clean up by revoking the temporary URL
+                    URL.revokeObjectURL(url);
+
+                }, 'image/jpeg'); // Specify the format as JPEG
+            });
+        });
+    </script>
+</footer>
+</html>
