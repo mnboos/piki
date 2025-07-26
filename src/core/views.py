@@ -14,54 +14,71 @@ def index(request):
 
 
 def process_results():
-    # --- Result Harvesting Logic ---
-    # Check for completed tasks without blocking.
     done_futures = [f for f in stream.active_futures if f.done()]
+    results = []
     for future in done_futures:
         try:
-            # .result() will not block since we know the future is done.
-            worker_pid, timestamp, result = future.result()
-            print(f"Last result from worker {worker_pid} at {timestamp}: {result}")
-            # last_results[worker_pid] = result
+            # worker_pid, timestamp, result =
+            results.append(future.result())
+            # print(f"Last result from worker {worker_pid} at {timestamp}: {result}")
         except Exception as e:
             print(f"A worker process failed: {e}")
-        # Remove the completed future from the active list.
         stream.active_futures.remove(future)
+    return results
 
 
 def gen_frames():
     """Video streaming generator function."""
 
-    font_size = 36
+    font_size = 24
     font = ImageFont.load_default(size=font_size)
 
     img = Image.new("RGB", (640, 480), color="gray")
     draw = ImageDraw.Draw(img)
 
     while True:
-        process_results()
+        results = process_results()
 
         if stream.camera:
             with stream.output.condition:
                 stream.output.condition.wait()
-                frame = stream.output.frame
+                # frame = stream.output.frame
         else:
-            text = f"Hello world!\nTime: {now().strftime('%H:%M:%S')}"
+            text = f"Time: {now().strftime('%H:%M:%S')}"
 
             draw.rectangle((0, 0, 640, 480), fill="gray")
             draw.text((0, 0), text, font=font, fill="white")
-
-            # 5. Save the image to an in-memory buffer as a JPEG
 
             buffer = io.BytesIO()
 
             img.save(buffer, format="JPEG")
 
-            frame: bytes = buffer.getvalue()
-            stream.output.write(buffer.getvalue())
+            # frame: bytes = buffer.getvalue()
+            stream.output.write(buffer.getvalue()[:])
             time.sleep(1)  # Simulate 10 FPS```
 
-        yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
+        for r in results:
+            worker_pid, timestamp, inference_result = r
+            frame, detected_objects = inference_result
+            with Image.open(io.BytesIO(frame)) as img:
+                draw = ImageDraw.Draw(img)
+                for confidence, label, bbox in detected_objects:
+                    draw.text(
+                        (bbox.x, bbox.y),
+                        f"{label} ({confidence:.2%})",
+                        font=font,
+                        fill="white",
+                    )
+                else:
+                    draw.text((0, 50), "No objects detected", font=font, fill="white")
+
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG")
+
+                yield (
+                    b"--frame\nContent-Type: image/jpeg\n\n" + buffer.getvalue() + b"\n"
+                )
+        # yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
 
 
 def video_feed(request):
