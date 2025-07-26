@@ -6,4 +6,6 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("video_feed/", views.video_feed, name="video_feed"),
     path("move_servo/", views.move_servo, name="move_servo"),
+    # path("upload_video/", views.upload_video, name="upload_video"),
+    # path("use_camera/", views.use_camera, name="use_camera"),
 ]

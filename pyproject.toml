@@ -9,6 +9,7 @@ dependencies = [
     "flask==3.1.1",
     "gpiozero==2.0.1",
     "numpy==1.26.4",
+    "opencv-python>=4.11.0.86",
     "picamera2==0.3.30",
     "pigpio==1.78",
     "pillow==11.3.0",

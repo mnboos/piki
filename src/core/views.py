@@ -4,7 +4,7 @@ from django.http.response import StreamingHttpResponse
 from django.shortcuts import render
 from PIL import Image, ImageFont, ImageDraw
 import io
-from .utils import setup_cam
+from .utils import stream
 from django.utils.timezone import now
 
 
@@ -15,21 +15,22 @@ def index(request):
 
 def gen_frames():
     """Video streaming generator function."""
-    _, output = setup_cam()
 
     font_size = 36
     font = ImageFont.load_default(size=font_size)
 
+    img = Image.new("RGB", (640, 480), color="gray")
+    draw = ImageDraw.Draw(img)
+
     while True:
-        if output:
-            with output.condition:
-                output.condition.wait()
-                frame = output.frame
+        if stream.camera:
+            with stream.output.condition:
+                stream.output.condition.wait()
+                frame = stream.output.frame
         else:
             text = f"Hello world!\nTime: {now().strftime('%H:%M:%S')}"
 
-            img = Image.new("RGB", (640, 480), color="gray")
-            draw = ImageDraw.Draw(img)
+            draw.rectangle((0, 0, 640, 480), fill="gray")
             draw.text((0, 0), text, font=font, fill="white")
 
             # 5. Save the image to an in-memory buffer as a JPEG
@@ -39,7 +40,8 @@ def gen_frames():
             img.save(buffer, format="JPEG")
             frame: bytes = buffer.getvalue()
             time.sleep(1)  # Simulate 10 FPS```
-        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+
+        yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
 
 
 def video_feed(request):

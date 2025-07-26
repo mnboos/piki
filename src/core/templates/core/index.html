@@ -22,6 +22,29 @@
             <canvas id="snapshot-canvas" width="640" height="480" style="display: none;"></canvas>
         </div>
         <div class="controls">
+                        <!-- Add a status indicator -->
+            <div class="status">
+                <strong>Current Source:</strong><br> {{ current_source }}
+            </div>
+
+{#            <!-- New Upload Form -->#}
+{#            <h3>Upload Video File</h3>#}
+{#            <form action="{% url 'upload_video' %}" method="post" enctype="multipart/form-data">#}
+{#                {% csrf_token %}#}
+{#                <input type="file" name="video_file" accept="video/*" required>#}
+{#                <br><br>#}
+{#                <input type="submit" value="Upload and Play">#}
+{#            </form>#}
+{#            <hr>#}
+
+            <!-- Actions Section -->
+            <h3>Actions</h3>
+            <!-- Show switch to camera button only if playing a video -->
+{#            {% if is_video_source %}#}
+{#            <a href="{% url 'use_camera' %}" class="action-button" style="background-color: #007BFF;">Switch to Live Camera</a>#}
+{#            <br><br>#}
+{#            {% endif %}#}
+
             <h2>Servo Control</h2>
             <!-- Changed action to use Django's url tag and added csrf_token -->
             <form action="{% url 'move_servo' %}" method="post">
@@ -40,7 +63,7 @@
                 <button type="submit" name="slider" value="100">Max</button>
             </form>
                         <hr>
-            <h3>Strema</h3>
+            <h3>Stream</h3>
             <!-- This is now a regular button, not a link -->
             <button id="download-button" class="action-button">Capture</button>
         </div>
