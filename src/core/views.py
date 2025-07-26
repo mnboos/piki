@@ -69,7 +69,7 @@ def gen_frames():
                         font=font,
                         fill="white",
                     )
-                else:
+                if not detected_objects:
                     draw.text((0, 50), "No objects detected", font=font, fill="white")
 
                 buffer = io.BytesIO()
