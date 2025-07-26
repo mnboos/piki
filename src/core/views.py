@@ -13,6 +13,22 @@ def index(request):
     return render(request, "core/index.html")
 
 
+def process_results():
+    # --- Result Harvesting Logic ---
+    # Check for completed tasks without blocking.
+    done_futures = [f for f in stream.active_futures if f.done()]
+    for future in done_futures:
+        try:
+            # .result() will not block since we know the future is done.
+            worker_pid, timestamp, result = future.result()
+            print(f"Last result from worker {worker_pid} at {timestamp}: {result}")
+            # last_results[worker_pid] = result
+        except Exception as e:
+            print(f"A worker process failed: {e}")
+        # Remove the completed future from the active list.
+        stream.active_futures.remove(future)
+
+
 def gen_frames():
     """Video streaming generator function."""
 
@@ -23,6 +39,8 @@ def gen_frames():
     draw = ImageDraw.Draw(img)
 
     while True:
+        process_results()
+
         if stream.camera:
             with stream.output.condition:
                 stream.output.condition.wait()
@@ -38,7 +56,9 @@ def gen_frames():
             buffer = io.BytesIO()
 
             img.save(buffer, format="JPEG")
+
             frame: bytes = buffer.getvalue()
+            stream.output.write(buffer.getvalue())
             time.sleep(1)  # Simulate 10 FPS```
 
         yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
