@@ -46,6 +46,8 @@ class CoreConfig(AppConfig):
         def cleanup():
             print("[DJANGO SHUTDOWN] Stopping processes...")
             stream.executor.shutdown()
+            if stream.camera:
+                stream.camera.close()
             print("[DJANGO SHUTDOWN] Processes stopped.")
 
         #     if stream.stop_event:
