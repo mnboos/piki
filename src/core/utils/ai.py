@@ -7,7 +7,7 @@ import numpy as np
 print("Loading model...")
 net = get_model(
     "nanodet",
-    target_size=240,
+    target_size=320,
     prob_threshold=0.5,
     nms_threshold=0.5,
     num_threads=1,
