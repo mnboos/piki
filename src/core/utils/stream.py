@@ -5,7 +5,7 @@ import time
 import atexit
 from concurrent.futures import ProcessPoolExecutor
 
-NUM_AI_WORKERS: int = 3
+NUM_AI_WORKERS: int = 2
 
 executor = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 
