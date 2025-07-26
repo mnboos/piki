@@ -8,7 +8,7 @@ print("Loading model...")
 net = get_model(
     "nanodet",
     target_size=320,
-    prob_threshold=0.1,
+    prob_threshold=0.2,
     nms_threshold=0.5,
     num_threads=1,
     use_gpu=False,
