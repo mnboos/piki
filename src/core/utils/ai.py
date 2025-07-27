@@ -3,13 +3,16 @@ import cv2
 from ncnn.model_zoo import get_model
 import numpy as np
 import multiprocessing as mp
+from ctypes import c_float
+
+prob_threshold = mp.Value(c_float, 0.2)
 
 
 print("Loading model...")
 net = get_model(
     "nanodet",
     target_size=320,
-    prob_threshold=0.2,
+    prob_threshold=prob_threshold.value,
     nms_threshold=0.5,
     num_threads=1,
     use_gpu=False,

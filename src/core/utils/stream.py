@@ -1,4 +1,4 @@
-from multiprocessing import Condition
+from multiprocessing import Condition, Event
 import multiprocessing as mp
 import io
 import time
@@ -12,6 +12,7 @@ executor = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 
 # A list to keep track of tasks that have been submitted but are not yet complete.
 active_futures = []
+live_stream_enabled = Event()
 
 
 def run_object_detection(frame_data):
@@ -69,8 +70,8 @@ class StreamingOutput(io.BufferedIOBase):
             future = executor.submit(run_object_detection, frame_data=buf)
             active_futures.append(future)
 
-        # todo: run this only if no livestream is shown
-        process_results()
+        if not live_stream_enabled.is_set():
+            process_results()
 
 
 def __setup_cam():
@@ -86,14 +87,6 @@ def __setup_cam():
             main={"size": (640, 480)}, controls={"ColourGains": (1, 1)}
         )
         picam2.configure(camera_config)
-
-        # todo: because nobody runs "process_results", no job will ever be submitted to a worker again.
-
-        # picam2.start_encoder(JpegEncoder(num_threads=1), stream_output)
-
-        # picam2.start_recording(JpegEncoder(), FileOutput(stream_output))
-        # picam2.start_recording(JpegEncoder(), CircularOutput(stream_output))
-        # picam2.start(show_preview=)
 
         picam2.start_preview(Preview.NULL)
         picam2.start_recording(
