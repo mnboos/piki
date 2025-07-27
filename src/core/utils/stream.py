@@ -4,7 +4,7 @@ import io
 import time
 import atexit
 from concurrent.futures import ProcessPoolExecutor
-from .ai import detect_objects
+
 
 NUM_AI_WORKERS: int = 2
 
@@ -19,6 +19,9 @@ def run_object_detection(frame_data):
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
     """
+
+    from .ai import detect_objects
+
     # print(f"[{time.monotonic_ns()}] run ai on frame: {frame_data}")
 
     # print("Importing ai...")
@@ -34,6 +37,20 @@ def run_object_detection(frame_data):
     # result_text = f"Worker {worker_pid} at {time.strftime('%H:%M:%S')}"
     # print(f"[Worker-{worker_pid}]: result: ", result_text)
     return worker_pid, time.monotonic_ns(), result
+
+
+def process_results():
+    done_futures = [f for f in active_futures if f.done()]
+    results = []
+    for future in done_futures:
+        try:
+            # worker_pid, timestamp, result =
+            results.append(future.result())
+            # print(f"Last result from worker {worker_pid} at {timestamp}: {result}")
+        except Exception as e:
+            print(f"A worker process failed: {e}")
+        active_futures.remove(future)
+    return results
 
 
 # This class instance will hold the camera frames
@@ -52,12 +69,15 @@ class StreamingOutput(io.BufferedIOBase):
             future = executor.submit(run_object_detection, frame_data=buf)
             active_futures.append(future)
 
+        # todo: run this only if no livestream is shown
+        process_results()
+
 
 def __setup_cam():
     picam2 = None
     stream_output = StreamingOutput()
     try:
-        from picamera2 import Picamera2
+        from picamera2 import Picamera2, Preview
         from picamera2.encoders import JpegEncoder
         from picamera2.outputs import FileOutput, CircularOutput
 
@@ -67,8 +87,18 @@ def __setup_cam():
         )
         picam2.configure(camera_config)
 
+        # todo: because nobody runs "process_results", no job will ever be submitted to a worker again.
+
+        # picam2.start_encoder(JpegEncoder(num_threads=1), stream_output)
+
         # picam2.start_recording(JpegEncoder(), FileOutput(stream_output))
-        picam2.start_recording(JpegEncoder(), CircularOutput(stream_output))
+        # picam2.start_recording(JpegEncoder(), CircularOutput(stream_output))
+        # picam2.start(show_preview=)
+
+        picam2.start_preview(Preview.NULL)
+        picam2.start_recording(
+            JpegEncoder(num_threads=1), CircularOutput(stream_output)
+        )
 
         def cleanup():
             print("Stopping camera and cleaning up GPIO")

@@ -4,7 +4,7 @@ from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
 from PIL import Image, ImageFont, ImageDraw
 import io
-from .utils import stream, clamp
+from .utils import clamp
 from django.utils.timezone import now
 
 
@@ -13,22 +13,10 @@ def index(request):
     return render(request, "core/index.html", {"servo_range": list(range(-90, 90))})
 
 
-def process_results():
-    done_futures = [f for f in stream.active_futures if f.done()]
-    results = []
-    for future in done_futures:
-        try:
-            # worker_pid, timestamp, result =
-            results.append(future.result())
-            # print(f"Last result from worker {worker_pid} at {timestamp}: {result}")
-        except Exception as e:
-            print(f"A worker process failed: {e}")
-        stream.active_futures.remove(future)
-    return results
-
-
 def gen_frames():
     """Video streaming generator function."""
+
+    from .utils import stream
 
     font_size = 24
     font = ImageFont.load_default(size=font_size)
@@ -56,7 +44,7 @@ def gen_frames():
             stream.output.write(buffer.getvalue()[:])
             time.sleep(1)  # Simulate 10 FPS```
 
-        results = process_results()
+        results = stream.process_results()
         for r in results:
             worker_pid, timestamp, inference_result = r
             frame, detected_objects = inference_result
