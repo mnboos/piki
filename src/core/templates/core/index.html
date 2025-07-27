@@ -71,52 +71,61 @@
                 <label>
                     Tilt ({{ request.session.tilt_position }}°):
                     <br>
-                    <input type="range" name="tilt_position" min="-90" max="90" value="{{ request.session.tilt_position }}" style="width: 200px;">
+                    <input type="range" name="tilt_position" class="form-range" min="-90" max="90" value="{{ request.session.tilt_position }}">
                 </label>
                 <br>
                 <label>
                     Pan ({{ request.session.pan_position }}°):
                     <br>
-                    <input type="range" name="pan_position" min="-90" max="90" value="{{ request.session.pan_position }}" style="width: 200px;">
+                    <input type="range" name="pan_position" class="form-range" min="-90" max="90" value="{{ request.session.pan_position }}">
                 </label>
                 <br>
 
-                <input type="submit" value="Set Position">
+                <input type="submit" value="Set Position" class="btn btn-primary">
             </form>
             <hr>
             <h3>Quick Actions</h3>
             <!-- Changed action to use Django's url tag and added csrf_token -->
 
             <div class="d-flex">
-                <form action="{% url 'move_servo' %}" method="post" class="">
+                <form id="formMin" action="{% url 'move_servo' %}" method="post" class="">
                     {% csrf_token %}
                     <input type="hidden" name="tilt_position" value="-90"></input>
                     <input type="hidden" name="pan_position" value="-90"></input>
-                    <button type="submit" class="btn btn-primary">Min</button>
+{#                    <button type="submit" class="btn btn-primary">Min</button>#}
                 </form>
-                <form action="{% url 'move_servo' %}" method="post" class="mx-2">
+                <form id="formMid" action="{% url 'move_servo' %}" method="post" class="mx-2">
                     {% csrf_token %}
                     <input type="hidden"  name="tilt_position" value="0"></input>
                     <input type="hidden"  name="pan_position" value="0"></input>
-                    <button type="submit" class="btn btn-primary">Mid</button>
+{#                    <button type="submit" class="btn btn-primary">Mid</button>#}
                 </form>
-                <form action="{% url 'move_servo' %}" method="post">
+                <form id="formMax" action="{% url 'move_servo' %}" method="post">
                     {% csrf_token %}
-                    <input type="hidden"  name="tilt_position" value="90"></input>
-                    <input type="hidden"  name="pan_position" value="90"></input>
-                    <button type="submit" class="btn btn-primary">Max</button>
+                    <input type="hidden"  name="tilt_position" value="90">
+                    <input type="hidden"  name="pan_position" value="90">
                 </form>
-                <form action="{% url 'move_servo' %}" method="post">
+                <form id="formRand" action="{% url 'move_servo' %}" method="post">
                     {% csrf_token %}
-                    <input type="hidden"  name="tilt_position" value="{{ servo_range | random }}"></input>
-                    <input type="hidden"  name="pan_position" value="{{ servo_range | random }}"></input>
-                    <button type="submit" class="btn btn-primary">Rand</button>
+                    <input type="hidden"  name="tilt_position" value="{{ servo_range | random }}">
+                    <input type="hidden"  name="pan_position" value="{{ servo_range | random }}">
                 </form>
+
+
+
+    <div class="btn-group" role="group" aria-label="Basic example">
+          <button type="submit" class="btn btn-outline-primary" form="formMin">Min</button>
+          <button type="submit" class="btn btn-outline-primary" form="formMid">Mid</button>
+          <button type="submit" class="btn btn-outline-primary" form="formMax">Max</button>
+          <button type="submit" class="btn btn-outline-primary" form="formRand">Rand</button>
+    </div>
+
+
             </div>
                         <hr>
             <h3>Stream</h3>
             <!-- This is now a regular button, not a link -->
-            <button id="download-button" class="action-button">Capture</button>
+            <button id="download-button" class="btn btn-primary">Capture Current Frame</button>
         </div>
     </div>
 </body>
