@@ -11,9 +11,29 @@
         .controls { border: 1px solid #ccc; padding: 20px; }
         img { border: 1px solid #ccc; max-width: 640px; }
     </style>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-LN+7fdVzj6u52u30Kp6M/trliBMCMKTyK833zpbD+pXdCLuTusPj697FH4R/5mcr" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js" integrity="sha384-ndDqU0Gzau9qJ1lfW4pNLlhNTkCfHzAVBReH9diLvGRem5+R9g2FzA8ZGN954O5Q" crossorigin="anonymous"></script>
 </head>
 <body>
     <h1>Pi Servo & Camera Interface</h1>
+
+
+
+<ul class="nav nav-pills nav-fill gap-2 p-1 small bg-primary rounded-5 shadow-sm" id="pillNav2" role="tablist" style="--bs-nav-link-color: var(--bs-white); --bs-nav-pills-link-active-color: var(--bs-primary); --bs-nav-pills-link-active-bg: var(--bs-white);">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active rounded-5" id="home-tab2" data-bs-toggle="tab" type="button" role="tab" aria-selected="true">Live Stream</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link rounded-5" id="profile-tab2" data-bs-toggle="tab" type="button" role="tab" aria-selected="false">Profile</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link rounded-5" id="contact-tab2" data-bs-toggle="tab" type="button" role="tab" aria-selected="false">Contact</button>
+  </li>
+</ul>
+
+
+
     <div class="container">
         <div>
             <h2>Camera Feed</h2>
@@ -21,11 +41,11 @@
             <img id="camera-feed" src="{% url 'video_feed' %}" width="640" height="480">
             <canvas id="snapshot-canvas" width="640" height="480" style="display: none;"></canvas>
         </div>
-        <div class="controls">
+        <div class=" card p-2">
                         <!-- Add a status indicator -->
-            <div class="status">
-                <strong>Current Source:</strong><br> {{ current_source }}
-            </div>
+{#            <div class="status">#}
+{#                <strong>Current Source:</strong><br> {{ current_source }}#}
+{#            </div>#}
 
 {#            <!-- New Upload Form -->#}
 {#            <h3>Upload Video File</h3>#}
@@ -37,8 +57,7 @@
 {#            </form>#}
 {#            <hr>#}
 
-            <!-- Actions Section -->
-            <h3>Actions</h3>
+
             <!-- Show switch to camera button only if playing a video -->
 {#            {% if is_video_source %}#}
 {#            <a href="{% url 'use_camera' %}" class="action-button" style="background-color: #007BFF;">Switch to Live Camera</a>#}
@@ -49,19 +68,51 @@
             <!-- Changed action to use Django's url tag and added csrf_token -->
             <form action="{% url 'move_servo' %}" method="post">
                 {% csrf_token %}
-                <label for="slider">Position:</label><br>
-                <input type="range" id="slider" name="slider" min="-100" max="100" value="0" style="width: 200px;"><br><br>
+                <label>
+                    Tilt ({{ request.session.tilt_position }}°):
+                    <br>
+                    <input type="range" name="tilt_position" min="-90" max="90" value="{{ request.session.tilt_position }}" style="width: 200px;">
+                </label>
+                <br>
+                <label>
+                    Pan ({{ request.session.pan_position }}°):
+                    <br>
+                    <input type="range" name="pan_position" min="-90" max="90" value="{{ request.session.pan_position }}" style="width: 200px;">
+                </label>
+                <br>
+
                 <input type="submit" value="Set Position">
             </form>
             <hr>
             <h3>Quick Actions</h3>
             <!-- Changed action to use Django's url tag and added csrf_token -->
-            <form action="{% url 'move_servo' %}" method="post">
-                {% csrf_token %}
-                <button type="submit" name="slider" value="-100">Min</button>
-                <button type="submit" name="slider" value="0">Mid</button>
-                <button type="submit" name="slider" value="100">Max</button>
-            </form>
+
+            <div class="d-flex">
+                <form action="{% url 'move_servo' %}" method="post" class="">
+                    {% csrf_token %}
+                    <input type="hidden" name="tilt_position" value="-90"></input>
+                    <input type="hidden" name="pan_position" value="-90"></input>
+                    <button type="submit" class="btn btn-primary">Min</button>
+                </form>
+                <form action="{% url 'move_servo' %}" method="post" class="mx-2">
+                    {% csrf_token %}
+                    <input type="hidden"  name="tilt_position" value="0"></input>
+                    <input type="hidden"  name="pan_position" value="0"></input>
+                    <button type="submit" class="btn btn-primary">Mid</button>
+                </form>
+                <form action="{% url 'move_servo' %}" method="post">
+                    {% csrf_token %}
+                    <input type="hidden"  name="tilt_position" value="90"></input>
+                    <input type="hidden"  name="pan_position" value="90"></input>
+                    <button type="submit" class="btn btn-primary">Max</button>
+                </form>
+                <form action="{% url 'move_servo' %}" method="post">
+                    {% csrf_token %}
+                    <input type="hidden"  name="tilt_position" value="{{ servo_range | random }}"></input>
+                    <input type="hidden"  name="pan_position" value="{{ servo_range | random }}"></input>
+                    <button type="submit" class="btn btn-primary">Rand</button>
+                </form>
+            </div>
                         <hr>
             <h3>Stream</h3>
             <!-- This is now a regular button, not a link -->

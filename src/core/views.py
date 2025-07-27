@@ -1,16 +1,16 @@
 import time
 
 from django.http.response import StreamingHttpResponse
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from PIL import Image, ImageFont, ImageDraw
 import io
-from .utils import stream
+from .utils import stream, clamp
 from django.utils.timezone import now
 
 
 # Create your views here.
 def index(request):
-    return render(request, "core/index.html")
+    return render(request, "core/index.html", {"servo_range": list(range(-90, 90))})
 
 
 def process_results():
@@ -90,10 +90,10 @@ def video_feed(request):
 
 def move_servo(request):
     """Route to handle servo movement from form submission."""
-    # if request.method == 'POST' and servo:
-    #     slider_value = request.POST.get('slider')
-    #     if slider_value is not None:
-    #         # Convert slider value (-100 to 100) to servo value (-1 to 1)
-    #         servo_value = int(slider_value) / 100.0
-    #         servo.value = servo_value
-    pass
+    if request.method == "POST":
+        angle = int(request.POST.get("tilt_position", 0))
+        request.session["tilt_position"] = clamp(angle, minimum=-90, maximum=90)
+
+        angle = int(request.POST.get("pan_position", 0))
+        request.session["pan_position"] = clamp(angle, minimum=-90, maximum=90)
+    return redirect("index")

@@ -4,6 +4,7 @@ import io
 import time
 import atexit
 from concurrent.futures import ProcessPoolExecutor
+from .ai import inference
 
 NUM_AI_WORKERS: int = 2
 
@@ -21,8 +22,6 @@ def run_ai_on_frame(frame_data):
     # print(f"[{time.monotonic_ns()}] run ai on frame: {frame_data}")
 
     # print("Importing ai...")
-
-    from .ai import inference
 
     # Get the unique ID of the process doing the work
     worker_pid = mp.current_process().pid
@@ -73,6 +72,7 @@ def __setup_cam():
         def cleanup():
             print("Stopping camera and cleaning up GPIO")
             picam2.stop_recording()
+            picam2.close()
 
         atexit.register(cleanup)
 
