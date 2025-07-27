@@ -4,7 +4,7 @@ import io
 import time
 import atexit
 from concurrent.futures import ProcessPoolExecutor
-from .ai import inference
+from .ai import detect_objects
 
 NUM_AI_WORKERS: int = 2
 
@@ -14,7 +14,7 @@ executor = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 active_futures = []
 
 
-def run_ai_on_frame(frame_data):
+def run_object_detection(frame_data):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
@@ -25,7 +25,7 @@ def run_ai_on_frame(frame_data):
 
     # Get the unique ID of the process doing the work
     worker_pid = mp.current_process().pid
-    result = inference(frame_data)
+    result = detect_objects(frame_data)
 
     # print(f"[WORKER {worker_pid}] Processing frame...")
     # time.sleep(0.2)  # Simulate CPU-bound work
@@ -49,7 +49,7 @@ class StreamingOutput(io.BufferedIOBase):
             self.condition.notify_all()
 
         if len(active_futures) < NUM_AI_WORKERS:
-            future = executor.submit(run_ai_on_frame, frame_data=buf)
+            future = executor.submit(run_object_detection, frame_data=buf)
             active_futures.append(future)
 
 
@@ -59,7 +59,7 @@ def __setup_cam():
     try:
         from picamera2 import Picamera2
         from picamera2.encoders import JpegEncoder
-        from picamera2.outputs import FileOutput
+        from picamera2.outputs import FileOutput, CircularOutput
 
         picam2 = Picamera2()
         camera_config = picam2.create_video_configuration(
@@ -67,7 +67,8 @@ def __setup_cam():
         )
         picam2.configure(camera_config)
 
-        picam2.start_recording(JpegEncoder(), FileOutput(stream_output))
+        # picam2.start_recording(JpegEncoder(), FileOutput(stream_output))
+        picam2.start_recording(JpegEncoder(), CircularOutput(stream_output))
 
         def cleanup():
             print("Stopping camera and cleaning up GPIO")

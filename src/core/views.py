@@ -36,9 +36,8 @@ def gen_frames():
     img = Image.new("RGB", (640, 480), color="gray")
     draw = ImageDraw.Draw(img)
 
+    print("Starting video retrieval...")
     while True:
-        results = process_results()
-
         if stream.camera:
             with stream.output.condition:
                 stream.output.condition.wait()
@@ -57,6 +56,7 @@ def gen_frames():
             stream.output.write(buffer.getvalue()[:])
             time.sleep(1)  # Simulate 10 FPS```
 
+        results = process_results()
         for r in results:
             worker_pid, timestamp, inference_result = r
             frame, detected_objects = inference_result

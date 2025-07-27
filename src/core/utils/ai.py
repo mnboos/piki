@@ -2,6 +2,7 @@ import time
 import cv2
 from ncnn.model_zoo import get_model
 import numpy as np
+import multiprocessing as mp
 
 
 print("Loading model...")
@@ -100,7 +101,7 @@ COCO_CLASSES = [
 ]
 
 
-def inference(image_data):
+def detect_objects(image_data):
     assert image_data
 
     image_copy = image_data[:]
@@ -109,14 +110,15 @@ def inference(image_data):
     image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
     # 3. Perform object detection and measure inference time
-    print("\nStarting inference...")
+    # print("Starting inference...", end="\r")
     start_time = time.perf_counter()
 
     objects = net(image)  # This is the line we are timing
 
     end_time = time.perf_counter()
     inference_time_ms = (end_time - start_time) * 1000
-    print(f"Inference complete in {inference_time_ms:.2f} ms.")
+    worker_pid = mp.current_process().pid
+    print(f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms.")
 
     results = []
 
@@ -141,5 +143,6 @@ def inference(image_data):
             )
         print("------------------------------")
     else:
-        print("\nNo objects detected in the image.")
+        # print("No objects detected in the image.", end="\r")
+        pass
     return image_copy, results
