@@ -5,9 +5,7 @@ from django.shortcuts import render, redirect
 from PIL import Image, ImageFont, ImageDraw
 import io
 from .utils import clamp
-from django.utils.timezone import now
 from .utils import stream, ai
-import math
 
 
 # Create your views here.
@@ -30,23 +28,23 @@ def gen_frames():
     try:
         stream.live_stream_enabled.set()
         while True:
-            if stream.camera:
+            if True:
                 with stream.output.condition:
                     stream.output.condition.wait()
                     # frame = stream.output.frame
-            else:
-                text = f"Time: {now().strftime('%H:%M:%S')}"
-
-                draw.rectangle((0, 0, 640, 480), fill="gray")
-                draw.text((0, 0), text, font=font, fill="white")
-
-                buffer = io.BytesIO()
-
-                img.save(buffer, format="JPEG")
-
-                # frame: bytes = buffer.getvalue()
-                stream.output.write(buffer.getvalue()[:])
-                time.sleep(1)  # Simulate 10 FPS```
+            # else:
+            #     text = f"Time: {now().strftime('%H:%M:%S')}"
+            #
+            #     draw.rectangle((0, 0, 640, 480), fill="gray")
+            #     draw.text((0, 0), text, font=font, fill="white")
+            #
+            #     buffer = io.BytesIO()
+            #
+            #     img.save(buffer, format="JPEG")
+            #
+            #     # frame: bytes = buffer.getvalue()
+            #     stream.output.write(buffer.getvalue()[:])
+            #     time.sleep(1)  # Simulate 10 FPS```
 
             results = stream.process_results()
             for r in results:

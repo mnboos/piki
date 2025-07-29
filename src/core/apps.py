@@ -1,5 +1,4 @@
 from django.apps import AppConfig
-import atexit
 import os
 
 
@@ -18,14 +17,14 @@ class CoreConfig(AppConfig):
         # Import our shared objects and worker logic
         from .utils import stream
 
-        print("Camera: ", stream.camera)
-        print("Camera running: ", bool(stream.camera and stream.camera.is_open))
+        print("Camera: ", stream._camera)
+        print("Camera running: ", bool(stream._camera and stream._camera.is_open))
 
-        def cleanup():
-            print("[DJANGO SHUTDOWN] Stopping processes...")
-            stream.executor.shutdown()
-            if stream.camera:
-                stream.camera.close()
-            print("[DJANGO SHUTDOWN] Processes stopped.")
-
-        atexit.register(cleanup)
+        # def cleanup():
+        #     print("[DJANGO SHUTDOWN] Stopping processes...")
+        #     stream.executor.shutdown()
+        #     if stream.camera:
+        #         stream.camera.close()
+        #     print("[DJANGO SHUTDOWN] Processes stopped.")
+        #
+        # atexit.register(cleanup)
