@@ -5,108 +5,26 @@ import numpy as np
 import multiprocessing as mp
 from ctypes import c_float
 
-prob_threshold = mp.Value(c_float, 0.2)
+from ncnn.model_zoo.nanodet import NanoDet
+from ncnn.utils import Detect_Object
+
+prob_threshold = mp.Value(c_float, 0.5)
 
 
 print("Loading model...")
-net = get_model(
+net: NanoDet = get_model(
     "nanodet",
-    target_size=320,
+    target_size=480,
     prob_threshold=prob_threshold.value,
-    nms_threshold=0.5,
+    # nms_threshold=0.1,
     num_threads=1,
     use_gpu=False,
 )
+
 print("Model loaded.")
 
 
-COCO_CLASSES = [
-    "person",
-    "bicycle",
-    "car",
-    "motorcycle",
-    "airplane",
-    "bus",
-    "train",
-    "truck",
-    "boat",
-    "traffic light",
-    "fire hydrant",
-    "stop sign",
-    "parking meter",
-    "bench",
-    "bird",
-    "cat",
-    "dog",
-    "horse",
-    "sheep",
-    "cow",
-    "elephant",
-    "bear",
-    "zebra",
-    "giraffe",
-    "backpack",
-    "umbrella",
-    "handbag",
-    "tie",
-    "suitcase",
-    "frisbee",
-    "skis",
-    "snowboard",
-    "sports ball",
-    "kite",
-    "baseball bat",
-    "baseball glove",
-    "skateboard",
-    "surfboard",
-    "tennis racket",
-    "bottle",
-    "wine glass",
-    "cup",
-    "fork",
-    "knife",
-    "spoon",
-    "bowl",
-    "banana",
-    "apple",
-    "sandwich",
-    "orange",
-    "broccoli",
-    "carrot",
-    "hot dog",
-    "pizza",
-    "donut",
-    "cake",
-    "chair",
-    "couch",
-    "potted plant",
-    "bed",
-    "dining table",
-    "toilet",
-    "tv",
-    "laptop",
-    "mouse",
-    "remote",
-    "keyboard",
-    "cell phone",
-    "microwave",
-    "oven",
-    "toaster",
-    "sink",
-    "refrigerator",
-    "book",
-    "clock",
-    "vase",
-    "scissors",
-    "teddy bear",
-    "hair drier",
-    "toothbrush",
-]
-
-
 def detect_objects(image_data):
-    assert image_data
-
     image_copy = image_data[:]
 
     image_np = np.frombuffer(image_data, np.uint8)
@@ -116,7 +34,7 @@ def detect_objects(image_data):
     # print("Starting inference...", end="\r")
     start_time = time.perf_counter()
 
-    objects = net(image)  # This is the line we are timing
+    objects: list[Detect_Object] = net(image)  # This is the line we are timing
 
     end_time = time.perf_counter()
     inference_time_ms = (end_time - start_time) * 1000
@@ -125,15 +43,20 @@ def detect_objects(image_data):
 
     results = []
 
+    threshold = prob_threshold.value
+
     # 4. Print the detection results as text
     if objects:
-        print("\n--- Object Detection Results ---")
+        # print("\n--- Object Detection Results ---")
         for i, obj in enumerate(objects):
-            class_name = (
-                COCO_CLASSES[obj.label]
-                if obj.label < len(COCO_CLASSES)
-                else f"Unknown_ID_{obj.label}"
-            )
+            class_name = net.class_names[int(obj.label)]
+            if class_name == "background" or obj.prob <= threshold:
+                continue
+            # class_name = (
+            #     COCO_CLASSES[obj.label]
+            #     if obj.label < len(COCO_CLASSES)
+            #     else f"Unknown_ID_{obj.label}"
+            # )
             bbox = obj.rect
 
             results.append((obj.prob, class_name, bbox))
@@ -142,9 +65,8 @@ def detect_objects(image_data):
             print(f"  - Label: {class_name}")
             print(f"  - Confidence: {obj.prob:.2%}")
             print(
-                f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})"
+                f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n"
             )
-        print("------------------------------")
     else:
         # print("No objects detected in the image.", end="\r")
         pass
