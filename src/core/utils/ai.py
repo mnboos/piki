@@ -1,151 +1,191 @@
 import time
+from pathlib import Path
+
 import cv2
-from ncnn.model_zoo import get_model
+from ai_edge_litert.interpreter import Interpreter
 import numpy as np
+from PIL import Image
 import multiprocessing as mp
 from ctypes import c_float
 
-prob_threshold = mp.Value(c_float, 0.2)
+prob_threshold = mp.Value(c_float, 0.5)
 
 
 print("Loading model...")
-net = get_model(
-    "nanodet",
-    target_size=320,
-    prob_threshold=prob_threshold.value,
-    nms_threshold=0.5,
-    num_threads=1,
-    use_gpu=False,
+model_path = str(
+    Path(__file__).parent
+    / "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
 )
-print("Model loaded.")
+
+is_quant = "quant" in model_path.lower()
+
+ip = Interpreter(model_path=model_path)
+ip.allocate_tensors()
+inp_id = ip.get_input_details()[0]["index"]
+out_det = ip.get_output_details()
+out_id0 = out_det[0]["index"]
+out_id1 = out_det[1]["index"]
+out_id2 = out_det[2]["index"]
+out_id3 = out_det[3]["index"]
+
+image_classes = {
+    1: "person",
+    2: "bicycle",
+    3: "car",
+    4: "motorcycle",
+    5: "airplane",
+    6: "bus",
+    7: "train",
+    8: "truck",
+    9: "boat",
+    10: "traffic light",
+    11: "fire hydrant",
+    13: "stop sign",
+    14: "parking meter",
+    15: "bench",
+    16: "bird",
+    17: "cat",
+    18: "dog",
+    19: "horse",
+    20: "sheep",
+    21: "cow",
+    22: "elephant",
+    23: "bear",
+    24: "zebra",
+    25: "giraffe",
+    27: "backpack",
+    28: "umbrella",
+    31: "handbag",
+    32: "tie",
+    33: "suitcase",
+    34: "frisbee",
+    35: "skis",
+    36: "snowboard",
+    37: "sports ball",
+    38: "kite",
+    39: "baseball bat",
+    40: "baseball glove",
+    41: "skateboard",
+    42: "surfboard",
+    43: "tennis racket",
+    44: "bottle",
+    46: "wine glass",
+    47: "cup",
+    48: "fork",
+    49: "knife",
+    50: "spoon",
+    51: "bowl",
+    52: "banana",
+    53: "apple",
+    54: "sandwich",
+    55: "orange",
+    56: "broccoli",
+    57: "carrot",
+    58: "hot dog",
+    59: "pizza",
+    60: "donut",
+    61: "cake",
+    62: "chair",
+    63: "couch",
+    64: "potted plant",
+    65: "bed",
+    67: "dining table",
+    70: "toilet",
+    72: "tv",
+    73: "laptop",
+    74: "mouse",
+    75: "remote",
+    76: "keyboard",
+    77: "cell phone",
+    78: "microwave",
+    79: "oven",
+    80: "toaster",
+    81: "sink",
+    82: "refrigerator",
+    84: "book",
+    85: "clock",
+    86: "vase",
+    87: "scissors",
+    88: "teddy bear",
+    89: "hair drier",
+    90: "toothbrush",
+}
 
 
-COCO_CLASSES = [
-    "person",
-    "bicycle",
-    "car",
-    "motorcycle",
-    "airplane",
-    "bus",
-    "train",
-    "truck",
-    "boat",
-    "traffic light",
-    "fire hydrant",
-    "stop sign",
-    "parking meter",
-    "bench",
-    "bird",
-    "cat",
-    "dog",
-    "horse",
-    "sheep",
-    "cow",
-    "elephant",
-    "bear",
-    "zebra",
-    "giraffe",
-    "backpack",
-    "umbrella",
-    "handbag",
-    "tie",
-    "suitcase",
-    "frisbee",
-    "skis",
-    "snowboard",
-    "sports ball",
-    "kite",
-    "baseball bat",
-    "baseball glove",
-    "skateboard",
-    "surfboard",
-    "tennis racket",
-    "bottle",
-    "wine glass",
-    "cup",
-    "fork",
-    "knife",
-    "spoon",
-    "bowl",
-    "banana",
-    "apple",
-    "sandwich",
-    "orange",
-    "broccoli",
-    "carrot",
-    "hot dog",
-    "pizza",
-    "donut",
-    "cake",
-    "chair",
-    "couch",
-    "potted plant",
-    "bed",
-    "dining table",
-    "toilet",
-    "tv",
-    "laptop",
-    "mouse",
-    "remote",
-    "keyboard",
-    "cell phone",
-    "microwave",
-    "oven",
-    "toaster",
-    "sink",
-    "refrigerator",
-    "book",
-    "clock",
-    "vase",
-    "scissors",
-    "teddy bear",
-    "hair drier",
-    "toothbrush",
-]
+def get_mobilenet_input(f, out_size=(300, 300)):
+    img = Image.frombytes("RGB", (640, 480), f)
+    original_size = img.size  # Get original image size (width, height)
+    resized_img = img.resize(out_size)
+    img_arr = np.array(resized_img)
+    if not is_quant:
+        img_arr = img_arr.astype(np.float32) / 128 - 1
+    return np.array([img_arr]), original_size
 
 
-def detect_objects(image_data):
-    assert image_data
-
-    image_copy = image_data[:]
+def detect_objects(image_data, out_size=(300, 300)):
+    # assert image_data
+    assert image_data is not None
 
     image_np = np.frombuffer(image_data, np.uint8)
     image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
-    # 3. Perform object detection and measure inference time
-    # print("Starting inference...", end="\r")
-    start_time = time.perf_counter()
+    # orig_shape = image.shape
+    # print("orig: ", orig_shape)
 
-    objects = net(image)  # This is the line we are timing
+    resized_img = cv2.resize(image, out_size, interpolation=cv2.INTER_AREA)
+    img_arr = np.array(resized_img)
 
-    end_time = time.perf_counter()
-    inference_time_ms = (end_time - start_time) * 1000
-    worker_pid = mp.current_process().pid
-    print(f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms.")
+    if not is_quant:
+        img_arr = img_arr.astype(np.float32) / 128 - 1
 
-    results = []
+    # ======================================================================
+    # FIX: Add the batch dimension to make the input tensor 4D
+    # Before: img_arr.shape was (300, 300, 3)
+    # After:  input_tensor.shape will be (1, 300, 300, 3)
+    img_arr = np.expand_dims(img_arr, axis=0)
+    # ======================================================================
 
-    # 4. Print the detection results as text
-    if objects:
-        print("\n--- Object Detection Results ---")
-        for i, obj in enumerate(objects):
-            class_name = (
-                COCO_CLASSES[obj.label]
-                if obj.label < len(COCO_CLASSES)
-                else f"Unknown_ID_{obj.label}"
-            )
-            bbox = obj.rect
+    ms = lambda: int(round(time.time() * 1000))
 
-            results.append((obj.prob, class_name, bbox))
+    def print_coco_label(cl_id, t):
+        print(
+            "class: {}, label: {}, time: {:,} ms".format(cl_id, image_classes[cl_id], t)
+        )
 
-            print(f"Object {i + 1}:")
-            print(f"  - Label: {class_name}")
-            print(f"  - Confidence: {obj.prob:.2%}")
-            print(
-                f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})"
-            )
-        print("------------------------------")
-    else:
-        # print("No objects detected in the image.", end="\r")
-        pass
-    return image_copy, results
+    def print_output(res, original_img_size):
+        boxes, classes, scores, num_det = res
+        img_width, img_height = original_img_size
+
+        i = 0
+
+        n_obj = int(num_det[i])
+
+        # print("{} - found objects:".format(fname))
+        for j in range(n_obj):
+            cl_id = int(classes[i][j]) + 1
+            label = image_classes[cl_id]
+            score = scores[i][j]
+            if score < 0.5:
+                continue
+            box = boxes[i][j]
+            ymin, xmin, ymax, xmax = box
+
+            # Calculate absolute coordinates
+            abs_xmin = int(xmin * img_width)
+            abs_ymin = int(ymin * img_height)
+            abs_xmax = int(xmax * img_width)
+            abs_ymax = int(ymax * img_height)
+
+            print("  ", cl_id, label, score, [abs_xmin, abs_ymin, abs_xmax, abs_ymax])
+
+    t0 = ms()
+    ip.set_tensor(inp_id, img_arr)
+    ip.invoke()
+    tt = ms() - t0
+    print("Time:", tt, "ms")
+    boxes = ip.get_tensor(out_id0)
+    classes = ip.get_tensor(out_id1)
+    scores = ip.get_tensor(out_id2)
+    num_det = ip.get_tensor(out_id3)
+    print_output((boxes, classes, scores, num_det), original_img_size=(0, 0))
+    return image_data, []
