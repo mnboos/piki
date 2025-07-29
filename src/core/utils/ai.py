@@ -10,64 +10,67 @@ from ncnn.utils import Detect_Object
 
 prob_threshold = mp.Value(c_float, 0.5)
 
+try:
+    print("Loading model...")
+    net: NanoDet = get_model(
+        "nanodet",
+        # target_size=480,
+        prob_threshold=prob_threshold.value,
+        # nms_threshold=0.1,
+        num_threads=1,
+        use_gpu=False,
+    )
 
-print("Loading model...")
-net: NanoDet = get_model(
-    "nanodet",
-    # target_size=480,
-    prob_threshold=prob_threshold.value,
-    # nms_threshold=0.1,
-    num_threads=1,
-    use_gpu=False,
-)
+    print("Model loaded.")
 
-print("Model loaded.")
+    def detect_objects(image_data):
+        image_copy = image_data[:]
 
+        image_np = np.frombuffer(image_data, np.uint8)
+        image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
-def detect_objects(image_data):
-    image_copy = image_data[:]
+        # 3. Perform object detection and measure inference time
+        # print("Starting inference...", end="\r")
+        start_time = time.perf_counter()
 
-    image_np = np.frombuffer(image_data, np.uint8)
-    image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+        objects: list[Detect_Object] = net(image)  # This is the line we are timing
 
-    # 3. Perform object detection and measure inference time
-    # print("Starting inference...", end="\r")
-    start_time = time.perf_counter()
+        end_time = time.perf_counter()
+        inference_time_ms = (end_time - start_time) * 1000
+        worker_pid = mp.current_process().pid
+        print(
+            f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms."
+        )
 
-    objects: list[Detect_Object] = net(image)  # This is the line we are timing
+        results = []
 
-    end_time = time.perf_counter()
-    inference_time_ms = (end_time - start_time) * 1000
-    worker_pid = mp.current_process().pid
-    print(f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms.")
+        threshold = prob_threshold.value
 
-    results = []
+        # 4. Print the detection results as text
+        if objects:
+            # print("\n--- Object Detection Results ---")
+            for i, obj in enumerate(objects):
+                class_name = net.class_names[int(obj.label)]
+                if class_name == "background" or obj.prob <= threshold:
+                    continue
+                # class_name = (
+                #     COCO_CLASSES[obj.label]
+                #     if obj.label < len(COCO_CLASSES)
+                #     else f"Unknown_ID_{obj.label}"
+                # )
+                bbox = obj.rect
 
-    threshold = prob_threshold.value
+                results.append((obj.prob, class_name, bbox))
 
-    # 4. Print the detection results as text
-    if objects:
-        # print("\n--- Object Detection Results ---")
-        for i, obj in enumerate(objects):
-            class_name = net.class_names[int(obj.label)]
-            if class_name == "background" or obj.prob <= threshold:
-                continue
-            # class_name = (
-            #     COCO_CLASSES[obj.label]
-            #     if obj.label < len(COCO_CLASSES)
-            #     else f"Unknown_ID_{obj.label}"
-            # )
-            bbox = obj.rect
-
-            results.append((obj.prob, class_name, bbox))
-
-            print(f"Object {i + 1}:")
-            print(f"  - Label: {class_name}")
-            print(f"  - Confidence: {obj.prob:.2%}")
-            print(
-                f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n"
-            )
-    else:
-        # print("No objects detected in the image.", end="\r")
-        pass
-    return image_copy, results
+                print(f"Object {i + 1}:")
+                print(f"  - Label: {class_name}")
+                print(f"  - Confidence: {obj.prob:.2%}")
+                print(
+                    f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n"
+                )
+        else:
+            # print("No objects detected in the image.", end="\r")
+            pass
+        return image_copy, results
+except KeyboardInterrupt:
+    print("stop ai")

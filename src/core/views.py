@@ -21,8 +21,7 @@ def gen_frames():
     font_size = 24
     font = ImageFont.load_default(size=font_size)
 
-    img = Image.new("RGB", (640, 480), color="gray")
-    draw = ImageDraw.Draw(img)
+    # img = Image.new("RGB", (640, 480))
 
     print("Starting video retrieval...")
     try:
@@ -53,6 +52,8 @@ def gen_frames():
                 with Image.open(io.BytesIO(frame)) as img:
                     draw = ImageDraw.Draw(img)
                     for confidence, label, bbox in detected_objects:
+                        # x, y, width, height = bbox
+                        # draw.rectangle((x, y, x + width + height, y + width + height))
                         draw.text(
                             (bbox.x, bbox.y),
                             f"{label} ({confidence:.2%})",
