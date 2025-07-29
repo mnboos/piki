@@ -14,7 +14,7 @@ prob_threshold = mp.Value(c_float, 0.5)
 print("Loading model...")
 net: NanoDet = get_model(
     "nanodet",
-    target_size=480,
+    # target_size=480,
     prob_threshold=prob_threshold.value,
     # nms_threshold=0.1,
     num_threads=1,
