@@ -1,5 +1,6 @@
 import time
 
+import cv2
 from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
 from PIL import Image, ImageFont, ImageDraw
@@ -54,8 +55,21 @@ def gen_frames():
             # results = stream.process_results()
             # for r in results:
             #     worker_pid, timestamp, frame, detected_objects = r
-            with Image.open(io.BytesIO(frame)) as img:
+            # Identifying contours from the threshold
+
+            # (cnts, _) = cv2.findContours(
+            #     frame.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            # )
+            # print("contours: ", cnts)
+            # for cnt in cnts:
+            #     x, y, w, h = cv2.boundingRect(cnt)
+            #     if y > 200:  # Disregard items in the top of the picture
+            #         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+            frame_bytes = cv2.imencode(".jpg", frame)[1].tobytes()
+            with Image.open(io.BytesIO(frame_bytes)) as img:
                 draw = ImageDraw.Draw(img)
+
                 for confidence, label, bbox in detected_objects:
                     # x, y, width, height = bbox
                     # draw.rectangle((x, y, x + width + height, y + width + height))

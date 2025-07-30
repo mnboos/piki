@@ -1,6 +1,7 @@
 import concurrent.futures
 import dataclasses
 import os
+from concurrent import futures
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Condition, Event
 from collections import deque
@@ -14,7 +15,7 @@ import cv2
 import numpy as np
 
 
-NUM_AI_WORKERS: int = 3
+NUM_AI_WORKERS: int = 1
 
 active_futures: list[Future] = []
 live_stream_enabled = Event()
@@ -56,8 +57,10 @@ def on_done(future: Future):
         worker_pid, timestamp, frame, detected_objects = future.result()
         if timestamp >= max_output_timestamp:
             max_output_timestamp = timestamp
-            output_buffer.append(future.result())
-    except BrokenProcessPool:
+
+            if live_stream_enabled.is_set():
+                output_buffer.append(future.result())
+    except BrokenProcessPool as ex:
         print("Pool already broken, when future was done. Shutting down...")
     except KeyboardInterrupt:
         print("Future done, shutting down...")
@@ -68,36 +71,35 @@ class StreamingOutput(io.BufferedIOBase):
     def __init__(self) -> None:
         self.frame: bytes = b""
         self.condition = Condition()
+        # self.backSub = cv2.createBackgroundSubtractorMOG2()
         print("StreamingOutput created")
 
-    def write(self, buf: bytes) -> None:
+    def write(self, buf: np.ndarray) -> None:
         with self.condition:
             if self.closed:
                 raise RuntimeError("Stream is closed")
 
-            self.frame = buf
-            # self.condition.notify_all()
+            self.frame = buf[:]
 
-        # if not self.closed and :
+        # foreground_mask = self.backSub.apply(self.frame)
         if len(active_futures) < NUM_AI_WORKERS:
             try:
                 timestamp = time.monotonic_ns()
-                future = process_pool.submit(
-                    run_object_detection, frame_data=self.frame, timestamp=timestamp
+
+                global max_output_timestamp
+
+                future: Future = process_pool.submit(
+                    run_object_detection,
+                    frame_data=buf[:],
+                    timestamp=timestamp,
                 )
 
                 active_futures.append(future)
                 future.add_done_callback(on_done)
-                # future = executor.submit(
-                #     run_object_detection, frame_data=DetectionInput(buf, buf)
-                # )
 
             except RuntimeError as e:
                 print("ProcessPoolExecutor unusable")
                 raise KeyboardInterrupt from e
-
-        # if not live_stream_enabled.is_set():
-        #     process_results()
 
 
 def __setup_cam():
@@ -124,29 +126,32 @@ def __setup_cam():
             if not os.path.isfile(video_path):
                 raise ValueError("File not found: ", video_path)
 
-            # 1. Open the video capture object ONCE, outside the loop
+            # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
+            time.sleep(3)
+
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
-                print(f"Error: Could not open video at {video_path}")
-                return
+                raise RuntimeError(f"Error: Could not open video at {video_path}")
 
             def close_video():
                 cap.release()
 
             atexit.register(close_video)
 
+            # backSub = cv2.createBackgroundSubtractorMOG2()
+            backSub = cv2.createBackgroundSubtractorMOG2(
+                history=10000, varThreshold=8, detectShadows=False
+            )
+
             while True:
-                if input_buffer.closed:
+                if stream_output.closed:
                     break
 
+                max_fps = 30
+                time.sleep(1 / max_fps)
                 try:
-                    # cap = cv2.VideoCapture(video_path)
-                    # while cap.isOpened():
-                    # time.sleep(0.01)
                     ret, frame = cap.read()
-                    # if frame is read correctly ret is True
 
-                    # 3. Check if the video has ended
                     if not ret:
                         # If it ended, rewind to the first frame (frame 0)
                         print("Video stream ended. Rewinding.")
@@ -155,38 +160,65 @@ def __setup_cam():
                     else:
                         # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-                        # resized_frame = cv2.resize(frame, (1024, 768))
-                        resized_frame = cv2.resize(
-                            frame, None, fx=1, fy=1, interpolation=cv2.INTER_LINEAR
+                        # frame = cv2.imdecode(frame, cv2.IMREAD_GRAYSCALE)
+
+                        resized_frame = cv2.resize(frame, (640, 480))
+                        # bgr = cv2.cvtColor(resized_frame, cv2.COLOR_RGB2BGR)
+                        # resized_frame = cv2.resize(
+                        #     resized_frame,
+                        #     None,
+                        #     fx=2,
+                        #     fy=2,
+                        #     interpolation=cv2.INTER_LINEAR,
+                        # )
+                        gray = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+                        foreground_mask = backSub.apply(gray)
+                        foreground_mask = cv2.cvtColor(
+                            foreground_mask, cv2.COLOR_GRAY2BGR
                         )
 
-                        w = 640
-                        h = 480
+                        # resized_frame = cv2.resize(frame, (1024, 768))
+                        # resized_frame = cv2.resize(
+                        #     frame, None, fx=1, fy=1, interpolation=cv2.INTER_LINEAR
+                        # )
+                        #
+                        # w = 640
+                        # h = 480
+                        #
+                        # center = resized_frame.shape
+                        # x = center[1] / 2 - w / 2
+                        # y = center[0] / 2 - h / 2
+                        #
+                        # crop_img = resized_frame[
+                        #     int(y) : int(y + h), int(x) : int(x + w)
+                        # ]
 
-                        center = resized_frame.shape
-                        x = center[1] / 2 - w / 2
-                        y = center[0] / 2 - h / 2
-
-                        crop_img = resized_frame[
-                            int(y) : int(y + h), int(x) : int(x + w)
-                        ]
-
-                        _, arr = cv2.imencode(".jpg", crop_img)
+                        # _, arr = cv2.imencode(".jpg", foreground_mask)
                         # _, arr = cv2.imencode(".jpg", resized_frame)
-                        stream_output.write(arr.tobytes())
+                        # stream_output.write(arr.tobytes())
+                        stream_output.write(foreground_mask)
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
             print("Stopping filestream...")
             cap.release()
 
-        thread_pool.submit(stream_file, video_path="/home/martin/Downloads/cat.mov")
+        # video_path = "/home/martin/Downloads/cat.mov"
+        video_path = "/home/martin/Downloads/output_converted.mov"
+        # video_path = "/home/martin/Downloads/output_file.mov"
+        # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
 
+        if not os.path.isfile(video_path):
+            raise RuntimeError(f"File not found: {video_path}")
+
+        thread_pool.submit(stream_file, video_path=video_path)
+        # stream_file(video_path)
         print("Streaming video from file")
 
     return picam2, stream_output
 
 
+time.sleep(3)
 # This single instance will be imported by other parts of the app
 _camera, input_buffer = __setup_cam()
 
