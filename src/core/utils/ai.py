@@ -72,6 +72,6 @@ try:
         else:
             # print("No objects detected in the image.", end="\r")
             pass
-        return image_data, results
+        return results
 except KeyboardInterrupt:
     print("stop ai")

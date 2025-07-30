@@ -27,10 +27,16 @@ def gen_frames():
     try:
         stream.live_stream_enabled.set()
         while True:
-            if True:
-                with stream.output.condition:
-                    stream.output.condition.wait()
-                    # frame = stream.output.frame
+            try:
+                worker_pid, timestamp, frame, detected_objects = (
+                    stream.output_buffer.popleft()
+                )
+            except IndexError:
+                continue
+
+            # with stream.input_buffer.condition:
+            #     stream.input_buffer.condition.wait()
+            # frame = stream.output.frame
             # else:
             #     text = f"Time: {now().strftime('%H:%M:%S')}"
             #
@@ -45,34 +51,29 @@ def gen_frames():
             #     stream.output.write(buffer.getvalue()[:])
             #     time.sleep(1)  # Simulate 10 FPS```
 
-            results = stream.process_results()
-            for r in results:
-                worker_pid, timestamp, inference_result = r
-                frame, detected_objects = inference_result
-                with Image.open(io.BytesIO(frame)) as img:
-                    draw = ImageDraw.Draw(img)
-                    for confidence, label, bbox in detected_objects:
-                        # x, y, width, height = bbox
-                        # draw.rectangle((x, y, x + width + height, y + width + height))
-                        draw.text(
-                            (bbox.x, bbox.y),
-                            f"{label} ({confidence:.2%})",
-                            font=font,
-                            fill="white",
-                        )
-                    if not detected_objects:
-                        draw.text(
-                            (0, 50), "No objects detected", font=font, fill="white"
-                        )
-
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="JPEG")
-
-                    yield (
-                        b"--frame\nContent-Type: image/jpeg\n\n"
-                        + buffer.getvalue()
-                        + b"\n"
+            # results = stream.process_results()
+            # for r in results:
+            #     worker_pid, timestamp, frame, detected_objects = r
+            with Image.open(io.BytesIO(frame)) as img:
+                draw = ImageDraw.Draw(img)
+                for confidence, label, bbox in detected_objects:
+                    # x, y, width, height = bbox
+                    # draw.rectangle((x, y, x + width + height, y + width + height))
+                    draw.text(
+                        (bbox.x, bbox.y),
+                        f"{label} ({confidence:.2%})",
+                        font=font,
+                        fill="white",
                     )
+                if not detected_objects:
+                    draw.text((0, 50), "No objects detected", font=font, fill="white")
+
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG")
+
+                yield (
+                    b"--frame\nContent-Type: image/jpeg\n\n" + buffer.getvalue() + b"\n"
+                )
             # yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
     finally:
         stream.live_stream_enabled.clear()

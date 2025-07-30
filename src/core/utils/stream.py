@@ -1,7 +1,9 @@
 import concurrent.futures
 import dataclasses
 import os
+from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Condition, Event
+from collections import deque
 import multiprocessing as mp
 import io
 import time
@@ -11,11 +13,14 @@ from threading import Thread
 import cv2
 import numpy as np
 
-NUM_AI_WORKERS: int = 1
+
+NUM_AI_WORKERS: int = 3
 
 active_futures: list[Future] = []
 live_stream_enabled = Event()
 
+max_output_timestamp = 0
+output_buffer = deque(maxlen=50)
 
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
@@ -29,37 +34,33 @@ class DetectionInput:
     current_frame: np.ndarray
 
 
-def run_object_detection(frame_data):
+def run_object_detection(frame_data, timestamp):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
     """
+
     from .ai import detect_objects
 
     worker_pid = mp.current_process().pid
     result = detect_objects(frame_data)
-    return worker_pid, time.monotonic_ns(), result
+    return worker_pid, timestamp, frame_data, result
 
 
-def process_results():  # todo: try callbacks instead?
-    done_futures = [f for f in active_futures if f.done()]
-    results = []
-    future: Future
-    for future in done_futures:
-        try:
-            # worker_pid, timestamp, result =
-            result = future.result()
-            # print("result: ", result)
-            results.append(result)
-            # print(f"Last result from worker {worker_pid} at {timestamp}: {result}")
-        except Exception as e:
-            print(f"A worker process failed: {e}")
-            raise
-        except KeyboardInterrupt:
-            print("shutting down here!!!")
-            break
-        active_futures.remove(future)
-    return results
+def on_done(future: Future):
+    global max_output_timestamp
+
+    active_futures.remove(future)
+
+    try:
+        worker_pid, timestamp, frame, detected_objects = future.result()
+        if timestamp >= max_output_timestamp:
+            max_output_timestamp = timestamp
+            output_buffer.append(future.result())
+    except BrokenProcessPool:
+        print("Pool already broken, when future was done. Shutting down...")
+    except KeyboardInterrupt:
+        print("Future done, shutting down...")
 
 
 # This class instance will hold the camera frames
@@ -71,24 +72,32 @@ class StreamingOutput(io.BufferedIOBase):
 
     def write(self, buf: bytes) -> None:
         with self.condition:
-            self.frame = buf
-            self.condition.notify_all()
+            if self.closed:
+                raise RuntimeError("Stream is closed")
 
-        if not self.closed and len(active_futures) < NUM_AI_WORKERS:
+            self.frame = buf
+            # self.condition.notify_all()
+
+        # if not self.closed and :
+        if len(active_futures) < NUM_AI_WORKERS:
             try:
+                timestamp = time.monotonic_ns()
                 future = process_pool.submit(
-                    run_object_detection, frame_data=self.frame
+                    run_object_detection, frame_data=self.frame, timestamp=timestamp
                 )
+
+                active_futures.append(future)
+                future.add_done_callback(on_done)
                 # future = executor.submit(
                 #     run_object_detection, frame_data=DetectionInput(buf, buf)
                 # )
-                active_futures.append(future)
+
             except RuntimeError as e:
                 print("ProcessPoolExecutor unusable")
                 raise KeyboardInterrupt from e
 
-        if not live_stream_enabled.is_set():
-            process_results()
+        # if not live_stream_enabled.is_set():
+        #     process_results()
 
 
 def __setup_cam():
@@ -127,7 +136,7 @@ def __setup_cam():
             atexit.register(close_video)
 
             while True:
-                if output.closed:
+                if input_buffer.closed:
                     break
 
                 try:
@@ -179,7 +188,7 @@ def __setup_cam():
 
 
 # This single instance will be imported by other parts of the app
-_camera, output = __setup_cam()
+_camera, input_buffer = __setup_cam()
 
 
 def cleanup():
@@ -189,11 +198,11 @@ def cleanup():
         _camera.stop_recording()
         _camera.close()
 
-    with output.condition:
-        output.close()
+    with input_buffer.condition:
+        input_buffer.close()
 
-    process_pool.shutdown()
-    thread_pool.shutdown()
+        process_pool.shutdown(wait=True, cancel_futures=True)
+        thread_pool.shutdown(wait=True, cancel_futures=True)
 
     print("[DJANGO SHUTDOWN] Processes stopped.")
 
