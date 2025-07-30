@@ -23,7 +23,7 @@ net: NanoDet = get_model(
 print("Model loaded.")
 
 
-def detect_objects(image_data: bytes):
+def detect_objects(image_data: np.ndarray):
     # image_copy = image_data[:]
     # image_copy = image_data
 

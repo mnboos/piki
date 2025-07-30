@@ -57,18 +57,28 @@ def gen_frames():
             #     worker_pid, timestamp, frame, detected_objects = r
             # Identifying contours from the threshold
 
-            # (cnts, _) = cv2.findContours(
-            #     frame.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            # )
-            # print("contours: ", cnts)
-            # for cnt in cnts:
-            #     x, y, w, h = cv2.boundingRect(cnt)
-            #     if y > 200:  # Disregard items in the top of the picture
-            #         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            _, cv_frame = cv2.imencode(".jpg", frame)
+            reshaped = frame.reshape((480, 640, 3))
 
-            frame_bytes = cv2.imencode(".jpg", frame)[1].tobytes()
+            gray = cv2.cvtColor(reshaped, cv2.COLOR_BGR2GRAY)
+            ret, thresh = cv2.threshold(gray, 50, 255, 0)
+            contours, _ = cv2.findContours(
+                thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            # cv_img = cv2.imdecode(frame, cv2.IMREAD_GRAYSCALE)
+
+            frame_bytes = cv_frame.tobytes()
+            # with Image.fromarray(color_coverted) as img:
             with Image.open(io.BytesIO(frame_bytes)) as img:
                 draw = ImageDraw.Draw(img)
+
+                for cnt in contours:
+                    rect = cv2.boundingRect(cnt)
+                    x, y, w, h = rect
+                    if w >= 50 and h >= 50:
+                        #     if y > 200:  # Disregard items in the top of the picture
+                        draw.rectangle((x, y, x + w, y + h))
 
                 for confidence, label, bbox in detected_objects:
                     # x, y, width, height = bbox

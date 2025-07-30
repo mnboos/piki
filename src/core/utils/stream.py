@@ -35,7 +35,7 @@ class DetectionInput:
     current_frame: np.ndarray
 
 
-def run_object_detection(frame_data, timestamp):
+def run_object_detection(frame_data: np.ndarray, timestamp: int):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
@@ -140,7 +140,7 @@ def __setup_cam():
 
             # backSub = cv2.createBackgroundSubtractorMOG2()
             backSub = cv2.createBackgroundSubtractorMOG2(
-                history=10000, varThreshold=8, detectShadows=False
+                history=10000, varThreshold=32, detectShadows=False
             )
 
             while True:
@@ -203,8 +203,8 @@ def __setup_cam():
             print("Stopping filestream...")
             cap.release()
 
-        # video_path = "/home/martin/Downloads/cat.mov"
-        video_path = "/home/martin/Downloads/output_converted.mov"
+        video_path = "/home/martin/Downloads/cat.mov"
+        # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
 
