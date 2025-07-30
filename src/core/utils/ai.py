@@ -24,7 +24,8 @@ try:
     print("Model loaded.")
 
     def detect_objects(image_data):
-        image_copy = image_data[:]
+        # image_copy = image_data[:]
+        # image_copy = image_data
 
         image_np = np.frombuffer(image_data, np.uint8)
         image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
@@ -71,6 +72,6 @@ try:
         else:
             # print("No objects detected in the image.", end="\r")
             pass
-        return image_copy, results
+        return image_data, results
 except KeyboardInterrupt:
     print("stop ai")
