@@ -3,8 +3,6 @@ import time
 import cv2
 from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
-from PIL import Image, ImageFont, ImageDraw
-import io
 from .utils import clamp
 from .utils import stream, ai
 
@@ -17,89 +15,81 @@ def index(request):
 
 
 def gen_frames():
-    """Video streaming generator function."""
+    """Video streaming generator function, converted to pure OpenCV."""
 
-    font_size = 24
-    font = ImageFont.load_default(size=font_size)
+    # --- OpenCV Font and Color Configuration ---
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    text_color = (255, 255, 255)  # White in BGR
+    rect_color = (0, 0, 255)  # Red in BGR
+    thickness = 2
 
-    # img = Image.new("RGB", (640, 480))
-
-    print("Starting video retrieval...")
+    print("Starting OpenCV video retrieval...")
     try:
         stream.live_stream_enabled.set()
+
         while True:
+            # Get data from the worker output buffer
             try:
+                # The 'frame' variable is expected to be a NumPy array
                 worker_pid, timestamp, frame, detected_objects = (
                     stream.output_buffer.popleft()
                 )
             except IndexError:
+                # If the buffer is empty, wait briefly and try again
+                time.sleep(0.01)
                 continue
 
-            # with stream.input_buffer.condition:
-            #     stream.input_buffer.condition.wait()
-            # frame = stream.output.frame
-            # else:
-            #     text = f"Time: {now().strftime('%H:%M:%S')}"
-            #
-            #     draw.rectangle((0, 0, 640, 480), fill="gray")
-            #     draw.text((0, 0), text, font=font, fill="white")
-            #
-            #     buffer = io.BytesIO()
-            #
-            #     img.save(buffer, format="JPEG")
-            #
-            #     # frame: bytes = buffer.getvalue()
-            #     stream.output.write(buffer.getvalue()[:])
-            #     time.sleep(1)  # Simulate 10 FPS```
+            # This remains an empty list as per your original non-commented code.
+            # If you were to find contours, you would do it here on the 'frame'.
+            contours = []
 
-            # results = stream.process_results()
-            # for r in results:
-            #     worker_pid, timestamp, frame, detected_objects = r
-            # Identifying contours from the threshold
+            # --- Drawing Logic using OpenCV ---
+            # All drawing happens directly on the 'frame' NumPy array.
 
-            _, cv_frame = cv2.imencode(".jpg", frame)
-            reshaped = frame.reshape((480, 640, 3))
+            # Loop through contours (currently does nothing as 'contours' is empty)
+            for cnt in contours:
+                rect = cv2.boundingRect(cnt)
+                x, y, w, h = rect
+                min_size = 20
+                if min_size <= h <= w:
+                    # Draw a red rectangle using OpenCV
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, thickness)
 
-            gray = cv2.cvtColor(reshaped, cv2.COLOR_BGR2GRAY)
-            ret, thresh = cv2.threshold(gray, 50, 255, 0)
-            contours, _ = cv2.findContours(
-                thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-            )
+            # Loop through objects detected by the AI model
+            for confidence, label, bbox in detected_objects:
+                # Assuming bbox has .x and .y attributes for the top-left corner
+                # For drawing text above the box, you might use (bbox.x, bbox.y - 10)
+                text_position = (int(bbox.x), int(bbox.y))
 
-            # cv_img = cv2.imdecode(frame, cv2.IMREAD_GRAYSCALE)
+                text_to_draw = f"{label} ({confidence:.2%})"
 
-            frame_bytes = cv_frame.tobytes()
-            # with Image.fromarray(color_coverted) as img:
-            with Image.open(io.BytesIO(frame_bytes)) as img:
-                draw = ImageDraw.Draw(img)
-
-                for cnt in contours:
-                    rect = cv2.boundingRect(cnt)
-                    x, y, w, h = rect
-                    if w >= 50 and h >= 50:
-                        #     if y > 200:  # Disregard items in the top of the picture
-                        draw.rectangle((x, y, x + w, y + h))
-
-                for confidence, label, bbox in detected_objects:
-                    # x, y, width, height = bbox
-                    # draw.rectangle((x, y, x + width + height, y + width + height))
-                    draw.text(
-                        (bbox.x, bbox.y),
-                        f"{label} ({confidence:.2%})",
-                        font=font,
-                        fill="white",
-                    )
-                if not detected_objects:
-                    draw.text((0, 50), "No objects detected", font=font, fill="white")
-
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG")
-
-                yield (
-                    b"--frame\nContent-Type: image/jpeg\n\n" + buffer.getvalue() + b"\n"
+                # Draw the text using OpenCV
+                cv2.putText(
+                    frame,
+                    text_to_draw,
+                    text_position,
+                    font,
+                    font_scale,
+                    text_color,
+                    thickness,
                 )
-            # yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
+
+            # --- Final Encoding and Yielding ---
+            # Encode the modified frame (with drawings) to JPEG format in memory
+            success, buffer = cv2.imencode(".jpg", frame)
+
+            # If encoding was successful, yield the frame
+            if success:
+                frame_bytes = buffer.tobytes()
+                yield (
+                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                    + frame_bytes
+                    + b"\r\n"
+                )
+
     finally:
+        # This part remains the same
         stream.live_stream_enabled.clear()
 
 

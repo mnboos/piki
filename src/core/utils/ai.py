@@ -10,13 +10,15 @@ from ncnn.utils import Detect_Object
 
 prob_threshold = mp.Value(c_float, 0.5)
 
+models = {"nanodet", "mobilenetv2_ssdlite", "mobilenetv3_ssdlite", ""}
+
 print("Loading model...")
 net: NanoDet = get_model(
     "nanodet",
     # target_size=480,
-    prob_threshold=prob_threshold.value,
+    # prob_threshold=prob_threshold.value,
     # nms_threshold=0.1,
-    num_threads=1,
+    # num_threads=1,
     use_gpu=False,
 )
 
@@ -24,10 +26,11 @@ print("Model loaded.")
 
 
 def detect_objects(image_data: np.ndarray):
+    # return []
     # image_copy = image_data[:]
     # image_copy = image_data
 
-    print("start object detection...")
+    # print("start object detection...")
 
     # image_np = np.frombuffer(image_data, np.uint8)
     # image = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
@@ -43,7 +46,9 @@ def detect_objects(image_data: np.ndarray):
     end_time = time.perf_counter()
     inference_time_ms = (end_time - start_time) * 1000
     worker_pid = mp.current_process().pid
-    print(f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms.")
+    print(
+        f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms.",
+    )
 
     results = []
 
@@ -65,13 +70,8 @@ def detect_objects(image_data: np.ndarray):
 
             results.append((obj.prob, class_name, bbox))
 
-            print(f"Object {i + 1}:")
-            print(f"  - Label: {class_name}")
-            print(f"  - Confidence: {obj.prob:.2%}")
-            print(
-                f"  - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n"
-            )
-    else:
-        # print("No objects detected in the image.", end="\r")
-        pass
+            print(f"""Object {i + 1}:"
+              - Label: {class_name}
+              - Confidence: {obj.prob:.2%}
+              - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n""")
     return results

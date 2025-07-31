@@ -21,7 +21,7 @@ active_futures: list[Future] = []
 live_stream_enabled = Event()
 
 max_output_timestamp = 0
-output_buffer = deque(maxlen=50)
+output_buffer = deque(maxlen=10)
 
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
@@ -126,6 +126,7 @@ def __setup_cam():
             if not os.path.isfile(video_path):
                 raise ValueError("File not found: ", video_path)
 
+            print("Starting videostream in 3s...")
             # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
             time.sleep(3)
 
@@ -143,12 +144,16 @@ def __setup_cam():
                 history=10000, varThreshold=32, detectShadows=False
             )
 
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            max_fps = 30
+            sleep_time = 1 / max_fps
+
+            last_time = time.perf_counter()
             while True:
                 if stream_output.closed:
                     break
 
-                max_fps = 30
-                time.sleep(1 / max_fps)
+                time.sleep(0.015)
                 try:
                     ret, frame = cap.read()
 
@@ -158,11 +163,31 @@ def __setup_cam():
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue  # Skip the rest of this iteration and try reading the new first frame
                     else:
-                        # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        frame_resized = cv2.resize(frame, (640, 480))
+                        # gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+                        # foreground_mask = backSub.apply(gray)
+                        #
+                        # mask_no_noise = cv2.morphologyEx(
+                        #     foreground_mask, cv2.MORPH_OPEN, kernel
+                        # )
+                        # clean_mask = cv2.morphologyEx(
+                        #     mask_no_noise, cv2.MORPH_CLOSE, kernel, iterations=10
+                        # )
+                        # clean_mask = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
 
                         # frame = cv2.imdecode(frame, cv2.IMREAD_GRAYSCALE)
 
-                        resized_frame = cv2.resize(frame, (640, 480))
+                        # gray = cv2.GaussianBlur(foreground_mask, (3, 3), 0)
+                        # thresh = cv2.adaptiveThreshold(
+                        #     gray,
+                        #     255,
+                        #     cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                        #     cv2.THRESH_BINARY,
+                        #     11,
+                        #     2,
+                        # )
+                        # bgr = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+
                         # bgr = cv2.cvtColor(resized_frame, cv2.COLOR_RGB2BGR)
                         # resized_frame = cv2.resize(
                         #     resized_frame,
@@ -171,11 +196,10 @@ def __setup_cam():
                         #     fy=2,
                         #     interpolation=cv2.INTER_LINEAR,
                         # )
-                        gray = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
-                        foreground_mask = backSub.apply(gray)
-                        foreground_mask = cv2.cvtColor(
-                            foreground_mask, cv2.COLOR_GRAY2BGR
-                        )
+
+                        # foreground_mask = cv2.cvtColor(
+                        #     foreground_mask, cv2.COLOR_GRAY2BGR
+                        # )
 
                         # resized_frame = cv2.resize(frame, (1024, 768))
                         # resized_frame = cv2.resize(
@@ -184,26 +208,28 @@ def __setup_cam():
                         #
                         # w = 640
                         # h = 480
-                        #
-                        # center = resized_frame.shape
+                        # #
+                        # center = frame.shape
                         # x = center[1] / 2 - w / 2
                         # y = center[0] / 2 - h / 2
-                        #
-                        # crop_img = resized_frame[
-                        #     int(y) : int(y + h), int(x) : int(x + w)
-                        # ]
+                        # #
+                        # crop_img = frame[int(y) : int(y + h), int(x) : int(x + w)]
 
                         # _, arr = cv2.imencode(".jpg", foreground_mask)
                         # _, arr = cv2.imencode(".jpg", resized_frame)
                         # stream_output.write(arr.tobytes())
-                        stream_output.write(foreground_mask)
+
+                        stream_output.write(frame_resized)
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
             print("Stopping filestream...")
             cap.release()
 
+        # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
+        # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         video_path = "/home/martin/Downloads/cat.mov"
+        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
@@ -218,7 +244,6 @@ def __setup_cam():
     return picam2, stream_output
 
 
-time.sleep(3)
 # This single instance will be imported by other parts of the app
 _camera, input_buffer = __setup_cam()
 
