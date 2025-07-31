@@ -140,11 +140,12 @@ def __setup_cam():
             atexit.register(close_video)
 
             # backSub = cv2.createBackgroundSubtractorMOG2()
-            backSub = cv2.createBackgroundSubtractorMOG2(
-                history=10000, varThreshold=32, detectShadows=False
-            )
+            backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
 
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+            pixelcount_threshold = 500
+
             max_fps = 30
             sleep_time = 1 / max_fps
 
@@ -164,62 +165,25 @@ def __setup_cam():
                         continue  # Skip the rest of this iteration and try reading the new first frame
                     else:
                         frame_resized = cv2.resize(frame, (640, 480))
-                        # gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
-                        # foreground_mask = backSub.apply(gray)
-                        #
-                        # mask_no_noise = cv2.morphologyEx(
-                        #     foreground_mask, cv2.MORPH_OPEN, kernel
+                        blurred = cv2.GaussianBlur(frame_resized, (33, 33), 0)
+                        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+                        foreground_mask = backSub.apply(blurred)
+                        foreground_mask = cv2.morphologyEx(
+                            foreground_mask, cv2.MORPH_OPEN, kernel
+                        )
+                        # foreground_mask = cv2.morphologyEx(
+                        #     foreground_mask, cv2.MORPH_CLOSE, kernel, iterations=4
                         # )
-                        # clean_mask = cv2.morphologyEx(
-                        #     mask_no_noise, cv2.MORPH_CLOSE, kernel, iterations=10
-                        # )
-                        # clean_mask = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
+                        pixel_count = cv2.countNonZero(foreground_mask)
 
-                        # frame = cv2.imdecode(frame, cv2.IMREAD_GRAYSCALE)
+                        if pixel_count >= pixelcount_threshold:
+                            print("MOVEMENT DETECTED!!!")
 
-                        # gray = cv2.GaussianBlur(foreground_mask, (3, 3), 0)
-                        # thresh = cv2.adaptiveThreshold(
-                        #     gray,
-                        #     255,
-                        #     cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                        #     cv2.THRESH_BINARY,
-                        #     11,
-                        #     2,
-                        # )
-                        # bgr = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+                        foreground_mask = cv2.cvtColor(
+                            foreground_mask, cv2.COLOR_GRAY2BGR
+                        )
 
-                        # bgr = cv2.cvtColor(resized_frame, cv2.COLOR_RGB2BGR)
-                        # resized_frame = cv2.resize(
-                        #     resized_frame,
-                        #     None,
-                        #     fx=2,
-                        #     fy=2,
-                        #     interpolation=cv2.INTER_LINEAR,
-                        # )
-
-                        # foreground_mask = cv2.cvtColor(
-                        #     foreground_mask, cv2.COLOR_GRAY2BGR
-                        # )
-
-                        # resized_frame = cv2.resize(frame, (1024, 768))
-                        # resized_frame = cv2.resize(
-                        #     frame, None, fx=1, fy=1, interpolation=cv2.INTER_LINEAR
-                        # )
-                        #
-                        # w = 640
-                        # h = 480
-                        # #
-                        # center = frame.shape
-                        # x = center[1] / 2 - w / 2
-                        # y = center[0] / 2 - h / 2
-                        # #
-                        # crop_img = frame[int(y) : int(y + h), int(x) : int(x + w)]
-
-                        # _, arr = cv2.imencode(".jpg", foreground_mask)
-                        # _, arr = cv2.imencode(".jpg", resized_frame)
-                        # stream_output.write(arr.tobytes())
-
-                        stream_output.write(frame_resized)
+                        stream_output.write(foreground_mask)
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
@@ -228,7 +192,7 @@ def __setup_cam():
 
         # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
         # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
-        video_path = "/home/martin/Downloads/cat.mov"
+        # video_path = "/home/martin/Downloads/cat.mov"
         video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
