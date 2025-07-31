@@ -150,6 +150,11 @@ def __setup_cam():
             sleep_time = 1 / max_fps
 
             last_time = time.perf_counter()
+
+            resize_size = (480, 640)
+            overlay_color = (0, 0, 255)  # Red
+            colored_overlay = np.full((*resize_size, 3), overlay_color, dtype=np.uint8)
+
             while True:
                 if stream_output.closed:
                     break
@@ -165,8 +170,10 @@ def __setup_cam():
                         continue  # Skip the rest of this iteration and try reading the new first frame
                     else:
                         frame_resized = cv2.resize(frame, (640, 480))
+
                         blurred = cv2.GaussianBlur(frame_resized, (33, 33), 0)
                         blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+
                         foreground_mask = backSub.apply(blurred)
                         foreground_mask = cv2.morphologyEx(
                             foreground_mask, cv2.MORPH_OPEN, kernel
@@ -176,14 +183,25 @@ def __setup_cam():
                         # )
                         pixel_count = cv2.countNonZero(foreground_mask)
 
-                        if pixel_count >= pixelcount_threshold:
+                        has_movement = pixel_count >= pixelcount_threshold
+                        if has_movement:
                             print("MOVEMENT DETECTED!!!")
 
-                        foreground_mask = cv2.cvtColor(
-                            foreground_mask, cv2.COLOR_GRAY2BGR
-                        )
+                        if has_movement:
+                            alpha = 0.4  # Transparency factor. 0.0 means fully transparent, 1.0 means fully opaque.
 
-                        stream_output.write(foreground_mask)
+                            blended_frame = cv2.addWeighted(
+                                frame_resized, 1 - alpha, colored_overlay, alpha, 0
+                            )
+                            final_frame = np.where(
+                                foreground_mask[:, :, None] != 0,
+                                blended_frame,
+                                frame_resized,
+                            )
+
+                            stream_output.write(final_frame)
+                        else:
+                            output_buffer.append((0, 0, frame_resized, []))
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
