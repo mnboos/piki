@@ -50,28 +50,26 @@ def detect_objects(image_data: np.ndarray):
         f"[Worker-{worker_pid}] Inference complete in {inference_time_ms:.2f} ms.",
     )
 
+    #
+    # threshold = prob_threshold.value
+    #
+    # # 4. Print the detection results as text
+    # if objects:
+    # print("\n--- Object Detection Results ---")
     results = []
+    for obj in objects:
+        class_name = net.class_names[int(obj.label)]
+        # class_name = (
+        #     COCO_CLASSES[obj.label]
+        #     if obj.label < len(COCO_CLASSES)
+        #     else f"Unknown_ID_{obj.label}"
+        # )
+        # bbox = obj.rect
 
-    threshold = prob_threshold.value
+        results.append((obj.prob, class_name, obj.rect))
 
-    # 4. Print the detection results as text
-    if objects:
-        # print("\n--- Object Detection Results ---")
-        for i, obj in enumerate(objects):
-            class_name = net.class_names[int(obj.label)]
-            if class_name == "background" or obj.prob <= threshold:
-                continue
-            # class_name = (
-            #     COCO_CLASSES[obj.label]
-            #     if obj.label < len(COCO_CLASSES)
-            #     else f"Unknown_ID_{obj.label}"
-            # )
-            bbox = obj.rect
-
-            results.append((obj.prob, class_name, bbox))
-
-            print(f"""Object {i + 1}:"
-              - Label: {class_name}
-              - Confidence: {obj.prob:.2%}
-              - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n""")
+        # print(f"""Object {i + 1}:"
+        #   - Label: {class_name}
+        #   - Confidence: {obj.prob:.2%}
+        #   - Bounding Box (x, y, width, height): ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h})\n""")
     return results

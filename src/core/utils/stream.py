@@ -13,6 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor
 from threading import Thread
 import cv2
 import numpy as np
+import traceback
 
 
 NUM_AI_WORKERS: int = 1
@@ -115,10 +116,12 @@ class MotionDetector:
 
     def is_moving(self, frame: np.ndarray):
         if self.denoise:
-            blurred = cv2.GaussianBlur(frame, (33, 33), 0)
-            frame = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
-        new_fg = self.backSub.apply(frame)
-        self.foreground_mask = cv2.morphologyEx(new_fg, cv2.MORPH_OPEN, self.kernel)
+            frame = cv2.GaussianBlur(frame, (33, 33), 0)
+            cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY, frame)
+        self.foreground_mask = self.backSub.apply(frame)
+        cv2.morphologyEx(
+            self.foreground_mask, cv2.MORPH_OPEN, self.kernel, self.foreground_mask
+        )
         return self.moving_pixel_count() >= self.pixelcount_threshold
 
     def highlight_movement_on(
@@ -128,12 +131,16 @@ class MotionDetector:
         overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
     ) -> np.ndarray:
         colored_overlay = np.full(frame.shape, overlay_color_bgr, dtype=np.uint8)
-        blended_frame = cv2.addWeighted(
-            frame, 1 - transparency_factor, colored_overlay, transparency_factor, 0
+        blended = cv2.addWeighted(
+            frame,
+            1 - transparency_factor,
+            colored_overlay,
+            transparency_factor,
+            0,
         )
         return np.where(
             self.foreground_mask[:, :, None] != 0,
-            blended_frame,
+            blended,
             frame,
         )
 
@@ -197,18 +204,19 @@ def __setup_cam():
 
                         has_movement = motion_detector.is_moving(frame_resized)
                         if has_movement:
-                            print("MOVEMENT DETECTED!!!")
-
-                        if has_movement:
                             final_frame = motion_detector.highlight_movement_on(
                                 frame_resized
                             )
                             stream_output.write(final_frame)
                         else:
-                            output_buffer.append((0, 0, frame_resized, []))
+                            if not active_futures:  # if ai is running, skip the current frame until AI is done
+                                output_buffer.append((0, 0, frame_resized, []))
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
+                except Exception:
+                    traceback.print_exc()
+                    raise
             print("Stopping filestream...")
             cap.release()
 
