@@ -102,6 +102,42 @@ class StreamingOutput(io.BufferedIOBase):
                 raise KeyboardInterrupt from e
 
 
+class MotionDetector:
+    def __init__(self, pixelcount_threshold: int = 500, denoise: bool = True):
+        self.backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
+        self.foreground_mask: np.ndarray | None = None
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.pixelcount_threshold = pixelcount_threshold
+        self.denoise = denoise
+
+    def moving_pixel_count(self):
+        return cv2.countNonZero(self.foreground_mask)
+
+    def is_moving(self, frame: np.ndarray):
+        if self.denoise:
+            blurred = cv2.GaussianBlur(frame, (33, 33), 0)
+            frame = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+        new_fg = self.backSub.apply(frame)
+        self.foreground_mask = cv2.morphologyEx(new_fg, cv2.MORPH_OPEN, self.kernel)
+        return self.moving_pixel_count() >= self.pixelcount_threshold
+
+    def highlight_movement_on(
+        self,
+        frame: np.ndarray,
+        transparency_factor: float = 0.4,
+        overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
+    ) -> np.ndarray:
+        colored_overlay = np.full(frame.shape, overlay_color_bgr, dtype=np.uint8)
+        blended_frame = cv2.addWeighted(
+            frame, 1 - transparency_factor, colored_overlay, transparency_factor, 0
+        )
+        return np.where(
+            self.foreground_mask[:, :, None] != 0,
+            blended_frame,
+            frame,
+        )
+
+
 def __setup_cam():
     picam2 = None
     stream_output = StreamingOutput()
@@ -139,21 +175,9 @@ def __setup_cam():
 
             atexit.register(close_video)
 
-            # backSub = cv2.createBackgroundSubtractorMOG2()
-            backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
-
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-
-            pixelcount_threshold = 500
-
             max_fps = 30
-            sleep_time = 1 / max_fps
 
-            last_time = time.perf_counter()
-
-            resize_size = (480, 640)
-            overlay_color = (0, 0, 255)  # Red
-            colored_overlay = np.full((*resize_size, 3), overlay_color, dtype=np.uint8)
+            motion_detector = MotionDetector()
 
             while True:
                 if stream_output.closed:
@@ -171,34 +195,14 @@ def __setup_cam():
                     else:
                         frame_resized = cv2.resize(frame, (640, 480))
 
-                        blurred = cv2.GaussianBlur(frame_resized, (33, 33), 0)
-                        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
-
-                        foreground_mask = backSub.apply(blurred)
-                        foreground_mask = cv2.morphologyEx(
-                            foreground_mask, cv2.MORPH_OPEN, kernel
-                        )
-                        # foreground_mask = cv2.morphologyEx(
-                        #     foreground_mask, cv2.MORPH_CLOSE, kernel, iterations=4
-                        # )
-                        pixel_count = cv2.countNonZero(foreground_mask)
-
-                        has_movement = pixel_count >= pixelcount_threshold
+                        has_movement = motion_detector.is_moving(frame_resized)
                         if has_movement:
                             print("MOVEMENT DETECTED!!!")
 
                         if has_movement:
-                            alpha = 0.4  # Transparency factor. 0.0 means fully transparent, 1.0 means fully opaque.
-
-                            blended_frame = cv2.addWeighted(
-                                frame_resized, 1 - alpha, colored_overlay, alpha, 0
+                            final_frame = motion_detector.highlight_movement_on(
+                                frame_resized
                             )
-                            final_frame = np.where(
-                                foreground_mask[:, :, None] != 0,
-                                blended_frame,
-                                frame_resized,
-                            )
-
                             stream_output.write(final_frame)
                         else:
                             output_buffer.append((0, 0, frame_resized, []))
