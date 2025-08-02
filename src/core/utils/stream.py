@@ -194,6 +194,7 @@ def __setup_cam():
                     main={"size": (640, 480)},
                     # queue=False,
                     controls={
+                        "FrameRate": 1,
                         "ColourGains": (1, 1),
                         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
                     },
@@ -205,7 +206,7 @@ def __setup_cam():
                 # encoder = H264Encoder(100_000, repeat=True)
 
                 # encoder.output = CircularOutput(file=stream_output, buffersize=10)
-                encoder.frame_skip_count = 10
+                # encoder.frame_skip_count = 10
                 # encoder.use_hw = True
 
                 picam2.start_recording(encoder, FileOutput(stream_output))
