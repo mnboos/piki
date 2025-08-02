@@ -87,6 +87,7 @@ class StreamingOutput(io.BufferedIOBase):
             self.frame = buf
 
         if buf is not None and buf.size:
+            cv2.resize(buf, (640, 480), buf)
             has_movement = self.motion_detector.is_moving(buf)
             if has_movement:
                 final_frame = self.motion_detector.highlight_movement_on(buf)
@@ -184,7 +185,7 @@ def __setup_cam():
         def stream_camera():
             picam2 = Picamera2()
             camera_config = picam2.create_video_configuration(
-                main={"size": resolution},
+                main={"size": (1920, 1080)},
                 queue=False,
                 controls={"ColourGains": (1, 1)},
             )
