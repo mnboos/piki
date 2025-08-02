@@ -201,7 +201,7 @@ def __setup_cam():
                 picam2.configure(camera_config)
                 picam2.start_preview(Preview.NULL)
 
-                encoder = JpegEncoder()
+                encoder = JpegEncoder(num_threads=1)
                 # encoder = H264Encoder(100_000, repeat=True)
 
                 encoder.output = CircularOutput(file=stream_output, buffersize=10)
