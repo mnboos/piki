@@ -87,7 +87,8 @@ class StreamingOutput(io.BufferedIOBase):
 
             self.frame = buf
 
-        frame_resized = cv2.resize(buf, (640, 480))
+        # frame_resized = cv2.resize(buf, (640, 480))
+        frame_resized = buf
 
         has_movement = self.motion_detector.is_moving(frame_resized)
         if has_movement:
@@ -168,7 +169,6 @@ class MotionDetector:
 
 
 def __setup_cam():
-    picam2 = None
     stream_output = StreamingOutput()
 
     resolution = (640, 480)
@@ -181,7 +181,9 @@ def __setup_cam():
         def stream_camera():
             picam2 = Picamera2()
             camera_config = picam2.create_video_configuration(
-                main={"size": resolution}, controls={"ColourGains": (1, 1)}
+                main={"size": resolution, "format": "BGR888"},
+                queue=False,
+                controls={"ColourGains": (1, 1)},
             )
             picam2.configure(camera_config)
             picam2.start_preview(Preview.NULL)
@@ -196,6 +198,13 @@ def __setup_cam():
             picam2.start_recording(encoder, FileOutput(stream_output))
             picam2.start()
             picam2.start_encoder(encoder)
+
+            def cleanup():
+                picam2.stop_encoder()
+                picam2.stop_recording()
+                picam2.close()
+
+            atexit.register(cleanup)
 
         streamer_func = stream_camera
 
@@ -265,19 +274,15 @@ def __setup_cam():
     # stream_file(video_path)
     # print("Streaming video from file")
 
-    return picam2, stream_output
+    return stream_output
 
 
 # This single instance will be imported by other parts of the app
-_camera, input_buffer = __setup_cam()
+input_buffer = __setup_cam()
 
 
 def cleanup():
     print("[DJANGO SHUTDOWN] Stopping processes...")
-    if _camera:
-        print("Stopping camera and cleaning up GPIO")
-        _camera.stop_recording()
-        _camera.close()
 
     with input_buffer.condition:
         input_buffer.close()
