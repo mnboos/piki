@@ -14,7 +14,7 @@ import traceback
 
 from picamera2.encoders import H264Encoder
 
-NUM_AI_WORKERS: int = 1
+NUM_AI_WORKERS: int = 2
 
 active_futures: list[Future] = []
 live_stream_enabled = Event()
@@ -99,6 +99,8 @@ class StreamingOutput(io.BufferedIOBase):
             final_frame = self.motion_detector.highlight_movement_on(frame_resized)
         else:
             final_frame = frame_resized
+
+        print(f"Has movement: {has_movement}, active futures: {len(active_futures)}")
 
         # foreground_mask = self.backSub.apply(self.frame)
         if has_movement and len(active_futures) < NUM_AI_WORKERS:
