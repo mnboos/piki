@@ -188,7 +188,8 @@ def __setup_cam():
             try:
                 picam2 = Picamera2()
                 camera_config = picam2.create_video_configuration(
-                    main={"size": (1296, 972)},
+                    # main={"size": (1296, 972)},
+                    main={"size": (640, 480)},
                     queue=False,
                     controls={
                         "ColourGains": (1, 1),
