@@ -185,28 +185,32 @@ def __setup_cam():
         from libcamera import controls
 
         def stream_camera():
-            picam2 = Picamera2()
-            camera_config = picam2.create_video_configuration(
-                main={"size": (1920, 1080)},
-                queue=False,
-                controls={
-                    "ColourGains": (1, 1),
-                    "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
-                },
-            )
-            picam2.configure(camera_config)
-            picam2.start_preview(Preview.NULL)
+            try:
+                picam2 = Picamera2()
+                camera_config = picam2.create_video_configuration(
+                    main={"size": (1920, 1080)},
+                    queue=False,
+                    controls={
+                        "ColourGains": (1, 1),
+                        "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
+                    },
+                )
+                picam2.configure(camera_config)
+                picam2.start_preview(Preview.NULL)
 
-            encoder = JpegEncoder()
-            # encoder = H264Encoder(100_000, repeat=True)
+                encoder = JpegEncoder()
+                # encoder = H264Encoder(100_000, repeat=True)
 
-            encoder.output = CircularOutput(file=stream_output, buffersize=10)
-            encoder.frame_skip_count = 10
-            encoder.use_hw = True
+                encoder.output = CircularOutput(file=stream_output, buffersize=10)
+                encoder.frame_skip_count = 10
+                encoder.use_hw = True
 
-            picam2.start_recording(encoder, FileOutput(stream_output))
-            picam2.start()
-            picam2.start_encoder(encoder)
+                picam2.start_recording(encoder, FileOutput(stream_output))
+                picam2.start()
+                picam2.start_encoder(encoder)
+            except:
+                traceback.print_exc()
+                raise
 
             def cleanup():
                 print("Cleaning up picam2")
