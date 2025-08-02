@@ -76,10 +76,8 @@ class StreamingOutput(io.BufferedIOBase):
         self.motion_detector = MotionDetector()
 
     def write(self, buf: np.ndarray | bytes) -> None:
-        buf = buf[:]
-
-        print("stream frame write: ", buf)
         with self.condition:
+            buf = buf[:]
             if isinstance(buf, bytes):
                 buf = np.frombuffer(buf, dtype=np.uint8)
                 buf = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -172,31 +170,38 @@ class MotionDetector:
 def __setup_cam():
     picam2 = None
     stream_output = StreamingOutput()
+
+    resolution = (640, 480)
+
     try:
         from picamera2 import Picamera2, Preview
         from picamera2.encoders import JpegEncoder
         from picamera2.outputs import FileOutput, CircularOutput
 
-        picam2 = Picamera2()
-        camera_config = picam2.create_video_configuration(
-            main={"size": (640, 480)}, controls={"ColourGains": (1, 1)}
-        )
-        picam2.configure(camera_config)
-        picam2.start_preview(Preview.NULL)
+        def stream_camera():
+            picam2 = Picamera2()
+            camera_config = picam2.create_video_configuration(
+                main={"size": resolution}, controls={"ColourGains": (1, 1)}
+            )
+            picam2.configure(camera_config)
+            picam2.start_preview(Preview.NULL)
 
-        # encoder = JpegEncoder()
-        encoder = H264Encoder(100_000, repeat=True)
+            # encoder = JpegEncoder()
+            encoder = H264Encoder(100_000, repeat=True)
 
-        encoder.output = CircularOutput(file=stream_output, buffersize=10)
-        encoder.frame_skip_count = 2
-        encoder.use_hw = True
+            encoder.output = CircularOutput(file=stream_output, buffersize=10)
+            encoder.frame_skip_count = 2
+            encoder.use_hw = True
 
-        # picam2.start_recording(encoder, FileOutput(stream_output))
-        picam2.start()
-        picam2.start_encoder(encoder)
+            picam2.start_recording(encoder, FileOutput(stream_output))
+            picam2.start()
+            picam2.start_encoder(encoder)
 
-    except Exception as e:
+        streamer_func = stream_camera
+
+    except ImportError as e:
         print(f"Hardware initialization failed: {e}")
+        traceback.print_exc()
 
         def stream_file(video_path: str):
             if not os.path.isfile(video_path):
@@ -232,18 +237,8 @@ def __setup_cam():
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue  # Skip the rest of this iteration and try reading the new first frame
                     else:
-                        frame_resized = cv2.resize(frame, (640, 480))
+                        frame_resized = cv2.resize(frame, resolution)
                         stream_output.write(frame_resized)
-
-                        # has_movement = motion_detector.is_moving(frame_resized)
-                        # if has_movement:
-                        #     final_frame = motion_detector.highlight_movement_on(
-                        #         frame_resized
-                        #     )
-                        #     stream_output.write(final_frame)
-                        # else:
-                        #     if not active_futures:  # if ai is running, skip the current frame until AI is done
-                        #         output_buffer.append((0, 0, frame_resized, []))
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
@@ -264,9 +259,11 @@ def __setup_cam():
         if not os.path.isfile(video_path):
             raise RuntimeError(f"File not found: {video_path}")
 
-        thread_pool.submit(stream_file, video_path=video_path)
-        # stream_file(video_path)
-        print("Streaming video from file")
+        streamer_func = lambda: stream_file(video_path)
+
+    thread_pool.submit(streamer_func)
+    # stream_file(video_path)
+    # print("Streaming video from file")
 
     return picam2, stream_output
 
