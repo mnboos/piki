@@ -78,60 +78,54 @@ class StreamingOutput(io.BufferedIOBase):
     def write(self, buf: bytes) -> None:
         print(f"[{time.monotonic_ns()}]: got frame")
         with self.condition:
-            buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
-            buf: np.ndarray
-            if buf is None or not buf.size:
-                print("frame is empty")
-                return
-
             if self.closed:
                 raise RuntimeError("Stream is closed")
 
+            buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
+            buf: np.ndarray
             self.frame = buf
 
-        print("processing frame size: ", buf.size)
+        if buf is not None and buf.size:
+            has_movement = self.motion_detector.is_moving(buf)
+            if has_movement:
+                final_frame = self.motion_detector.highlight_movement_on(buf)
+            else:
+                final_frame = buf
 
-        # frame_resized = cv2.resize(buf, (640, 480))
-        frame_resized = buf
+            print(
+                f"Has movement: {has_movement}, active futures: {len(active_futures)}"
+            )
 
-        has_movement = self.motion_detector.is_moving(frame_resized)
-        if has_movement:
-            final_frame = self.motion_detector.highlight_movement_on(frame_resized)
-        else:
-            final_frame = frame_resized
+            # foreground_mask = self.backSub.apply(self.frame)
+            if has_movement and len(active_futures) < NUM_AI_WORKERS:
+                try:
+                    timestamp = time.monotonic_ns()
 
-        print(f"Has movement: {has_movement}, active futures: {len(active_futures)}")
+                    global max_output_timestamp
 
-        # foreground_mask = self.backSub.apply(self.frame)
-        if has_movement and len(active_futures) < NUM_AI_WORKERS:
-            try:
-                timestamp = time.monotonic_ns()
+                    future: Future = process_pool.submit(
+                        run_object_detection,
+                        frame_data=buf[:],
+                        timestamp=timestamp,
+                    )
+                    # future: Future = process_pool.submit(
+                    #     run_object_detection,
+                    #     frame_data=buf[:],
+                    #     timestamp=timestamp,
+                    # )
 
-                global max_output_timestamp
+                    active_futures.append(future)
+                    future.add_done_callback(on_done)
 
-                future: Future = process_pool.submit(
-                    run_object_detection,
-                    frame_data=frame_resized[:],
-                    timestamp=timestamp,
-                )
-                # future: Future = process_pool.submit(
-                #     run_object_detection,
-                #     frame_data=buf[:],
-                #     timestamp=timestamp,
-                # )
-
-                active_futures.append(future)
-                future.add_done_callback(on_done)
-
-            except RuntimeError as e:
-                traceback.print_exc()
-                raise KeyboardInterrupt from e
-        elif not has_movement and not active_futures:
-            print("not detecting on current frame")
-            output_buffer.append((0, 0, final_frame, []))
-        else:
-            # this is for testing only
-            output_buffer.append((0, 0, final_frame, []))
+                except RuntimeError as e:
+                    traceback.print_exc()
+                    raise KeyboardInterrupt from e
+            elif not has_movement and not active_futures:
+                print("not detecting on current frame")
+                output_buffer.append((0, 0, final_frame, []))
+            else:
+                # this is for testing only
+                output_buffer.append((0, 0, final_frame, []))
 
 
 class MotionDetector:

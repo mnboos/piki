@@ -37,7 +37,7 @@ def detect_objects(image_data: np.ndarray):
     # image = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
 
     # 3. Perform object detection and measure inference time
-    # print("Starting inference...", end="\r")
+    print("Starting inference...")
     start_time = time.perf_counter()
 
     objects: list[Detect_Object] = net(image_data)  # This is the line we are timing
