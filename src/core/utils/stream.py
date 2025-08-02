@@ -75,16 +75,15 @@ class StreamingOutput(io.BufferedIOBase):
         print("StreamingOutput created")
         self.motion_detector = MotionDetector()
 
-    def write(self, buf: np.ndarray | bytes) -> None:
+    def write(self, buf: bytes) -> None:
         print(f"[{time.monotonic_ns()}]: got frame")
         with self.condition:
-            buf = buf[:]
-            if isinstance(buf, bytes):
-                buf = np.frombuffer(buf, dtype=np.uint8)
-                buf = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
+            assert buf.size
 
             buf: np.ndarray
             if buf is None or not buf.size:
+                print("frame is empty")
                 return
 
             if self.closed:
