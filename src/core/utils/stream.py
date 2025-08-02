@@ -92,6 +92,8 @@ class StreamingOutput(io.BufferedIOBase):
 
             self.frame = buf
 
+        print("processing frame size: ", buf.size)
+
         # frame_resized = cv2.resize(buf, (640, 480))
         frame_resized = buf
 
