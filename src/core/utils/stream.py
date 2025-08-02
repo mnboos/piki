@@ -76,8 +76,7 @@ class StreamingOutput(io.BufferedIOBase):
         self.motion_detector = MotionDetector()
 
     def write(self, buf: np.ndarray | bytes) -> None:
-        if buf is None:
-            return
+        buf = buf[:]
 
         print("stream frame write: ", buf)
         with self.condition:
@@ -88,7 +87,7 @@ class StreamingOutput(io.BufferedIOBase):
             if self.closed:
                 raise RuntimeError("Stream is closed")
 
-            self.frame = buf[:]
+            self.frame = buf
 
         frame_resized = cv2.resize(buf, (640, 480))
 
@@ -190,6 +189,7 @@ def __setup_cam():
 
         encoder.output = CircularOutput(file=stream_output, buffersize=10)
         encoder.frame_skip_count = 2
+        encoder.use_hw = True
 
         # picam2.start_recording(encoder, FileOutput(stream_output))
         picam2.start()
