@@ -186,6 +186,8 @@ def __setup_cam():
 
         def stream_camera():
             try:
+                print("Starting stream in 5 seconds...")
+                time.sleep(5)
                 picam2 = Picamera2()
                 camera_config = picam2.create_video_configuration(
                     # main={"size": (1296, 972)},
@@ -208,7 +210,8 @@ def __setup_cam():
 
                 picam2.start_recording(encoder, FileOutput(stream_output))
                 picam2.start()
-                picam2.start_encoder(encoder)
+                if not encoder.running:
+                    picam2.start_encoder(encoder)
             except:
                 traceback.print_exc()
                 raise
