@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 import traceback
 
+from picamera2.encoders import H264Encoder
 
 NUM_AI_WORKERS: int = 1
 
@@ -75,6 +76,7 @@ class StreamingOutput(io.BufferedIOBase):
         self.motion_detector = MotionDetector()
 
     def write(self, buf: np.ndarray | bytes) -> None:
+        print("stream frame write")
         with self.condition:
             if isinstance(buf, bytes):
                 buf = np.frombuffer(buf, dtype=np.uint8)
@@ -178,9 +180,17 @@ def __setup_cam():
             main={"size": (640, 480)}, controls={"ColourGains": (1, 1)}
         )
         picam2.configure(camera_config)
-
         picam2.start_preview(Preview.NULL)
-        picam2.start_recording(JpegEncoder(num_threads=1), FileOutput(stream_output))
+
+        # encoder = JpegEncoder()
+        encoder = H264Encoder(100_000, repeat=True)
+
+        encoder.output = CircularOutput(file=stream_output, buffersize=10)
+        encoder.frame_skip_count = 2
+
+        # picam2.start_recording(encoder, FileOutput(stream_output))
+        picam2.start()
+        picam2.start_encoder(encoder)
 
     except Exception as e:
         print(f"Hardware initialization failed: {e}")

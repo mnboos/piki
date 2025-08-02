@@ -8,9 +8,9 @@ dependencies = [
     "django==5.2.4",
     "flask==3.1.1",
     "gpiozero==2.0.1",
-    "ncnn>=1.0.20250503",
+    "ncnn==1.0.20250503",
     "numpy==1.26.4",
-    "opencv-python>=4.11.0.86",
+    "opencv-python-headless==4.11.0.86",
     "picamera2==0.3.30",
     "pigpio==1.78",
     "pillow==11.3.0",
@@ -19,5 +19,5 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.12.5",
+    "ruff==0.12.7",
 ]
