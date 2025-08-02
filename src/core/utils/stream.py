@@ -1,7 +1,5 @@
-import concurrent.futures
 import dataclasses
 import os
-from concurrent import futures
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Condition, Event
 from collections import deque
@@ -10,7 +8,6 @@ import io
 import time
 import atexit
 from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor
-from threading import Thread
 import cv2
 import numpy as np
 import traceback
@@ -74,8 +71,9 @@ class StreamingOutput(io.BufferedIOBase):
         self.condition = Condition()
         # self.backSub = cv2.createBackgroundSubtractorMOG2()
         print("StreamingOutput created")
+        self.motion_detector = MotionDetector()
 
-    def write(self, buf: np.ndarray) -> None:
+    def write(self, buf: np.ndarray | bytes) -> None:
         with self.condition:
             if isinstance(buf, bytes):
                 buf = np.frombuffer(buf, dtype=np.uint8)
@@ -86,8 +84,16 @@ class StreamingOutput(io.BufferedIOBase):
 
             self.frame = buf[:]
 
+        frame_resized = cv2.resize(buf, (640, 480))
+
+        has_movement = self.motion_detector.is_moving(frame_resized)
+        if has_movement:
+            final_frame = self.motion_detector.highlight_movement_on(frame_resized)
+        else:
+            final_frame = frame_resized
+
         # foreground_mask = self.backSub.apply(self.frame)
-        if len(active_futures) < NUM_AI_WORKERS:
+        if has_movement and len(active_futures) < NUM_AI_WORKERS:
             try:
                 timestamp = time.monotonic_ns()
 
@@ -95,9 +101,14 @@ class StreamingOutput(io.BufferedIOBase):
 
                 future: Future = process_pool.submit(
                     run_object_detection,
-                    frame_data=buf[:],
+                    frame_data=final_frame[:],
                     timestamp=timestamp,
                 )
+                # future: Future = process_pool.submit(
+                #     run_object_detection,
+                #     frame_data=buf[:],
+                #     timestamp=timestamp,
+                # )
 
                 active_futures.append(future)
                 future.add_done_callback(on_done)
@@ -105,6 +116,8 @@ class StreamingOutput(io.BufferedIOBase):
             except RuntimeError as e:
                 print("ProcessPoolExecutor unusable")
                 raise KeyboardInterrupt from e
+        elif not has_movement and not active_futures:
+            output_buffer.append((0, 0, final_frame, []))
 
 
 class MotionDetector:
@@ -186,9 +199,8 @@ def __setup_cam():
 
             atexit.register(close_video)
 
-            max_fps = 30
-
-            motion_detector = MotionDetector()
+            # max_fps = 30
+            # motion_detector = MotionDetector()
 
             while True:
                 if stream_output.closed:
@@ -205,16 +217,17 @@ def __setup_cam():
                         continue  # Skip the rest of this iteration and try reading the new first frame
                     else:
                         frame_resized = cv2.resize(frame, (640, 480))
+                        stream_output.write(frame_resized)
 
-                        has_movement = motion_detector.is_moving(frame_resized)
-                        if has_movement:
-                            final_frame = motion_detector.highlight_movement_on(
-                                frame_resized
-                            )
-                            stream_output.write(final_frame)
-                        else:
-                            if not active_futures:  # if ai is running, skip the current frame until AI is done
-                                output_buffer.append((0, 0, frame_resized, []))
+                        # has_movement = motion_detector.is_moving(frame_resized)
+                        # if has_movement:
+                        #     final_frame = motion_detector.highlight_movement_on(
+                        #         frame_resized
+                        #     )
+                        #     stream_output.write(final_frame)
+                        # else:
+                        #     if not active_futures:  # if ai is running, skip the current frame until AI is done
+                        #         output_buffer.append((0, 0, frame_resized, []))
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
