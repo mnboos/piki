@@ -76,11 +76,16 @@ class StreamingOutput(io.BufferedIOBase):
         self.motion_detector = MotionDetector()
 
     def write(self, buf: np.ndarray | bytes) -> None:
+        print(f"[{time.monotonic_ns()}]: got frame")
         with self.condition:
             buf = buf[:]
             if isinstance(buf, bytes):
                 buf = np.frombuffer(buf, dtype=np.uint8)
                 buf = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+
+            buf: np.ndarray
+            if buf is None or not buf.size:
+                return
 
             if self.closed:
                 raise RuntimeError("Stream is closed")
@@ -200,6 +205,7 @@ def __setup_cam():
             picam2.start_encoder(encoder)
 
             def cleanup():
+                print("Cleaning up picam2")
                 picam2.stop_encoder()
                 picam2.stop_recording()
                 picam2.close()
