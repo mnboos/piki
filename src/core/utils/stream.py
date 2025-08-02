@@ -198,7 +198,7 @@ def __setup_cam():
             # encoder = H264Encoder(100_000, repeat=True)
 
             encoder.output = CircularOutput(file=stream_output, buffersize=10)
-            encoder.frame_skip_count = 2
+            encoder.frame_skip_count = 10
             encoder.use_hw = True
 
             picam2.start_recording(encoder, FileOutput(stream_output))
