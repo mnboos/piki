@@ -77,6 +77,10 @@ class StreamingOutput(io.BufferedIOBase):
 
     def write(self, buf: np.ndarray) -> None:
         with self.condition:
+            if isinstance(buf, bytes):
+                buf = np.frombuffer(buf, dtype=np.uint8)
+                buf = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+
             if self.closed:
                 raise RuntimeError("Stream is closed")
 
