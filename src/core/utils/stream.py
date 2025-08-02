@@ -41,6 +41,7 @@ def run_object_detection(frame_data: np.ndarray, timestamp: int):
 
     from .ai import detect_objects
 
+    print("detect frame")
     worker_pid = mp.current_process().pid
     result = detect_objects(frame_data)
     return worker_pid, timestamp, frame_data, result
@@ -114,10 +115,12 @@ class StreamingOutput(io.BufferedIOBase):
                 future.add_done_callback(on_done)
 
             except RuntimeError as e:
-                print("ProcessPoolExecutor unusable")
+                traceback.print_exc()
                 raise KeyboardInterrupt from e
         elif not has_movement and not active_futures:
+            print("not detecting on current frame")
             output_buffer.append((0, 0, final_frame, []))
+            time.sleep(0.01)
 
 
 class MotionDetector:
