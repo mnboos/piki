@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 import traceback
 
+from picamera2 import controls
 from picamera2.encoders import H264Encoder
 
 NUM_AI_WORKERS: int = 2
@@ -181,13 +182,17 @@ def __setup_cam():
         from picamera2 import Picamera2, Preview
         from picamera2.encoders import JpegEncoder
         from picamera2.outputs import FileOutput, CircularOutput
+        from libcamera import controls
 
         def stream_camera():
             picam2 = Picamera2()
             camera_config = picam2.create_video_configuration(
                 main={"size": (1920, 1080)},
                 queue=False,
-                controls={"ColourGains": (1, 1)},
+                controls={
+                    "ColourGains": (1, 1),
+                    "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
+                },
             )
             picam2.configure(camera_config)
             picam2.start_preview(Preview.NULL)
