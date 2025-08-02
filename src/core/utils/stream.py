@@ -217,6 +217,7 @@ def __setup_cam():
                 print("Cleaning up picam2")
                 picam2.stop_encoder()
                 picam2.stop_recording()
+                encoder.stop()
                 picam2.close()
 
             atexit.register(cleanup)
