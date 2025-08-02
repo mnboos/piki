@@ -101,7 +101,7 @@ class StreamingOutput(io.BufferedIOBase):
 
                 future: Future = process_pool.submit(
                     run_object_detection,
-                    frame_data=final_frame[:],
+                    frame_data=frame_resized[:],
                     timestamp=timestamp,
                 )
                 # future: Future = process_pool.submit(
