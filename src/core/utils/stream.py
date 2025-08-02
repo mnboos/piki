@@ -79,8 +79,6 @@ class StreamingOutput(io.BufferedIOBase):
         print(f"[{time.monotonic_ns()}]: got frame")
         with self.condition:
             buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
-            assert buf.size
-
             buf: np.ndarray
             if buf is None or not buf.size:
                 print("frame is empty")
