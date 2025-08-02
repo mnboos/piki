@@ -4,19 +4,20 @@ from pathlib import Path
 import cv2
 from ai_edge_litert.interpreter import Interpreter
 import numpy as np
-from PIL import Image
+
+# from PIL import Image
 import multiprocessing as mp
 from ctypes import c_float
 
 prob_threshold = mp.Value(c_float, 0.5)
 
+models = {"nanodet", "mobilenetv2_ssdlite", "mobilenetv3_ssdlite", ""}
 
 print("Loading model...")
 model_path = str(
     Path(__file__).parent
     / "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
 )
-
 is_quant = "quant" in model_path.lower()
 
 ip = Interpreter(model_path=model_path)
@@ -112,37 +113,23 @@ image_classes = {
 }
 
 
-def get_mobilenet_input(f, out_size=(300, 300)):
-    img = Image.frombytes("RGB", (640, 480), f)
-    original_size = img.size  # Get original image size (width, height)
-    resized_img = img.resize(out_size)
-    img_arr = np.array(resized_img)
-    if not is_quant:
-        img_arr = img_arr.astype(np.float32) / 128 - 1
-    return np.array([img_arr]), original_size
-
-
-def detect_objects(image_data, out_size=(300, 300)):
-    # assert image_data
-    assert image_data is not None
-
-    image_np = np.frombuffer(image_data, np.uint8)
-    image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+def detect_objects(image: np.ndarray, out_size=(300, 300)):
+    # image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
     # orig_shape = image.shape
     # print("orig: ", orig_shape)
 
-    resized_img = cv2.resize(image, out_size, interpolation=cv2.INTER_AREA)
-    img_arr = np.array(resized_img)
+    image = cv2.resize(image, out_size, interpolation=cv2.INTER_AREA)
+    # img_arr = np.array(resized_img)
 
     if not is_quant:
-        img_arr = img_arr.astype(np.float32) / 128 - 1
+        image = image.astype(np.float32) / 128 - 1
 
     # ======================================================================
     # FIX: Add the batch dimension to make the input tensor 4D
     # Before: img_arr.shape was (300, 300, 3)
     # After:  input_tensor.shape will be (1, 300, 300, 3)
-    img_arr = np.expand_dims(img_arr, axis=0)
+    # img_arr = np.expand_dims(img_arr, axis=0)
     # ======================================================================
 
     ms = lambda: int(round(time.time() * 1000))
@@ -178,14 +165,14 @@ def detect_objects(image_data, out_size=(300, 300)):
 
             print("  ", cl_id, label, score, [abs_xmin, abs_ymin, abs_xmax, abs_ymax])
 
-    t0 = ms()
-    ip.set_tensor(inp_id, img_arr)
+    t0 = time.perf_counter()
+    ip.set_tensor(inp_id, [image])
     ip.invoke()
-    tt = ms() - t0
+    tt = round((time.perf_counter() - t0) * 1000)
     print("Time:", tt, "ms")
     boxes = ip.get_tensor(out_id0)
     classes = ip.get_tensor(out_id1)
     scores = ip.get_tensor(out_id2)
     num_det = ip.get_tensor(out_id3)
     print_output((boxes, classes, scores, num_det), original_img_size=(0, 0))
-    return image_data, []
+    return []

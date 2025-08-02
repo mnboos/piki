@@ -1,9 +1,8 @@
 import time
 
+import cv2
 from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
-from PIL import Image, ImageFont, ImageDraw
-import io
 from .utils import clamp
 from .utils import stream, ai
 
@@ -16,64 +15,81 @@ def index(request):
 
 
 def gen_frames():
-    """Video streaming generator function."""
+    """Video streaming generator function, converted to pure OpenCV."""
 
-    font_size = 24
-    font = ImageFont.load_default(size=font_size)
+    # --- OpenCV Font and Color Configuration ---
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    text_color = (255, 255, 255)  # White in BGR
+    rect_color = (0, 0, 255)  # Red in BGR
+    thickness = 2
 
-    img = Image.new("RGB", (640, 480), color="gray")
-    draw = ImageDraw.Draw(img)
-
-    print("Starting video retrieval...")
+    print("Starting OpenCV video retrieval...")
     try:
         stream.live_stream_enabled.set()
+
         while True:
-            if True:
-                with stream.output.condition:
-                    stream.output.condition.wait()
-                    # frame = stream.output.frame
-            # else:
-            #     text = f"Time: {now().strftime('%H:%M:%S')}"
-            #
-            #     draw.rectangle((0, 0, 640, 480), fill="gray")
-            #     draw.text((0, 0), text, font=font, fill="white")
-            #
-            #     buffer = io.BytesIO()
-            #
-            #     img.save(buffer, format="JPEG")
-            #
-            #     # frame: bytes = buffer.getvalue()
-            #     stream.output.write(buffer.getvalue()[:])
-            #     time.sleep(1)  # Simulate 10 FPS```
+            # Get data from the worker output buffer
+            try:
+                # The 'frame' variable is expected to be a NumPy array
+                worker_pid, timestamp, frame, detected_objects = (
+                    stream.output_buffer.popleft()
+                )
+            except IndexError:
+                # If the buffer is empty, wait briefly and try again
+                time.sleep(0.01)
+                continue
 
-            results = stream.process_results()
-            for r in results:
-                worker_pid, timestamp, inference_result = r
-                frame, detected_objects = inference_result
-                with Image.open(io.BytesIO(frame)) as img:
-                    draw = ImageDraw.Draw(img)
-                    for confidence, label, bbox in detected_objects:
-                        draw.text(
-                            (bbox.x, bbox.y),
-                            f"{label} ({confidence:.2%})",
-                            font=font,
-                            fill="white",
-                        )
-                    if not detected_objects:
-                        draw.text(
-                            (0, 50), "No objects detected", font=font, fill="white"
-                        )
+            # This remains an empty list as per your original non-commented code.
+            # If you were to find contours, you would do it here on the 'frame'.
+            contours = []
 
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="JPEG")
+            # --- Drawing Logic using OpenCV ---
+            # All drawing happens directly on the 'frame' NumPy array.
 
-                    yield (
-                        b"--frame\nContent-Type: image/jpeg\n\n"
-                        + buffer.getvalue()
-                        + b"\n"
-                    )
-            # yield b"--frame\nContent-Type: image/jpeg\n\n" + frame + b"\n"
+            # Loop through contours (currently does nothing as 'contours' is empty)
+            for cnt in contours:
+                rect = cv2.boundingRect(cnt)
+                x, y, w, h = rect
+                min_size = 20
+                if min_size <= h <= w:
+                    # Draw a red rectangle using OpenCV
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, thickness)
+
+            # Loop through objects detected by the AI model
+            for confidence, label, bbox in detected_objects:
+                # Assuming bbox has .x and .y attributes for the top-left corner
+                # For drawing text above the box, you might use (bbox.x, bbox.y - 10)
+                text_position = (int(bbox.x), int(bbox.y))
+
+                text_to_draw = f"{label} ({confidence:.2%})"
+
+                # Draw the text using OpenCV
+                cv2.putText(
+                    frame,
+                    text_to_draw,
+                    text_position,
+                    font,
+                    font_scale,
+                    text_color,
+                    thickness,
+                )
+
+            # --- Final Encoding and Yielding ---
+            # Encode the modified frame (with drawings) to JPEG format in memory
+            success, buffer = cv2.imencode(".jpg", frame)
+
+            # If encoding was successful, yield the frame
+            if success:
+                frame_bytes = buffer.tobytes()
+                yield (
+                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                    + frame_bytes
+                    + b"\r\n"
+                )
+
     finally:
+        # This part remains the same
         stream.live_stream_enabled.clear()
 
 
