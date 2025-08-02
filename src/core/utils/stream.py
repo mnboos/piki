@@ -76,6 +76,9 @@ class StreamingOutput(io.BufferedIOBase):
         self.motion_detector = MotionDetector()
 
     def write(self, buf: np.ndarray | bytes) -> None:
+        if buf is None:
+            return
+
         print("stream frame write: ", buf)
         with self.condition:
             if isinstance(buf, bytes):
