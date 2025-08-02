@@ -185,7 +185,7 @@ def __setup_cam():
         def stream_camera():
             picam2 = Picamera2()
             camera_config = picam2.create_video_configuration(
-                main={"size": resolution, "format": "BGR888"},
+                main={"size": resolution},
                 queue=False,
                 controls={"ColourGains": (1, 1)},
             )
