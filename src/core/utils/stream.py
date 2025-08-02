@@ -51,6 +51,7 @@ def run_object_detection(frame_data: np.ndarray, timestamp: int):
 def on_done(future: Future):
     global max_output_timestamp
 
+    print("future is done")
     active_futures.remove(future)
 
     try:
