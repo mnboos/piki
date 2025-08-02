@@ -192,7 +192,7 @@ def __setup_cam():
                 camera_config = picam2.create_video_configuration(
                     # main={"size": (1296, 972)},
                     main={"size": (640, 480)},
-                    queue=False,
+                    # queue=False,
                     controls={
                         "ColourGains": (1, 1),
                         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
