@@ -129,7 +129,6 @@ class StreamingOutput(io.BufferedIOBase):
         elif not has_movement and not active_futures:
             print("not detecting on current frame")
             output_buffer.append((0, 0, final_frame, []))
-            time.sleep(0.01)
         else:
             # this is for testing only
             output_buffer.append((0, 0, final_frame, []))
