@@ -102,6 +102,7 @@ class StreamingOutput(io.BufferedIOBase):
             if has_movement and self.highlight_movement:
                 measure_paint_movement = get_measure("Paint movement")
                 highlighted_frame = self.motion_detector.highlight_movement_on(buf)
+                buf = highlighted_frame  # todo: remove this after testing
                 measure_paint_movement()
             else:
                 highlighted_frame = buf
@@ -189,7 +190,7 @@ class MotionDetector:
 
 
 def __setup_cam():
-    stream_output = StreamingOutput()
+    stream_output = StreamingOutput(highlight_movement=True)
 
     resolution = (640, 480)
 
