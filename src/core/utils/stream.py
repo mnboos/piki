@@ -206,10 +206,10 @@ def __setup_cam():
                 picam2 = Picamera2()
                 camera_config = picam2.create_video_configuration(
                     # main={"size": (1296, 972)},
-                    main={"size": (640, 480)},
+                    main={"size": resolution},
                     # queue=False,
                     controls={
-                        "FrameRate": 30,
+                        "FrameRate": 20,
                         "ColourGains": (1, 1),
                         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,
                     },
@@ -232,7 +232,8 @@ def __setup_cam():
                         return res
 
                 # encoder = MeasuringJpegEncoder(num_threads=1)
-                encoder = MeasuringMJPEGEncoder()
+                # encoder = MeasuringMJPEGEncoder()
+                encoder = MJPEGEncoder()
                 # encoder = H264Encoder(100_000, repeat=True)
 
                 # encoder.output = CircularOutput(file=stream_output, buffersize=10)
