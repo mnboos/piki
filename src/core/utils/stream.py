@@ -87,6 +87,9 @@ class StreamingOutput(io.BufferedIOBase):
         if self.closed:
             raise RuntimeError("Stream is closed")
 
+        if len(active_futures) == NUM_AI_WORKERS:
+            return
+
         with self.condition:
             buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
             buf: np.ndarray
