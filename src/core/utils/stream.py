@@ -156,7 +156,6 @@ class MotionDetector:
         motion_ms = get_measure("Detect motion")
         if self.denoise:
             get_measure("")
-            frame = cv2.resize(frame, None, fx=0.75, fy=0.75)
             frame = cv2.GaussianBlur(frame, (33, 33), 0)
             cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY, frame)
         self.foreground_mask = self.backSub.apply(frame)
