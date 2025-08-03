@@ -227,7 +227,8 @@ def __setup_cam():
                         measure_encode()
                         return res
 
-                encoder = MeasuringJpegEncoder(num_threads=1)
+                # encoder = MeasuringJpegEncoder(num_threads=1)
+                encoder = MeasuringMJPEGEncoder()
                 # encoder = H264Encoder(100_000, repeat=True)
 
                 # encoder.output = CircularOutput(file=stream_output, buffersize=10)
