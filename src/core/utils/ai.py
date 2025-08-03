@@ -130,7 +130,8 @@ try:
         # FIX: Add the batch dimension to make the input tensor 4D
         # Before: img_arr.shape was (300, 300, 3)
         # After:  input_tensor.shape will be (1, 300, 300, 3)
-        # img_arr = np.expand_dims(img_arr, axis=0)
+        image = np.expand_dims(image, axis=0)
+
         # ======================================================================
 
         ms = lambda: int(round(time.time() * 1000))
@@ -171,7 +172,7 @@ try:
                 )
 
         t0 = time.perf_counter()
-        ip.set_tensor(inp_id, [image])
+        ip.set_tensor(inp_id, image)
         ip.invoke()
         tt = round((time.perf_counter() - t0) * 1000)
         print("Inference:", tt, "ms")
