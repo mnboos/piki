@@ -207,9 +207,9 @@ def __setup_cam():
                     main={"size": (640, 480)},
                     # queue=False,
                     controls={
-                        "FrameRate": 2,
+                        "FrameRate": 1,
                         "ColourGains": (1, 1),
-                        "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
+                        "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,
                     },
                 )
                 picam2.configure(camera_config)
