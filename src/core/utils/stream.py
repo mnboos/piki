@@ -142,7 +142,8 @@ class MotionDetector:
     def __init__(self, pixelcount_threshold: int = 500, denoise: bool = True):
         self.backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
         self.foreground_mask: np.ndarray | None = None
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        # self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.kernel = (3, 3)
         self.pixelcount_threshold = pixelcount_threshold
         self.denoise = denoise
 
