@@ -174,7 +174,7 @@ try:
         ip.set_tensor(inp_id, [image])
         ip.invoke()
         tt = round((time.perf_counter() - t0) * 1000)
-        print("Time:", tt, "ms")
+        print("Inference:", tt, "ms")
         boxes = ip.get_tensor(out_id0)
         classes = ip.get_tensor(out_id1)
         scores = ip.get_tensor(out_id2)
