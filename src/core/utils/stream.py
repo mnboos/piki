@@ -157,8 +157,8 @@ class MotionDetector:
     def is_moving(self, frame: np.ndarray):
         motion_ms = get_measure("Detect motion")
         if self.denoise:
-            frame = cv2.GaussianBlur(frame, (33, 33), 0)
-            cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY, frame)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            cv2.GaussianBlur(frame, (33, 33), 0, frame)
         self.foreground_mask = self.backSub.apply(frame)
         cv2.morphologyEx(
             self.foreground_mask, cv2.MORPH_OPEN, self.kernel, self.foreground_mask
