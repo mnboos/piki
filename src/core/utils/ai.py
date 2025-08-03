@@ -179,7 +179,7 @@ try:
         classes = ip.get_tensor(out_id1)
         scores = ip.get_tensor(out_id2)
         num_det = ip.get_tensor(out_id3)
-        print_output((boxes, classes, scores, num_det), original_img_size=(0, 0))
+        # print_output((boxes, classes, scores, num_det), original_img_size=(0, 0))
         return []
 except:
     traceback.print_exc()
