@@ -17,8 +17,7 @@ class CoreConfig(AppConfig):
         # Import our shared objects and worker logic
         from .utils import stream
 
-        print("Camera: ", stream._camera)
-        print("Camera running: ", bool(stream._camera and stream._camera.is_open))
+        print("Camera setup", stream)
 
         # def cleanup():
         #     print("[DJANGO SHUTDOWN] Stopping processes...")

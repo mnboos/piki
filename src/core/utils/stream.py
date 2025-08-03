@@ -12,9 +12,6 @@ import cv2
 import numpy as np
 import traceback
 
-from picamera2 import controls
-from picamera2.encoders import H264Encoder
-
 NUM_AI_WORKERS: int = 2
 
 active_futures: list[Future] = []
@@ -27,6 +24,17 @@ process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
 # A list to keep track of tasks that have been submitted but are not yet complete.
+
+
+def get_measure(description: str):
+    now = time.perf_counter()
+
+    def measure():
+        end = time.perf_counter()
+        ms = str(round((end - now) * 1000, 2)).rjust(5)
+        print(f"{description}: {ms} ms")
+
+    return measure
 
 
 @dataclasses.dataclass
@@ -43,7 +51,6 @@ def run_object_detection(frame_data: np.ndarray, timestamp: int):
 
     from .ai import detect_objects
 
-    print("detect frame")
     worker_pid = mp.current_process().pid
     result = detect_objects(frame_data)
     return worker_pid, timestamp, frame_data, result
@@ -52,7 +59,6 @@ def run_object_detection(frame_data: np.ndarray, timestamp: int):
 def on_done(future: Future):
     global max_output_timestamp
 
-    print("future is done")
     active_futures.remove(future)
 
     try:
@@ -71,33 +77,34 @@ def on_done(future: Future):
 # This class instance will hold the camera frames
 class StreamingOutput(io.BufferedIOBase):
     def __init__(self) -> None:
-        self.frame: bytes = b""
+        # self.frame: bytes = b""
         self.condition = Condition()
         # self.backSub = cv2.createBackgroundSubtractorMOG2()
         print("StreamingOutput created")
         self.motion_detector = MotionDetector()
 
     def write(self, buf: bytes) -> None:
-        print(f"[{time.monotonic_ns()}]: got frame")
-        with self.condition:
-            if self.closed:
-                raise RuntimeError("Stream is closed")
+        if self.closed:
+            raise RuntimeError("Stream is closed")
 
+        with self.condition:
             buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
             buf: np.ndarray
-            self.frame = buf
+            # self.frame = buf
 
         if buf is not None and buf.size:
             cv2.resize(buf, (640, 480), buf)
             has_movement = self.motion_detector.is_moving(buf)
             if has_movement:
-                final_frame = self.motion_detector.highlight_movement_on(buf)
+                measure_paint_movement = get_measure("Paint movement")
+                highlighted_frame = self.motion_detector.highlight_movement_on(buf)
+                measure_paint_movement()
             else:
-                final_frame = buf
+                highlighted_frame = buf
 
-            print(
-                f"Has movement: {has_movement}, active futures: {len(active_futures)}"
-            )
+            # print(
+            #     f"Has movement: {has_movement}, active futures: {len(active_futures)}"
+            # )
 
             # foreground_mask = self.backSub.apply(self.frame)
             if has_movement and len(active_futures) < NUM_AI_WORKERS:
@@ -124,11 +131,11 @@ class StreamingOutput(io.BufferedIOBase):
                     traceback.print_exc()
                     raise KeyboardInterrupt from e
             elif not has_movement and not active_futures:
-                print("not detecting on current frame")
-                output_buffer.append((0, 0, final_frame, []))
+                # print("not detecting on current frame")
+                output_buffer.append((0, 0, buf, []))
             else:
                 # this is for testing only
-                output_buffer.append((0, 0, final_frame, []))
+                output_buffer.append((0, 0, highlighted_frame, []))
 
 
 class MotionDetector:
@@ -143,14 +150,18 @@ class MotionDetector:
         return cv2.countNonZero(self.foreground_mask)
 
     def is_moving(self, frame: np.ndarray):
+        motion_ms = get_measure("Detect motion")
         if self.denoise:
+            get_measure("")
             frame = cv2.GaussianBlur(frame, (33, 33), 0)
             cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY, frame)
         self.foreground_mask = self.backSub.apply(frame)
         cv2.morphologyEx(
             self.foreground_mask, cv2.MORPH_OPEN, self.kernel, self.foreground_mask
         )
-        return self.moving_pixel_count() >= self.pixelcount_threshold
+        is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
+        motion_ms()
+        return is_moving
 
     def highlight_movement_on(
         self,
@@ -180,7 +191,7 @@ def __setup_cam():
 
     try:
         from picamera2 import Picamera2, Preview
-        from picamera2.encoders import JpegEncoder
+        from picamera2.encoders import JpegEncoder, MJPEGEncoder
         from picamera2.outputs import FileOutput, CircularOutput
         from libcamera import controls
 
@@ -194,7 +205,7 @@ def __setup_cam():
                     main={"size": (640, 480)},
                     # queue=False,
                     controls={
-                        "FrameRate": 1,
+                        "FrameRate": 10,
                         "ColourGains": (1, 1),
                         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
                     },
@@ -202,7 +213,21 @@ def __setup_cam():
                 picam2.configure(camera_config)
                 picam2.start_preview(Preview.NULL)
 
-                encoder = JpegEncoder(num_threads=1)
+                class MeasuringJpegEncoder(JpegEncoder):
+                    def encode_func(self, request, name):
+                        measure_encode = get_measure("JpegEncoder")
+                        res = super().encode_func(request, name)
+                        measure_encode()
+                        return res
+
+                class MeasuringMJPEGEncoder(MJPEGEncoder):
+                    def encode(self, request, name):
+                        measure_encode = get_measure("MJPEGEncoder")
+                        res = super().encode(request, name)
+                        measure_encode()
+                        return res
+
+                encoder = MeasuringJpegEncoder(num_threads=1)
                 # encoder = H264Encoder(100_000, repeat=True)
 
                 # encoder.output = CircularOutput(file=stream_output, buffersize=10)
@@ -228,11 +253,22 @@ def __setup_cam():
 
         streamer_func = stream_camera
 
-    except ImportError as e:
-        print(f"Hardware initialization failed: {e}")
-        traceback.print_exc()
+    except ModuleNotFoundError as e:
+        print(
+            "Hardware initialization failed, using local file to stream",
+            traceback.format_exc(),
+        )
+        # traceback.print_exc()
 
-        def stream_file(video_path: str):
+        # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
+        # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
+        # video_path = "/home/martin/Downloads/cat.mov"
+        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+        # video_path = "/home/martin/Downloads/output_converted.mov"
+        # video_path = "/home/martin/Downloads/output_file.mov"
+        # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
+
+        def stream_file():
             if not os.path.isfile(video_path):
                 raise ValueError("File not found: ", video_path)
 
@@ -267,7 +303,8 @@ def __setup_cam():
                         continue  # Skip the rest of this iteration and try reading the new first frame
                     else:
                         frame_resized = cv2.resize(frame, resolution)
-                        stream_output.write(frame_resized)
+                        frame_bytes = cv2.imencode(".jpeg", frame_resized)[1].tobytes()
+                        stream_output.write(frame_bytes)
                 except KeyboardInterrupt:
                     print("shutting down here!!!")
                     break
@@ -277,18 +314,10 @@ def __setup_cam():
             print("Stopping filestream...")
             cap.release()
 
-        # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
-        # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
-        # video_path = "/home/martin/Downloads/cat.mov"
-        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        # video_path = "/home/martin/Downloads/output_converted.mov"
-        # video_path = "/home/martin/Downloads/output_file.mov"
-        # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
-
         if not os.path.isfile(video_path):
             raise RuntimeError(f"File not found: {video_path}")
 
-        streamer_func = lambda: stream_file(video_path)
+        streamer_func = stream_file
 
     thread_pool.submit(streamer_func)
     # stream_file(video_path)
