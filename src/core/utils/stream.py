@@ -205,7 +205,7 @@ def __setup_cam():
                     main={"size": (640, 480)},
                     # queue=False,
                     controls={
-                        "FrameRate": 10,
+                        "FrameRate": 5,
                         "ColourGains": (1, 1),
                         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
                     },
