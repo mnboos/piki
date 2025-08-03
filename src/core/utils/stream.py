@@ -84,8 +84,6 @@ class StreamingOutput(io.BufferedIOBase):
         self.motion_detector = MotionDetector()
 
     def write(self, buf: bytes) -> None:
-        time.sleep(0.01)
-
         if self.closed:
             raise RuntimeError("Stream is closed")
 
