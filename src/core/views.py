@@ -29,6 +29,7 @@ def gen_frames():
         stream.live_stream_enabled.set()
 
         while True:
+            time.sleep(0.01)
             # Get data from the worker output buffer
             try:
                 # The 'frame' variable is expected to be a NumPy array
@@ -37,7 +38,7 @@ def gen_frames():
                 )
             except IndexError:
                 # If the buffer is empty, wait briefly and try again
-                time.sleep(0.01)
+
                 continue
 
             # This remains an empty list as per your original non-commented code.
