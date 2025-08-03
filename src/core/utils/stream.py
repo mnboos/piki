@@ -76,12 +76,13 @@ def on_done(future: Future):
 
 # This class instance will hold the camera frames
 class StreamingOutput(io.BufferedIOBase):
-    def __init__(self) -> None:
+    def __init__(self, highlight_movement: bool = False) -> None:
         # self.frame: bytes = b""
         self.condition = Condition()
         # self.backSub = cv2.createBackgroundSubtractorMOG2()
         print("StreamingOutput created")
         self.motion_detector = MotionDetector()
+        self.highlight_movement = highlight_movement
 
     def write(self, buf: bytes) -> None:
         if self.closed:
@@ -98,7 +99,7 @@ class StreamingOutput(io.BufferedIOBase):
         if buf is not None and buf.size:
             cv2.resize(buf, (640, 480), buf)
             has_movement = self.motion_detector.is_moving(buf)
-            if has_movement:
+            if has_movement and self.highlight_movement:
                 measure_paint_movement = get_measure("Paint movement")
                 highlighted_frame = self.motion_detector.highlight_movement_on(buf)
                 measure_paint_movement()
