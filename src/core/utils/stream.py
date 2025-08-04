@@ -148,7 +148,7 @@ class MotionDetector:
         self.backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
         self.foreground_mask: np.ndarray | None = None
         # self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        self.kernel = (3, 3)
+        self.morph_kernel = np.ones((3,3), np.uint8)
         self.pixelcount_threshold = pixelcount_threshold
         self.denoise = denoise
 
@@ -157,16 +157,86 @@ class MotionDetector:
 
     def is_moving(self, frame: np.ndarray):
         motion_ms = get_measure("Detect motion")
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if self.denoise:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             cv2.GaussianBlur(frame, (33, 33), 0, frame)
-        self.foreground_mask = self.backSub.apply(frame)
+        fg_mask = self.backSub.apply(frame)
         cv2.morphologyEx(
-            self.foreground_mask, cv2.MORPH_OPEN, self.kernel, self.foreground_mask
+            fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask
         )
+        self.foreground_mask = fg_mask
         is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
         motion_ms()
         return is_moving
+
+    def get_boundinx_boxes(self, expansion_margin=25, size_threshold=200):
+        """
+        Merges nearby bounding boxes into a single one.
+
+        Args:
+            boxes (list): A list of bounding boxes, each in (x, y, w, h) format.
+            expansion_margin (int): The margin in pixels to expand each box's check area.
+                                    Boxes within this margin of each other will be merged.
+            size_threshold:
+
+        Returns:
+            list: A new list of merged bounding boxes.
+        """
+        contours, _ = cv2.findContours(self.foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        boxes = [cv2.boundingRect(cnt) for cnt in contours]
+
+        if not boxes:
+            return []
+
+        # A flag to indicate if any merges happened in a pass
+        merges_made = True
+        while merges_made:
+            merges_made = False
+            merged_boxes = []
+            # Keep track of boxes that have been merged into another
+            used_indices = set()
+
+            for i in range(len(boxes)):
+                if i in used_indices:
+                    continue
+
+                # Start a new merged box with the current box
+                current_box = list(boxes[i])
+
+                # Check against all other boxes
+                for j in range(i + 1, len(boxes)):
+                    if j in used_indices:
+                        continue
+
+                    other_box = boxes[j]
+
+                    # Check for proximity. Expand current_box by the margin for the check.
+                    # If the expanded current_box intersects with other_box, they are "close".
+                    if (current_box[0] - expansion_margin < other_box[0] + other_box[2] and
+                            current_box[0] + current_box[2] + expansion_margin > other_box[0] and
+                            current_box[1] - expansion_margin < other_box[1] + other_box[3] and
+                            current_box[1] + current_box[3] + expansion_margin > other_box[1]):
+
+                        # We have a merge! Update the current merged box
+                        x1 = min(current_box[0], other_box[0])
+                        y1 = min(current_box[1], other_box[1])
+                        x2 = max(current_box[0] + current_box[2], other_box[0] + other_box[2])
+                        y2 = max(current_box[1] + current_box[3], other_box[1] + other_box[3])
+                        current_box = [x1, y1, x2 - x1, y2 - y1]
+
+                        # Mark the other box as used and flag that a merge happened
+                        used_indices.add(j)
+                        merges_made = True
+
+                # Add the final state of the current box (either original or merged)
+                merged_boxes.append(tuple(current_box))
+                used_indices.add(i)
+
+            # The list for the next pass is the result of the current pass's merges
+            boxes = merged_boxes
+
+        return [(x,y,w,h) for (x,y,w,h) in boxes if w*h >= size_threshold]
 
     def highlight_movement_on(
         self,
@@ -174,6 +244,10 @@ class MotionDetector:
         transparency_factor: float = 0.4,
         overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
     ) -> np.ndarray:
+        boxes = self.get_boundinx_boxes()
+        for (x, y, w, h) in boxes:
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
         colored_overlay = np.full(frame.shape, overlay_color_bgr, dtype=np.uint8)
         blended = cv2.addWeighted(
             frame,
@@ -271,6 +345,8 @@ def __setup_cam():
         # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
         video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+        video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+        # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
