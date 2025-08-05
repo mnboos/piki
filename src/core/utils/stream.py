@@ -143,11 +143,6 @@ class StreamingOutput(io.BufferedIOBase):
             else:
                 highlighted_frame = buf
 
-            # print(
-            #     f"Has movement: {has_movement}, active futures: {len(active_futures)}"
-            # )
-
-            # foreground_mask = self.backSub.apply(self.frame)
             if has_movement and len(active_futures) < NUM_AI_WORKERS:
                 try:
                     timestamp = time.monotonic_ns()
@@ -159,11 +154,6 @@ class StreamingOutput(io.BufferedIOBase):
                         frame_data=buf[:],
                         timestamp=timestamp,
                     )
-                    # future: Future = process_pool.submit(
-                    #     run_object_detection,
-                    #     frame_data=buf[:],
-                    #     timestamp=timestamp,
-                    # )
 
                     active_futures.append(future)
                     future.add_done_callback(on_done)

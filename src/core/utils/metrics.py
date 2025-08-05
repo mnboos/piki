@@ -6,6 +6,7 @@ from ctypes import c_float
 from rich.live import Live
 from rich.table import Table
 import atexit
+import time
 
 from multiprocessing import Queue
 from multiprocessing.managers import BaseManager
@@ -13,10 +14,11 @@ from multiprocessing.managers import BaseManager
 class QueueManager(BaseManager):
     pass
 
+_manager_getter_name = "get_dashboard_queue"
 QUEUE_KEY = b"abcd-foobar!!"
 
 _queue = Queue(20)
-QueueManager.register("get_dashboard_queue", callable=lambda: _queue)
+QueueManager.register(_manager_getter_name, callable=lambda: _queue)
 
 
 def create_queue_manager():
@@ -33,10 +35,24 @@ def create_queue_manager():
 
 
 
-def retrieve_queue():
-    m = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
-    m.connect()
-    return m.get_dashboard_queue()
+def retrieve_queue(max_retries=10):
+    retries = 0
+    while True:
+        try:
+            m = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
+            m.connect()
+            assert hasattr(m, _manager_getter_name)
+            return getattr(m, _manager_getter_name)()
+        except (EOFError, ConnectionRefusedError) as e:
+            retries += 1
+            if retries > max_retries:
+                raise RuntimeError("Connection to the queue-manager could not be established. Is the application running?") from e
+
+            backoff = min(30, (2 ** retries) * 0.1)
+            print(f"Queue manager not yet started, trying again in {str(backoff).rjust(5)}s (retry {retries})")
+
+            time.sleep(backoff)
+            continue
 
 class LiveMetricsDashboard:
     def __init__(self, queue: Queue) -> None:
@@ -64,7 +80,10 @@ class LiveMetricsDashboard:
     def run(self):
         with Live(self._generate_table(), screen=False) as live:
             while True:
-                worker_id, inference_time = self.queue.queue.get()
+                try:
+                    worker_id, inference_time = self.queue.queue.get()
+                except EOFError:
+                    self.queue.queue = retrieve_queue()
                 # print("got data", d)
                 # worker_id, inference_time = self.queue.popleft()
 
