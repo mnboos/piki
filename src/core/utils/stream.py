@@ -59,7 +59,7 @@ def finalize_rois_boundary_aware(*, frame_shape, clustered_rois, min_dimension=3
     final_rois = []
     frame_h, frame_w = frame_shape
 
-    for (x, y, w, h) in clustered_rois:
+    for x, y, w, h in clustered_rois:
         # Determine the final target size, ensuring it meets the minimum
         final_w = max(w, min_dimension)
         final_h = max(h, min_dimension)
@@ -98,7 +98,10 @@ def finalize_rois_boundary_aware(*, frame_shape, clustered_rois, min_dimension=3
 
     return final_rois
 
-def constrained_agglomerative_clustering(*, boxes, max_dimension=400, merge_threshold=640):
+
+def constrained_agglomerative_clustering(
+    *, boxes, max_dimension=400, merge_threshold=640
+):
     """
     Iteratively finds the closest pair of bounding box clusters and merges them,
     respecting a maximum size constraint.
@@ -118,7 +121,7 @@ def constrained_agglomerative_clustering(*, boxes, max_dimension=400, merge_thre
     clusters = [[box] for box in boxes]
 
     while True:
-        min_dist = float('inf')
+        min_dist = float("inf")
         best_pair = None
 
         # --- Find the globally best pair to merge ---
@@ -139,8 +142,10 @@ def constrained_agglomerative_clustering(*, boxes, max_dimension=400, merge_thre
                 c2_h = max(b[1] + b[3] for b in c2_boxes) - c2_y
 
                 # Calculate distance between cluster centers
-                dist = np.sqrt(((c1_x + c1_w/2) - (c2_x + c2_w/2))**2 +
-                               ((c1_y + c1_h/2) - (c2_y + c2_h/2))**2)
+                dist = np.sqrt(
+                    ((c1_x + c1_w / 2) - (c2_x + c2_w / 2)) ** 2
+                    + ((c1_y + c1_h / 2) - (c2_y + c2_h / 2)) ** 2
+                )
 
                 if dist < min_dist:
                     min_dist = dist
@@ -188,6 +193,7 @@ def constrained_agglomerative_clustering(*, boxes, max_dimension=400, merge_thre
 
     return final_rois
 
+
 def cluster_with_size_limit(*, boxes, max_dimension=400, margin=50):
     """
     Greedily clusters boxes, ensuring no single cluster's bounding box
@@ -212,7 +218,7 @@ def cluster_with_size_limit(*, boxes, max_dimension=400, margin=50):
 
     for i in range(num_boxes):
         if visited[i]:
-            continue # Skip boxes that are already in a cluster
+            continue  # Skip boxes that are already in a cluster
 
         # This box is the seed for a new cluster
         current_cluster_boxes = [boxes[i]]
@@ -232,9 +238,12 @@ def cluster_with_size_limit(*, boxes, max_dimension=400, margin=50):
                 jx, jy, jw, jh = boxes[j]
 
                 # The "closeness" check with margin
-                if (cx < jx + jw + margin and cx + cw + margin > jx and
-                        cy < jy + jh + margin and cy + ch + margin > jy):
-
+                if (
+                    cx < jx + jw + margin
+                    and cx + cw + margin > jx
+                    and cy < jy + jh + margin
+                    and cy + ch + margin > jy
+                ):
                     # --- Pre-calculate the potential new bounding box ---
                     potential_x = min(cx, jx)
                     potential_y = min(cy, jy)
@@ -264,6 +273,7 @@ def cluster_with_size_limit(*, boxes, max_dimension=400, margin=50):
 
     return final_rois
 
+
 def cluster_boxes_opencv(*, boxes, frame_shape, eps=150):
     """
     Clusters bounding boxes based on proximity using only OpenCV's image operations.
@@ -285,23 +295,25 @@ def cluster_boxes_opencv(*, boxes, frame_shape, eps=150):
     canvas = np.zeros(frame_shape, dtype=np.uint8)
 
     # 2. Draw each bounding box as a filled, white rectangle
-    for (x, y, w, h) in boxes:
-        cv2.rectangle(canvas, (x, y), (x + w, y + h), 255, -1) # -1 fills the rectangle
+    for x, y, w, h in boxes:
+        cv2.rectangle(canvas, (x, y), (x + w, y + h), 255, -1)  # -1 fills the rectangle
 
     # 3. Dilate to connect nearby blobs. The kernel size is our 'eps'
     # The kernel must have an odd size.
     kernel_size = int(eps)
     if kernel_size % 2 == 0:
-        kernel_size += 1 # Ensure it's odd
+        kernel_size += 1  # Ensure it's odd
 
     if kernel_size > 1:
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
         dilated_canvas = cv2.dilate(canvas, kernel, iterations=1)
     else:
-        dilated_canvas = canvas # No dilation if eps is too small
+        dilated_canvas = canvas  # No dilation if eps is too small
 
     # 4. Find the contours of the final merged blobs
-    contours, _ = cv2.findContours(dilated_canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        dilated_canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
 
     # 5. Get the bounding box for each final contour
     merged_rois = []
@@ -321,8 +333,8 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, timestamp:
 
     bboxes = MotionDetector.get_bounding_boxes(fg_mask)
     # if bboxes:
-        # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
-        # print("rois: ", len(rois))
+    # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
+    # print("rois: ", len(rois))
 
     worker_pid = mp.current_process().pid
     if bboxes:
@@ -347,7 +359,9 @@ def on_done(future: Future):
             # print("update dashboard: ", inference_time)
             dashboard.update(worker_id=worker_pid, inference_time=inference_time)
             if live_stream_enabled.is_set():
-                output_buffer.append((worker_pid, timestamp, frame, detected_objects[1]))
+                output_buffer.append(
+                    (worker_pid, timestamp, frame, detected_objects[1])
+                )
     except BrokenProcessPool as ex:
         print("Pool already broken, when future was done. Shutting down...")
     except KeyboardInterrupt:
@@ -374,7 +388,7 @@ class StreamingOutput(io.BufferedIOBase):
         # with self.condition:
         buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
         buf: np.ndarray
-            # self.frame = buf
+        # self.frame = buf
 
         if buf is not None and buf.size:
             cv2.resize(buf, (640, 480), buf)
@@ -419,7 +433,7 @@ class MotionDetector:
         self.backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
         self.foreground_mask: np.ndarray | None = None
         # self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        self.morph_kernel = np.ones((3,3), np.uint8)
+        self.morph_kernel = np.ones((3, 3), np.uint8)
         self.pixelcount_threshold = pixelcount_threshold
         self.denoise = denoise
 
@@ -432,16 +446,16 @@ class MotionDetector:
         if self.denoise:
             cv2.GaussianBlur(frame, (33, 33), 0, frame)
         fg_mask = self.backSub.apply(frame)
-        cv2.morphologyEx(
-            fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask
-        )
+        cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
         self.foreground_mask = fg_mask
         is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
         # motion_ms()
         return is_moving, fg_mask
 
     @staticmethod
-    def get_bounding_boxes(foreground_mask: np.ndarray, expansion_margin=25, size_threshold=200):
+    def get_bounding_boxes(
+        foreground_mask: np.ndarray, expansion_margin=25, size_threshold=200
+    ):
         """
         Merges nearby bounding boxes into a single one.
 
@@ -454,7 +468,9 @@ class MotionDetector:
         Returns:
             list: A new list of merged bounding boxes.
         """
-        contours, _ = cv2.findContours(foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         boxes = [cv2.boundingRect(cnt) for cnt in contours]
 
         merges_made = len(boxes) > 1
@@ -480,16 +496,24 @@ class MotionDetector:
 
                     # Check for proximity. Expand current_box by the margin for the check.
                     # If the expanded current_box intersects with other_box, they are "close".
-                    if (current_box[0] - expansion_margin < other_box[0] + other_box[2] and
-                            current_box[0] + current_box[2] + expansion_margin > other_box[0] and
-                            current_box[1] - expansion_margin < other_box[1] + other_box[3] and
-                            current_box[1] + current_box[3] + expansion_margin > other_box[1]):
-
+                    if (
+                        current_box[0] - expansion_margin < other_box[0] + other_box[2]
+                        and current_box[0] + current_box[2] + expansion_margin
+                        > other_box[0]
+                        and current_box[1] - expansion_margin
+                        < other_box[1] + other_box[3]
+                        and current_box[1] + current_box[3] + expansion_margin
+                        > other_box[1]
+                    ):
                         # We have a merge! Update the current merged box
                         x1 = min(current_box[0], other_box[0])
                         y1 = min(current_box[1], other_box[1])
-                        x2 = max(current_box[0] + current_box[2], other_box[0] + other_box[2])
-                        y2 = max(current_box[1] + current_box[3], other_box[1] + other_box[3])
+                        x2 = max(
+                            current_box[0] + current_box[2], other_box[0] + other_box[2]
+                        )
+                        y2 = max(
+                            current_box[1] + current_box[3], other_box[1] + other_box[3]
+                        )
                         current_box = [x1, y1, x2 - x1, y2 - y1]
 
                         # Mark the other box as used and flag that a merge happened
@@ -503,10 +527,77 @@ class MotionDetector:
             # The list for the next pass is the result of the current pass's merges
             boxes = merged_boxes
 
-        boxes = [(x,y,w,h) for (x,y,w,h) in boxes if w*h >= size_threshold]
-        clustered_boxes = constrained_agglomerative_clustering(boxes=boxes)
-        finalized_boxes = finalize_rois_boundary_aware(frame_shape=foreground_mask.shape[:2], clustered_rois=clustered_boxes, min_dimension=300)
-        return finalized_boxes
+        # boxes = [(x, y, w, h) for (x, y, w, h) in boxes if w * h >= size_threshold]
+
+        high_res_h, high_res_w = (1080, 1920)
+        low_res_h, low_res_w = foreground_mask.shape[:2]
+        scale_x = high_res_w / low_res_w
+        scale_y = high_res_h / low_res_h
+
+        def scale_boxes(*, boxes_to_scale, factor_x, factor_y):
+            return [
+                (
+                    int(x * factor_x),
+                    int(y * factor_y),
+                    int(w * factor_x),
+                    int(h * factor_y),
+                )
+                for (x, y, w, h) in boxes_to_scale
+            ]
+
+        high_res_rois = scale_boxes(
+            boxes_to_scale=boxes, factor_x=scale_x, factor_y=scale_y
+        )
+
+        rois_already_too_big = []
+        rois_to_cluster = []
+
+        ROI_MAX_SIZE = 300
+
+        for x, y, w, h in high_res_rois:
+            if w > ROI_MAX_SIZE or h > ROI_MAX_SIZE:
+                # This box is already too big, so it bypasses clustering.
+                rois_already_too_big.append((x, y, w, h))
+            else:
+                # This box is a candidate for merging.
+                rois_to_cluster.append((x, y, w, h))
+
+        clustered_high_res_rois = constrained_agglomerative_clustering(
+            boxes=rois_to_cluster
+        )
+
+        # high_res_h, high_res_w = high_res_frame.shape[:2]
+        # low_res_h, low_res_w = low_res_frame.shape[:2]
+
+        # for x, y, w, h in clustered_low_res_rois:
+        #     scaled_x = x * scale_x
+        #     scaled_y = y * scale_y
+        #     scaled_w = w * scale_x
+        #     scaled_h = h * scale_y
+        #     scaled_rois.append((scaled_x, scaled_y, scaled_w, scaled_h))
+
+        finalized_highres_boxes = finalize_rois_boundary_aware(
+            frame_shape=(high_res_h, high_res_w),
+            clustered_rois=clustered_high_res_rois + rois_already_too_big,
+            min_dimension=300,
+        )
+        # for box in finalized_highres_boxes:
+        #     x, y, w, h = box
+        #     print("box: ", w, h)
+
+        downscaled_rois = scale_boxes(
+            boxes_to_scale=finalized_highres_boxes,
+            factor_x=1 / scale_x,
+            factor_y=1 / scale_y,
+        )
+        # for x, y, w, h in finalized_highres_boxes:
+        #     scaled_x = int(x / scale_x)
+        #     scaled_y = int(y / scale_y)
+        #     scaled_w = int(w / scale_x)
+        #     scaled_h = int(h / scale_y)
+        #     downscaled_rois.append((scaled_x, scaled_y, scaled_w, scaled_h))
+
+        return downscaled_rois
         # return cluster_boxes_opencv(boxes=boxes, frame_shape=foreground_mask.shape[:2])
 
     def highlight_movement_on(
@@ -516,9 +607,14 @@ class MotionDetector:
         overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
     ) -> np.ndarray:
         boxes = self.get_bounding_boxes(self.foreground_mask)
-        # rect_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-        for (x, y, w, h) in boxes:
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0,0,255), 2)
+        for x, y, w, h in boxes:
+            # rect_color = (0, 0, 255)
+            rect_color = (
+                random.randint(0, 255),
+                random.randint(0, 255),
+                random.randint(0, 255),
+            )
+            cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
 
         colored_overlay = np.full(frame.shape, overlay_color_bgr, dtype=np.uint8)
         blended = cv2.addWeighted(
@@ -536,8 +632,6 @@ class MotionDetector:
 
 
 def _stream_cam_or_file_to(stream_output: StreamingOutput):
-
-
     resolution = (640, 480)
 
     try:
@@ -614,10 +708,10 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
         # traceback.print_exc()
 
         # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
-        # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
+        video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
         video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+        # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
