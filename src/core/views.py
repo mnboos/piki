@@ -1,6 +1,7 @@
 import time
 
 import cv2
+import random
 from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
 from .utils import clamp
@@ -53,13 +54,8 @@ def gen_frames():
             # All drawing happens directly on the 'frame' NumPy array.
 
             # Loop through contours (currently does nothing as 'contours' is empty)
-            for cnt in contours:
-                rect = cv2.boundingRect(cnt)
-                x, y, w, h = rect
-                min_size = 20
-                if min_size <= h <= w:
-                    # Draw a red rectangle using OpenCV
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, thickness)
+
+            # rect_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
             # Loop through objects detected by the AI model
             for label, confidence, bbox in detected_objects:

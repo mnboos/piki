@@ -118,7 +118,7 @@ try:
         90: "toothbrush",
     }
 
-    def detect_objects(image: np.ndarray, out_size=(300, 300)):
+    def detect_objects(image: np.ndarray, out_size=(300, 300)) -> tuple[int, list]:
         # image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
         # orig_shape = image.shape

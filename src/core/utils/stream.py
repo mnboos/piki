@@ -1,5 +1,6 @@
 import dataclasses
 import os
+import random
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Condition, Event, Queue
 import multiprocessing as mp
@@ -30,41 +31,6 @@ process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
 
-# class LiveMetrics:
-#     def __init__(self) -> None:
-#         self.inference = deque(maxlen=1)
-#         self.live = Live(self._generate_table(), screen=False, transient=False)
-#
-#     def update(self, *, inference_time: float) -> None:
-#         self.inference.append(inference_time)
-#         # with self.live as l:
-#         self.live.update(self._generate_table())
-#
-#     @staticmethod
-#     def _generate_table() -> Table:
-#         """Draws a Rich Table from the current dashboard_data."""
-#         table = Table(title="Multi-Process Inference Monitor")
-#         table.add_column("Worker ID", style="cyan")
-#         table.add_column("Inference Time (ms)", justify="right", style="magenta")
-#         table.add_column("Items Processed", justify="right", style="green")
-#
-#         dashboard_data = {
-#             0: {"inference_time": "N/A", "items": 0},
-#             1: {"inference_time": "N/A", "items": 0},
-#         }
-#
-#         for worker_id, data in dashboard_data.items():
-#             table.add_row(
-#                 f"Worker {worker_id}",
-#                 str(data["inference_time"]),
-#                 str(data["items"])
-#             )
-#         return table
-
-# A list to keep track of tasks that have been submitted but are not yet complete.
-
-# metrics = LiveMetrics()
-
 def get_measure(description: str):
     now = time.perf_counter()
 
@@ -75,8 +41,264 @@ def get_measure(description: str):
 
     return measure
 
+def finalize_and_pad_rois(*, frame_shape, clustered_rois, min_dimension=300):
+    """
+    Takes clustered ROIs and ensures each one meets the minimum dimension by
+    padding from the center. Also performs boundary checks.
 
-def run_object_detection(frame_data: np.ndarray, timestamp: int):
+    Args:
+        frame_shape (tuple): The (height, width) of the original frame.
+        clustered_rois (list): A list of (x, y, w, h) tuples from the clustering step.
+        min_dimension (int): The minimum width and height for a final ROI.
+
+    Returns:
+        list: The final list of ROI coordinates, ready for cropping.
+    """
+    final_rois = []
+    frame_h, frame_w = frame_shape
+
+    for (x, y, w, h) in clustered_rois:
+        center_x = x + w // 2
+        center_y = y + h // 2
+
+        # Enforce minimum size
+        new_w = max(w, min_dimension)
+        new_h = max(h, min_dimension)
+
+        # Recalculate top-left corner based on the new, larger size
+        new_x = center_x - new_w // 2
+        new_y = center_y - new_h // 2
+
+        # Boundary checks
+        new_x = max(0, new_x)
+        new_y = max(0, new_y)
+
+        if new_x + new_w > frame_w:
+            new_w = frame_w - new_x
+        if new_y + new_h > frame_h:
+            new_h = frame_h - new_y
+
+        final_rois.append((int(new_x), int(new_y), int(new_w), int(new_h)))
+
+    for r in final_rois:
+        _, _, w, h = r
+        print("wh: ", w, h)
+    return final_rois
+
+def constrained_agglomerative_clustering(*, boxes, max_dimension=400, merge_threshold=640):
+    """
+    Iteratively finds the closest pair of bounding box clusters and merges them,
+    respecting a maximum size constraint.
+
+    Args:
+        boxes (list): A list of initial (x, y, w, h) bounding boxes.
+        max_dimension (int): The maximum allowed width or height for a merged ROI.
+        merge_threshold (int): The max distance between cluster centers to consider a merge.
+
+    Returns:
+        list: The final list of merged and optimized ROIs.
+    """
+    if not boxes:
+        return []
+
+    # Start with each box being its own cluster
+    clusters = [[box] for box in boxes]
+
+    while True:
+        min_dist = float('inf')
+        best_pair = None
+
+        # --- Find the globally best pair to merge ---
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                # Get the overall bounding box of each cluster
+                c1_boxes = clusters[i]
+                c2_boxes = clusters[j]
+
+                c1_x = min(b[0] for b in c1_boxes)
+                c1_y = min(b[1] for b in c1_boxes)
+                c1_w = max(b[0] + b[2] for b in c1_boxes) - c1_x
+                c1_h = max(b[1] + b[3] for b in c1_boxes) - c1_y
+
+                c2_x = min(b[0] for b in c2_boxes)
+                c2_y = min(b[1] for b in c2_boxes)
+                c2_w = max(b[0] + b[2] for b in c2_boxes) - c2_x
+                c2_h = max(b[1] + b[3] for b in c2_boxes) - c2_y
+
+                # Calculate distance between cluster centers
+                dist = np.sqrt(((c1_x + c1_w/2) - (c2_x + c2_w/2))**2 +
+                               ((c1_y + c1_h/2) - (c2_y + c2_h/2))**2)
+
+                if dist < min_dist:
+                    min_dist = dist
+                    best_pair = (i, j)
+
+        # --- Check if a valid merge was found ---
+        if best_pair is not None and min_dist < merge_threshold:
+            i, j = best_pair
+
+            # --- Validate the potential merge against constraints ---
+            merged_cluster_boxes = clusters[i] + clusters[j]
+
+            merged_x = min(b[0] for b in merged_cluster_boxes)
+            merged_y = min(b[1] for b in merged_cluster_boxes)
+            merged_w = max(b[0] + b[2] for b in merged_cluster_boxes) - merged_x
+            merged_h = max(b[1] + b[3] for b in merged_cluster_boxes) - merged_y
+
+            if merged_w <= max_dimension and merged_h <= max_dimension:
+                # If valid, perform the merge
+                # Create a new list of clusters, replacing the merged pair with the new cluster
+                new_clusters = []
+                for k in range(len(clusters)):
+                    if k != i and k != j:
+                        new_clusters.append(clusters[k])
+                new_clusters.append(merged_cluster_boxes)
+                clusters = new_clusters
+            else:
+                # If the best pair can't be merged, no smaller-distance pairs can either.
+                # We can stop searching for this pass. A more advanced implementation
+                # could continue searching for other valid pairs, but for simplicity,
+                # we stop when the absolute best option is invalid.
+                break
+        else:
+            # If no pairs are close enough to merge, we are done.
+            break
+
+    # --- Final Step: Convert the final clusters to bounding boxes ---
+    final_rois = []
+    for cluster in clusters:
+        x = min(b[0] for b in cluster)
+        y = min(b[1] for b in cluster)
+        w = max(b[0] + b[2] for b in cluster) - x
+        h = max(b[1] + b[3] for b in cluster) - y
+        final_rois.append((x, y, w, h))
+
+    return final_rois
+
+def cluster_with_size_limit(*, boxes, max_dimension=400, margin=50):
+    """
+    Greedily clusters boxes, ensuring no single cluster's bounding box
+    exceeds a maximum dimension.
+
+    Args:
+        boxes (list): A list of initial (x, y, w, h) bounding boxes.
+        max_dimension (int): The maximum allowed width or height for a final ROI.
+        margin (int): The pixel distance to consider boxes "neighbors."
+
+    Returns:
+        list: A list of the final, size-constrained, merged ROIs.
+    """
+    if not boxes:
+        return []
+
+    num_boxes = len(boxes)
+    # Keep track of which boxes have been assigned to a cluster
+    visited = [False] * num_boxes
+
+    final_rois = []
+
+    for i in range(num_boxes):
+        if visited[i]:
+            continue # Skip boxes that are already in a cluster
+
+        # This box is the seed for a new cluster
+        current_cluster_boxes = [boxes[i]]
+        visited[i] = True
+
+        # This is the bounding box of the entire cluster so far
+        cx, cy, cw, ch = boxes[i]
+
+        # --- Iteratively grow the current cluster ---
+        while True:
+            found_a_merge_in_this_pass = False
+            for j in range(num_boxes):
+                if visited[j]:
+                    continue
+
+                # Check if box j is a neighbor of the current cluster's bounding box
+                jx, jy, jw, jh = boxes[j]
+
+                # The "closeness" check with margin
+                if (cx < jx + jw + margin and cx + cw + margin > jx and
+                        cy < jy + jh + margin and cy + ch + margin > jy):
+
+                    # --- Pre-calculate the potential new bounding box ---
+                    potential_x = min(cx, jx)
+                    potential_y = min(cy, jy)
+                    potential_xw = max(cx + cw, jx + jw)
+                    potential_yh = max(cy + ch, jy + jh)
+                    potential_w = potential_xw - potential_x
+                    potential_h = potential_yh - potential_y
+
+                    # --- CRITICAL: Check the size constraint BEFORE merging ---
+                    if potential_w > max_dimension or potential_h > max_dimension:
+                        # This merge would make the ROI too big, so we skip it
+                        continue
+
+                    # If the size is okay, perform the merge
+                    visited[j] = True
+                    # Update the cluster's overall bounding box
+                    cx, cy, cw, ch = potential_x, potential_y, potential_w, potential_h
+                    found_a_merge_in_this_pass = True
+
+            # If we went through a whole pass without finding a valid merge,
+            # this cluster is finished growing.
+            if not found_a_merge_in_this_pass:
+                break
+
+        # The cluster is final, add its bounding box to the results
+        final_rois.append((cx, cy, cw, ch))
+
+    return final_rois
+
+def cluster_boxes_opencv(*, boxes, frame_shape, eps=150):
+    """
+    Clusters bounding boxes based on proximity using only OpenCV's image operations.
+    This is a visual equivalent to DBSCAN for this specific problem.
+
+    Args:
+        boxes (list): A list of (x, y, w, h) bounding box tuples.
+        frame_shape (tuple): The (height, width) of the original frame.
+        eps (int): The "merge radius" in pixels. Boxes within this distance of each
+                   other will be grouped. This is the most important tuning parameter.
+
+    Returns:
+        list: A list of new (x, y, w, h) tuples representing the merged ROI for each cluster.
+    """
+    if not boxes:
+        return []
+
+    # 1. Create a blank canvas
+    canvas = np.zeros(frame_shape, dtype=np.uint8)
+
+    # 2. Draw each bounding box as a filled, white rectangle
+    for (x, y, w, h) in boxes:
+        cv2.rectangle(canvas, (x, y), (x + w, y + h), 255, -1) # -1 fills the rectangle
+
+    # 3. Dilate to connect nearby blobs. The kernel size is our 'eps'
+    # The kernel must have an odd size.
+    kernel_size = int(eps)
+    if kernel_size % 2 == 0:
+        kernel_size += 1 # Ensure it's odd
+
+    if kernel_size > 1:
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        dilated_canvas = cv2.dilate(canvas, kernel, iterations=1)
+    else:
+        dilated_canvas = canvas # No dilation if eps is too small
+
+    # 4. Find the contours of the final merged blobs
+    contours, _ = cv2.findContours(dilated_canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # 5. Get the bounding box for each final contour
+    merged_rois = []
+    for cnt in contours:
+        merged_rois.append(cv2.boundingRect(cnt))
+
+    return merged_rois
+
+
+def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, timestamp: int):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
@@ -84,8 +306,17 @@ def run_object_detection(frame_data: np.ndarray, timestamp: int):
 
     from .ai import detect_objects
 
+    bboxes = MotionDetector.get_bounding_boxes(fg_mask)
+    # if bboxes:
+        # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
+        # print("rois: ", len(rois))
+
     worker_pid = mp.current_process().pid
-    result = detect_objects(frame_data)
+    if bboxes:
+        result = detect_objects(frame_data)
+    else:
+        result = 0, []
+
     return worker_pid, timestamp, frame_data, result
 
 
@@ -134,7 +365,7 @@ class StreamingOutput(io.BufferedIOBase):
 
         if buf is not None and buf.size:
             cv2.resize(buf, (640, 480), buf)
-            has_movement = self.motion_detector.is_moving(buf)
+            has_movement, mask = self.motion_detector.is_moving(buf)
             if has_movement and self.highlight_movement:
                 measure_paint_movement = get_measure("Paint movement")
                 highlighted_frame = self.motion_detector.highlight_movement_on(buf)
@@ -152,6 +383,7 @@ class StreamingOutput(io.BufferedIOBase):
                     future: Future = process_pool.submit(
                         run_object_detection,
                         frame_data=buf[:],
+                        fg_mask=mask,
                         timestamp=timestamp,
                     )
 
@@ -193,14 +425,15 @@ class MotionDetector:
         self.foreground_mask = fg_mask
         is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
         # motion_ms()
-        return is_moving
+        return is_moving, fg_mask
 
-    def get_boundinx_boxes(self, expansion_margin=25, size_threshold=200):
+    @staticmethod
+    def get_bounding_boxes(foreground_mask: np.ndarray, expansion_margin=25, size_threshold=200):
         """
         Merges nearby bounding boxes into a single one.
 
         Args:
-            boxes (list): A list of bounding boxes, each in (x, y, w, h) format.
+            foreground_mask (list): .
             expansion_margin (int): The margin in pixels to expand each box's check area.
                                     Boxes within this margin of each other will be merged.
             size_threshold:
@@ -208,15 +441,10 @@ class MotionDetector:
         Returns:
             list: A new list of merged bounding boxes.
         """
-        contours, _ = cv2.findContours(self.foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
+        contours, _ = cv2.findContours(foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         boxes = [cv2.boundingRect(cnt) for cnt in contours]
 
-        if not boxes:
-            return []
-
-        # A flag to indicate if any merges happened in a pass
-        merges_made = True
+        merges_made = len(boxes) > 1
         while merges_made:
             merges_made = False
             merged_boxes = []
@@ -262,7 +490,11 @@ class MotionDetector:
             # The list for the next pass is the result of the current pass's merges
             boxes = merged_boxes
 
-        return [(x,y,w,h) for (x,y,w,h) in boxes if w*h >= size_threshold]
+        boxes = [(x,y,w,h) for (x,y,w,h) in boxes if w*h >= size_threshold]
+        clustered_boxes = constrained_agglomerative_clustering(boxes=boxes)
+        finalized_boxes = finalize_and_pad_rois(frame_shape=foreground_mask.shape[:2], clustered_rois=clustered_boxes, min_dimension=300)
+        return finalized_boxes
+        # return cluster_boxes_opencv(boxes=boxes, frame_shape=foreground_mask.shape[:2])
 
     def highlight_movement_on(
         self,
@@ -270,9 +502,10 @@ class MotionDetector:
         transparency_factor: float = 0.4,
         overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
     ) -> np.ndarray:
-        boxes = self.get_boundinx_boxes()
+        boxes = self.get_bounding_boxes(self.foreground_mask)
+        # rect_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
         for (x, y, w, h) in boxes:
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0,0,255), 2)
 
         colored_overlay = np.full(frame.shape, overlay_color_bgr, dtype=np.uint8)
         blended = cv2.addWeighted(
