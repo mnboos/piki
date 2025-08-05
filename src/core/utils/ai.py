@@ -10,6 +10,9 @@ import numpy as np
 import multiprocessing as mp
 from ctypes import c_float
 
+from rich.live import Live
+from rich.table import Table
+
 prob_threshold = mp.Value(c_float, 0.5)
 
 models = {"nanodet", "mobilenetv2_ssdlite", "mobilenetv3_ssdlite", ""}
@@ -23,6 +26,7 @@ try:
     is_quant = "quant" in model_path.lower()
 
     ip = Interpreter(model_path=model_path)
+
     ip.allocate_tensors()
     inp_id = ip.get_input_details()[0]["index"]
     out_det = ip.get_output_details()
@@ -143,14 +147,12 @@ try:
                 )
             )
 
-        def print_output(res, original_img_size):
-            boxes, classes, scores, num_det = res
-            img_width, img_height = original_img_size
-
+        def process_results(*, boxes, classes, scores, num_det, original_img_size: tuple[int, int]):
             i = 0
-
+            img_width, img_height = original_img_size
             n_obj = int(num_det[i])
 
+            results = []
             # print("{} - found objects:".format(fname))
             for j in range(n_obj):
                 cl_id = int(classes[i][j]) + 1
@@ -167,21 +169,19 @@ try:
                 abs_xmax = int(xmax * img_width)
                 abs_ymax = int(ymax * img_height)
 
-                print(
-                    "  ", cl_id, label, score, [abs_xmin, abs_ymin, abs_xmax, abs_ymax]
-                )
+                results.append((label, score, [abs_xmin, abs_ymin, abs_xmax, abs_ymax]))
+            return results
 
         t0 = time.perf_counter()
         ip.set_tensor(inp_id, image)
         ip.invoke()
         tt = round((time.perf_counter() - t0) * 1000)
-        print("Inference:", tt, "ms")
+        # print("Inference:", tt, "ms")
         boxes = ip.get_tensor(out_id0)
         classes = ip.get_tensor(out_id1)
         scores = ip.get_tensor(out_id2)
         num_det = ip.get_tensor(out_id3)
-        # print_output((boxes, classes, scores, num_det), original_img_size=(0, 0))
-        return []
+        return tt, process_results(boxes=boxes, classes=classes, scores=scores, num_det=num_det, original_img_size=image.shape[:2])
 except:
     traceback.print_exc()
     raise

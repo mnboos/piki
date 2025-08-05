@@ -31,15 +31,19 @@ def gen_frames():
         while True:
             time.sleep(0.01)
             # Get data from the worker output buffer
-            try:
-                # The 'frame' variable is expected to be a NumPy array
-                worker_pid, timestamp, frame, detected_objects = (
-                    stream.output_buffer.popleft()
-                )
-            except IndexError:
-                # If the buffer is empty, wait briefly and try again
 
+            # The 'frame' variable is expected to be a NumPy array
+            if stream.output_buffer.queue.empty():
                 continue
+
+            latest_result = stream.output_buffer.popleft()
+            # print("latest result: ", latest_result, flush=True)
+            if not latest_result:
+                continue
+            # print("res: ", latest_result)
+            worker_pid, timestamp, frame, detected_objects = latest_result
+
+
 
             # This remains an empty list as per your original non-commented code.
             # If you were to find contours, you would do it here on the 'frame'.
@@ -58,10 +62,11 @@ def gen_frames():
                     cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, thickness)
 
             # Loop through objects detected by the AI model
-            for confidence, label, bbox in detected_objects:
+            for label, confidence, bbox in detected_objects:
                 # Assuming bbox has .x and .y attributes for the top-left corner
                 # For drawing text above the box, you might use (bbox.x, bbox.y - 10)
-                text_position = (int(bbox.x), int(bbox.y))
+                x, y, _, _ = bbox
+                text_position = (int(x), int(y))
 
                 text_to_draw = f"{label} ({confidence:.2%})"
 

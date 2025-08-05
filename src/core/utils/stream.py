@@ -1,8 +1,7 @@
 import dataclasses
 import os
 from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import Condition, Event
-from collections import deque
+from multiprocessing import Condition, Event, Queue
 import multiprocessing as mp
 import io
 import time
@@ -11,20 +10,60 @@ from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor
 import cv2
 import numpy as np
 import traceback
+from .metrics import LiveMetricsDashboard, retrieve_queue
+from .helpers import MultiprocessingDequeue
 
 NUM_AI_WORKERS: int = 2
 
 active_futures: list[Future] = []
 live_stream_enabled = Event()
 
+dashboard_queue = retrieve_queue()
+dashboard = LiveMetricsDashboard(retrieve_queue())
+
+
 max_output_timestamp = 0
-output_buffer = deque(maxlen=10)
+# output_buffer = Queue(maxsize=10)
+output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))
 
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
+
+# class LiveMetrics:
+#     def __init__(self) -> None:
+#         self.inference = deque(maxlen=1)
+#         self.live = Live(self._generate_table(), screen=False, transient=False)
+#
+#     def update(self, *, inference_time: float) -> None:
+#         self.inference.append(inference_time)
+#         # with self.live as l:
+#         self.live.update(self._generate_table())
+#
+#     @staticmethod
+#     def _generate_table() -> Table:
+#         """Draws a Rich Table from the current dashboard_data."""
+#         table = Table(title="Multi-Process Inference Monitor")
+#         table.add_column("Worker ID", style="cyan")
+#         table.add_column("Inference Time (ms)", justify="right", style="magenta")
+#         table.add_column("Items Processed", justify="right", style="green")
+#
+#         dashboard_data = {
+#             0: {"inference_time": "N/A", "items": 0},
+#             1: {"inference_time": "N/A", "items": 0},
+#         }
+#
+#         for worker_id, data in dashboard_data.items():
+#             table.add_row(
+#                 f"Worker {worker_id}",
+#                 str(data["inference_time"]),
+#                 str(data["items"])
+#             )
+#         return table
+
 # A list to keep track of tasks that have been submitted but are not yet complete.
 
+# metrics = LiveMetrics()
 
 def get_measure(description: str):
     now = time.perf_counter()
@@ -35,12 +74,6 @@ def get_measure(description: str):
         print(f"{description}: {ms} ms")
 
     return measure
-
-
-@dataclasses.dataclass
-class DetectionInput:
-    foreground_mask: np.ndarray
-    current_frame: np.ndarray
 
 
 def run_object_detection(frame_data: np.ndarray, timestamp: int):
@@ -58,16 +91,19 @@ def run_object_detection(frame_data: np.ndarray, timestamp: int):
 
 def on_done(future: Future):
     global max_output_timestamp
-
     active_futures.remove(future)
 
     try:
         worker_pid, timestamp, frame, detected_objects = future.result()
-        if timestamp >= max_output_timestamp:
+        if timestamp >= max_output_timestamp or True:
             max_output_timestamp = timestamp
 
+            inference_time = detected_objects[0]
+            # print("inference: ", inference_time)
+            # print("update dashboard: ", inference_time)
+            dashboard.update(worker_id=worker_pid, inference_time=inference_time)
             if live_stream_enabled.is_set():
-                output_buffer.append(future.result())
+                output_buffer.append((worker_pid, timestamp, frame, detected_objects[1]))
     except BrokenProcessPool as ex:
         print("Pool already broken, when future was done. Shutting down...")
     except KeyboardInterrupt:
@@ -78,7 +114,7 @@ def on_done(future: Future):
 class StreamingOutput(io.BufferedIOBase):
     def __init__(self, highlight_movement: bool = False) -> None:
         # self.frame: bytes = b""
-        self.condition = Condition()
+        # self.condition = Condition()
         # self.backSub = cv2.createBackgroundSubtractorMOG2()
         print("StreamingOutput created")
         self.motion_detector = MotionDetector()
@@ -91,9 +127,9 @@ class StreamingOutput(io.BufferedIOBase):
         if len(active_futures) == NUM_AI_WORKERS:
             return
 
-        with self.condition:
-            buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
-            buf: np.ndarray
+        # with self.condition:
+        buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
+        buf: np.ndarray
             # self.frame = buf
 
         if buf is not None and buf.size:
@@ -103,7 +139,7 @@ class StreamingOutput(io.BufferedIOBase):
                 measure_paint_movement = get_measure("Paint movement")
                 highlighted_frame = self.motion_detector.highlight_movement_on(buf)
                 buf = highlighted_frame  # todo: remove this after testing
-                measure_paint_movement()
+                # measure_paint_movement()
             else:
                 highlighted_frame = buf
 
@@ -166,7 +202,7 @@ class MotionDetector:
         )
         self.foreground_mask = fg_mask
         is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
-        motion_ms()
+        # motion_ms()
         return is_moving
 
     def get_boundinx_boxes(self, expansion_margin=25, size_threshold=200):
@@ -263,8 +299,8 @@ class MotionDetector:
         )
 
 
-def __setup_cam():
-    stream_output = StreamingOutput(highlight_movement=True)
+def _stream_cam_or_file_to(stream_output: StreamingOutput):
+
 
     resolution = (640, 480)
 
@@ -403,24 +439,24 @@ def __setup_cam():
         streamer_func = stream_file
 
     thread_pool.submit(streamer_func)
-    # stream_file(video_path)
-    # print("Streaming video from file")
-
-    return stream_output
 
 
+input_buffer = StreamingOutput(highlight_movement=True)
 # This single instance will be imported by other parts of the app
-input_buffer = __setup_cam()
+
+
+def start_stream_nonblocking():
+    _stream_cam_or_file_to(input_buffer)
 
 
 def cleanup():
     print("[DJANGO SHUTDOWN] Stopping processes...")
 
-    with input_buffer.condition:
-        input_buffer.close()
+    # with input_buffer.condition:
+    input_buffer.close()
 
-        process_pool.shutdown(wait=True, cancel_futures=True)
-        thread_pool.shutdown(wait=True, cancel_futures=True)
+    thread_pool.shutdown(wait=True, cancel_futures=True)
+    process_pool.shutdown(wait=True, cancel_futures=True)
 
     print("[DJANGO SHUTDOWN] Processes stopped.")
 
