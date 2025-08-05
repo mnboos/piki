@@ -64,7 +64,7 @@ dtoverlay=ov5647
 
 Then
 
-> Run dietpi-config, go into Display Options and activate RPi Camera and then reboot the device and try again.
+> Run `dietpi-config`, go into `Display Options` and activate RPi Camera and then reboot the device and try again.
 Source: https://dietpi.com/forum/t/want-to-connect-camera-module-3-to-raspberry-pi-3/19973
 
 
@@ -89,3 +89,4 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
