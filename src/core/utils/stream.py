@@ -41,15 +41,17 @@ def get_measure(description: str):
 
     return measure
 
-def finalize_and_pad_rois(*, frame_shape, clustered_rois, min_dimension=300):
+
+def finalize_rois_boundary_aware(*, frame_shape, clustered_rois, min_dimension=300):
     """
-    Takes clustered ROIs and ensures each one meets the minimum dimension by
-    padding from the center. Also performs boundary checks.
+    Takes clustered ROIs and ensures each one meets the minimum dimension.
+    This function intelligently shifts the ROI when expanding near the frame edges
+    to satisfy the size constraint wherever physically possible.
 
     Args:
         frame_shape (tuple): The (height, width) of the original frame.
         clustered_rois (list): A list of (x, y, w, h) tuples from the clustering step.
-        min_dimension (int): The minimum width and height for a final ROI.
+        min_dimension (int): The required minimum width AND height for a final ROI.
 
     Returns:
         list: The final list of ROI coordinates, ready for cropping.
@@ -58,31 +60,42 @@ def finalize_and_pad_rois(*, frame_shape, clustered_rois, min_dimension=300):
     frame_h, frame_w = frame_shape
 
     for (x, y, w, h) in clustered_rois:
+        # Determine the final target size, ensuring it meets the minimum
+        final_w = max(w, min_dimension)
+        final_h = max(h, min_dimension)
+
+        # --- Intelligent Positioning Logic ---
+
+        # Start by trying to center the new, larger box over the original box's center
         center_x = x + w // 2
         center_y = y + h // 2
 
-        # Enforce minimum size
-        new_w = max(w, min_dimension)
-        new_h = max(h, min_dimension)
+        new_x = center_x - (final_w // 2)
+        new_y = center_y - (final_h // 2)
 
-        # Recalculate top-left corner based on the new, larger size
-        new_x = center_x - new_w // 2
-        new_y = center_y - new_h // 2
+        # --- Boundary Correction: Shift the box if it goes out of bounds ---
 
-        # Boundary checks
-        new_x = max(0, new_x)
-        new_y = max(0, new_y)
+        # Check left edge
+        if new_x < 0:
+            new_x = 0
+        # Check top edge
+        if new_y < 0:
+            new_y = 0
 
-        if new_x + new_w > frame_w:
-            new_w = frame_w - new_x
-        if new_y + new_h > frame_h:
-            new_h = frame_h - new_y
+        # Check right edge
+        if new_x + final_w > frame_w:
+            new_x = frame_w - final_w
+        # Check bottom edge
+        if new_y + final_h > frame_h:
+            new_y = frame_h - final_h
 
-        final_rois.append((int(new_x), int(new_y), int(new_w), int(new_h)))
+        # The final dimensions are clamped to the frame size as a last resort
+        # This only matters if min_dimension is larger than the frame itself.
+        final_w = min(final_w, frame_w)
+        final_h = min(final_h, frame_h)
 
-    for r in final_rois:
-        _, _, w, h = r
-        print("wh: ", w, h)
+        final_rois.append((int(new_x), int(new_y), int(final_w), int(final_h)))
+
     return final_rois
 
 def constrained_agglomerative_clustering(*, boxes, max_dimension=400, merge_threshold=640):
@@ -492,7 +505,7 @@ class MotionDetector:
 
         boxes = [(x,y,w,h) for (x,y,w,h) in boxes if w*h >= size_threshold]
         clustered_boxes = constrained_agglomerative_clustering(boxes=boxes)
-        finalized_boxes = finalize_and_pad_rois(frame_shape=foreground_mask.shape[:2], clustered_rois=clustered_boxes, min_dimension=300)
+        finalized_boxes = finalize_rois_boundary_aware(frame_shape=foreground_mask.shape[:2], clustered_rois=clustered_boxes, min_dimension=300)
         return finalized_boxes
         # return cluster_boxes_opencv(boxes=boxes, frame_shape=foreground_mask.shape[:2])
 
