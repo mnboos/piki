@@ -79,6 +79,7 @@ def gen_frames():
 
             # --- Final Encoding and Yielding ---
             # Encode the modified frame (with drawings) to JPEG format in memory
+
             success, buffer = cv2.imencode(".jpg", frame)
 
             # If encoding was successful, yield the frame

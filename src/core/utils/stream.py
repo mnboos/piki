@@ -52,6 +52,8 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, time
 
     from .ai import detect_objects
 
+    frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
+
     padded_images_with_roi = MotionDetector.get_padded_roi_images(frame=frame_data, rois=rois)
     # if bboxes:
     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
@@ -79,6 +81,7 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, time
         result = 0, []
 
     frame_resized = cv2.resize(frame_data, dsize=None, fx=1/3, fy=1/3)
+    cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
 
     det = MotionDetector(100,200)
     highlighted_frame = det.highlight_movement_on(frame=frame_resized, mask=fg_mask)
@@ -528,9 +531,8 @@ class StreamingOutput(io.BufferedIOBase):
         if len(active_futures) == NUM_AI_WORKERS:
             return
 
-
-
         buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
+        buf_hires = cv2.cvtColor(buf_hires, cv2.COLOR_RGB2BGR)
 
         h_hi, w_hi = buf_hires.shape[:2]
         w_lo, h_lo = int(w_hi / scale_factor), int(h_hi / scale_factor)
@@ -676,8 +678,8 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
         video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
         video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
+        # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+        video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
@@ -718,6 +720,7 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
                     else:
                         # frame_resized = cv2.resize(frame, resolution)
                         # frame_bytes_resized = cv2.imencode(".jpeg", frame_resized)[1].tobytes()
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         frame_bytes_hires = cv2.imencode(".jpeg", frame)[1].tobytes()
                         stream_output.write(frame_bytes_hires)
                 except KeyboardInterrupt:
