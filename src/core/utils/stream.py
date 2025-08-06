@@ -323,7 +323,7 @@ def cluster_boxes_opencv(*, boxes, frame_shape, eps=150):
     return merged_rois
 
 
-def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, timestamp: int):
+def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, timestamp: int):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
@@ -331,14 +331,29 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, timestamp:
 
     from .ai import detect_objects
 
-    bboxes = MotionDetector.get_bounding_boxes(fg_mask)
+    padded_images_with_roi = MotionDetector.get_padded_roi_images(frame=frame_data, rois=rois)
     # if bboxes:
     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
     # print("rois: ", len(rois))
 
+    # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # todo: should we do this before ai processing?
+    # lab = cv2.cvtColor(frame_data, cv2.COLOR_BGR2LAB)
+    # lab[:,:,0] = clahe.apply(lab[:,:,0])
+    # frame_data = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+
     worker_pid = mp.current_process().pid
-    if bboxes:
-        result = detect_objects(frame_data)
+    if True:
+        # imgs = MotionDetector.get_padded_roi_images(fg_mask)
+        total_duration = 0
+        all_detections = []
+        for (img, roi) in padded_images_with_roi:
+            duration, detections = detect_objects(img)
+            total_duration += duration
+            all_detections.extend(detections)
+            # print("result for img: ", result, roi)
+
+        # result = detect_objects(frame_data)
+        result = total_duration, all_detections
     else:
         result = 0, []
 
@@ -392,10 +407,16 @@ class StreamingOutput(io.BufferedIOBase):
 
         if buf is not None and buf.size:
             cv2.resize(buf, (640, 480), buf)
+
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # todo: should we do this before ai processing?
+            lab = cv2.cvtColor(buf, cv2.COLOR_BGR2LAB)
+            lab[:,:,0] = clahe.apply(lab[:,:,0])
+            buf = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+
             has_movement, mask = self.motion_detector.is_moving(buf)
             if has_movement and self.highlight_movement:
                 measure_paint_movement = get_measure("Paint movement")
-                highlighted_frame = self.motion_detector.highlight_movement_on(buf)
+                highlighted_frame = self.motion_detector.highlight_movement_on(frame=buf, mask=mask)
                 buf = highlighted_frame  # todo: remove this after testing
                 # measure_paint_movement()
             else:
@@ -407,10 +428,12 @@ class StreamingOutput(io.BufferedIOBase):
 
                     global max_output_timestamp
 
+                    rois = self.motion_detector.create_rois(mask=mask)
                     future: Future = process_pool.submit(
                         run_object_detection,
                         frame_data=buf[:],
                         fg_mask=mask,
+                        rois=rois,
                         timestamp=timestamp,
                     )
 
@@ -437,23 +460,306 @@ class MotionDetector:
         self.pixelcount_threshold = pixelcount_threshold
         self.denoise = denoise
 
+        self.min_roi_size = 300
+        self.min_area = 100
+
     def moving_pixel_count(self):
         return cv2.countNonZero(self.foreground_mask)
+
+    def _expand_roi_to_min_size(self, roi: tuple[int, int, int, int],
+                                img_shape: tuple[int, int]) -> tuple[int, int, int, int]:
+        """
+        Expands an ROI from its center to a minimum target size, but does not
+        shift the ROI if it hits a boundary. Instead, the expansion is clipped
+        by the image edges.
+
+        Args:
+            roi (tuple): The initial (x, y, w, h) bounding box.
+            img_shape (tuple): The (height, width) of the image frame.
+
+        Returns:
+            tuple: The final (x, y, w, h) of the expanded and clipped ROI.
+        """
+        x, y, w, h = roi
+        img_h, img_w = img_shape
+
+        # 1. Determine the target size. This ensures the ROI becomes at least min_roi_size
+        #    while attempting to make it square if the original box was not.
+        target_size = max(self.min_roi_size, max(w, h))
+
+        # 2. Calculate the total padding needed for width and height
+        pad_w = max(0, target_size - w)
+        pad_h = max(0, target_size - h)
+
+        # 3. Calculate the ideal padding for each side (half of the total)
+        pad_left = pad_w // 2
+        pad_right = pad_w - pad_left  # Handles odd numbers correctly
+
+        pad_top = pad_h // 2
+        pad_bottom = pad_h - pad_top
+
+        # 4. --- The Critical Step: Limit padding by available space ---
+        # The actual padding is the smaller of the ideal padding or the space
+        # between the box edge and the frame edge.
+        actual_pad_left = min(pad_left, x)
+        actual_pad_right = min(pad_right, img_w - (x + w))
+        actual_pad_top = min(pad_top, y)
+        actual_pad_bottom = min(pad_bottom, img_h - (y + h))
+
+        # 5. Calculate the final ROI coordinates based on the actual, clipped padding
+        final_x = x - actual_pad_left
+        final_y = y - actual_pad_top
+        final_w = w + actual_pad_left + actual_pad_right
+        final_h = h + actual_pad_top + actual_pad_bottom
+
+        return int(final_x), int(final_y), int(final_w), int(final_h)
+
+    # def _expand_roi_to_min_size(self, roi: tuple[int, int, int, int],
+    #                             img_shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    #     """Expand ROI to minimum size, handling image boundaries."""
+    #     x, y, w, h = roi
+    #     img_h, img_w = img_shape
+    #
+    #     # Calculate expansion needed
+    #     target_size = max(self.min_roi_size, max(w, h))  # Keep aspect ratio considerations
+    #
+    #     expand_w = max(0, target_size - w)
+    #     expand_h = max(0, target_size - h)
+    #
+    #     # Expand around center
+    #     new_x = x - expand_w // 2
+    #     new_y = y - expand_h // 2
+    #     new_w = w + expand_w
+    #     new_h = h + expand_h
+    #
+    #     # Handle boundaries
+    #     new_x = max(0, min(new_x, img_w - target_size))
+    #     new_y = max(0, min(new_y, img_h - target_size))
+    #     new_w = min(new_w, img_w - new_x)
+    #     new_h = min(new_h, img_h - new_y)
+    #
+    #     return new_x, new_y, new_w, new_h
+
+    def _edge_distance(self, roi: tuple[int, int, int, int], img_shape: tuple[int, int]) -> float:
+        """Calculate distance to nearest edge for prioritization."""
+        x, y, w, h = roi
+        img_h, img_w = img_shape
+        return min(x, y, img_w - (x + w), img_h - (y + h))
 
     def is_moving(self, frame: np.ndarray):
         motion_ms = get_measure("Detect motion")
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
         if self.denoise:
             cv2.GaussianBlur(frame, (33, 33), 0, frame)
         fg_mask = self.backSub.apply(frame)
+        # Remove noise
         cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
+        # Connect nearby regions (cat body parts)
+        cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self.morph_kernel, fg_mask)
         self.foreground_mask = fg_mask
         is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
         # motion_ms()
-        return is_moving, fg_mask
+        return is_moving, fg_mask[:]
+
+    def _cluster_with_constraints(self, boxes: list, max_dimension: int, merge_threshold: int) -> list:
+        """
+        Private helper to greedily cluster boxes, respecting max size and proximity.
+        """
+        if not boxes:
+            return []
+
+        num_boxes = len(boxes)
+        visited = [False] * num_boxes
+
+        final_rois = []
+
+        for i in range(num_boxes):
+            if visited[i]:
+                continue
+
+            current_cluster_indices = {i}
+            visited[i] = True
+
+            while True:
+                valid_candidates = []
+
+                # Calculate the current cluster's bounding box
+                cluster_x = min(boxes[k][0] for k in current_cluster_indices)
+                cluster_y = min(boxes[k][1] for k in current_cluster_indices)
+                cluster_xw = max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices)
+                cluster_yh = max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices)
+                cluster_w = cluster_xw - cluster_x
+                cluster_h = cluster_yh - cluster_y
+                cluster_cx = cluster_x + cluster_w / 2
+                cluster_cy = cluster_y + cluster_h / 2
+
+                for j in range(num_boxes):
+                    if visited[j]:
+                        continue
+
+                    jx, jy, jw, jh = boxes[j]
+                    dist = np.sqrt((cluster_cx - (jx + jw/2))**2 + (cluster_cy - (jy + jh/2))**2)
+
+                    if dist > merge_threshold:
+                        continue
+
+                    # --- Constraint Check BEFORE adding to candidates ---
+                    potential_x = min(cluster_x, jx)
+                    potential_y = min(cluster_y, jy)
+                    potential_w = max(cluster_xw, jx + jw) - potential_x
+                    potential_h = max(cluster_yh, jy + jh) - potential_y
+
+                    if potential_w <= max_dimension and potential_h <= max_dimension:
+                        valid_candidates.append((dist, j))
+
+                if not valid_candidates:
+                    break
+
+                valid_candidates.sort()
+                best_neighbor_idx = valid_candidates[0][1]
+
+                visited[best_neighbor_idx] = True
+                current_cluster_indices.add(best_neighbor_idx)
+
+            # Finalize the cluster's bounding box
+            final_x = min(boxes[k][0] for k in current_cluster_indices)
+            final_y = min(boxes[k][1] for k in current_cluster_indices)
+            final_w = max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices) - final_x
+            final_h = max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices) - final_y
+
+            final_rois.append((final_x, final_y, final_w, final_h))
+
+        return final_rois
+
+    def create_rois(self, *, mask: np.ndarray, max_roi_size: int = 300, merge_radius: int = 150) -> list:
+        """
+        Finds blobs with connectedComponents, clusters them with constraints,
+        and finalizes them to meet min_size requirements.
+
+        Args:
+            mask (np.ndarray): The input binary mask.
+            max_roi_size (int): The maximum dimension (width or height) for a merged ROI.
+            merge_radius (int): The distance to consider blobs part of the same cluster.
+
+        Returns:
+            list: A list of the final, fully optimized ROIs.
+        """
+        # 1. Find all individual blobs in the mask (Fast)
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+            mask, connectivity=8, ltype=cv2.CV_32S
+        )
+
+        # 2. Filter small blobs and collect their initial bounding boxes
+        initial_boxes = []
+
+        # if num_labels > 1:
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] >= self.min_area:
+                x = stats[i, cv2.CC_STAT_LEFT]
+                y = stats[i, cv2.CC_STAT_TOP]
+                w = stats[i, cv2.CC_STAT_WIDTH]
+                h = stats[i, cv2.CC_STAT_HEIGHT]
+                initial_boxes.append((x, y, w, h))
+
+        if not initial_boxes:
+            return []
+
+        # 3. Cluster the initial boxes with full constraints (Intelligent)
+        clustered_rois = self._cluster_with_constraints(
+            initial_boxes,
+            max_dimension=max_roi_size,
+            merge_threshold=640
+        )
+
+        # 4. Finalize ROIs to enforce minimum size and handle edge cases (Format for AI)
+        final_rois = []
+        for roi_box in clustered_rois:
+            # Assumes self._expand_roi_to_min_size is your boundary-aware finalization function
+            final_roi = self._expand_roi_to_min_size(roi_box, mask.shape)
+            final_rois.append(final_roi)
+
+        # Optional: Sort final ROIs
+        final_rois.sort(key=lambda roi: self._edge_distance(roi, mask.shape))
+
+        return final_rois
+
+
+    def get_bounding_boxes(self,
+        foreground_mask: np.ndarray, expansion_margin=25, size_threshold=200
+    ):
+        measure = get_measure("ROI retrieval")
+        # res = self.method1_connected_components(foreground_mask)
+        # res = self.method1_with_clustering(foreground_mask)
+        res = self.create_rois(mask=foreground_mask)
+        # res = self.method2_watershed_segmentation(foreground_mask)
+        # res = self.method3_mean_shift_clustering(foreground_mask)
+        # res = self.method4_adaptive_threshold_contours(foreground_mask)
+        # measure()
+        return res
 
     @staticmethod
-    def get_bounding_boxes(
+    def get_padded_roi_images(*, frame: np.ndarray, rois, min_dimension=300, pad_color=(0, 0, 0)):
+        """
+        Takes clustered ROIs, crops them, and then uses cv2.copyMakeBorder to pad
+        them to the minimum required size. This is the simpler, more robust method.
+
+        Args:
+            frame (np.array): The original, full-resolution video frame.
+            rois (list): A list of (x, y, w, h) tuples from the clustering step.
+            min_dimension (int): The required dimension (width and height) for the final ROI.
+            pad_color (tuple): The BGR color for the padding.
+
+        Returns:
+            list: A list of final ROI images (as NumPy arrays), all of size min_dimension x min_dimension.
+        """
+        final_roi_images = []
+        frame_h, frame_w, _ = frame.shape
+
+        for current_roi in rois:
+            x, y, w, h = current_roi
+            # 1. Crop the ROI from the high-resolution frame first.
+            # Ensure cropping coordinates are integers and within bounds.
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            roi_crop = frame[y:y + h, x:x + w]
+
+            # Get the current dimensions of the crop
+            current_h, current_w, _ = roi_crop.shape
+
+            # 2. Calculate how much padding is needed for width and height
+            delta_w = max(0, min_dimension - current_w)
+            delta_h = max(0, min_dimension - current_h)
+
+            # 3. Distribute the padding to top/bottom and left/right
+            # This ensures the original crop stays centered in the padded image.
+            top = delta_h // 2
+            bottom = delta_h - top  # Handles odd numbers correctly
+
+            left = delta_w // 2
+            right = delta_w - left
+
+            # 4. Use cv2.copyMakeBorder to add the black padding
+            padded_image = cv2.copyMakeBorder(
+                roi_crop,
+                top,
+                bottom,
+                left,
+                right,
+                cv2.BORDER_CONSTANT,
+                value=pad_color
+            )
+
+            # As a final check, resize to the exact target size in case of minor floating point errors
+            # or if the original ROI was already larger than min_dimension
+            if padded_image.shape[0] != min_dimension or padded_image.shape[1] != min_dimension:
+                padded_image = cv2.resize(padded_image, (min_dimension, min_dimension), interpolation=cv2.INTER_AREA)
+
+            final_roi_images.append((padded_image, current_roi))
+
+        return final_roi_images
+
+    @staticmethod
+    def get_bounding_boxes__(
         foreground_mask: np.ndarray, expansion_margin=25, size_threshold=200
     ):
         """
@@ -602,11 +908,13 @@ class MotionDetector:
 
     def highlight_movement_on(
         self,
+            *,
         frame: np.ndarray,
+        mask: np.ndarray,
         transparency_factor: float = 0.4,
         overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
     ) -> np.ndarray:
-        boxes = self.get_bounding_boxes(self.foreground_mask)
+        boxes = self.get_bounding_boxes(mask)
         for x, y, w, h in boxes:
             # rect_color = (0, 0, 255)
             rect_color = (
@@ -625,7 +933,7 @@ class MotionDetector:
             0,
         )
         return np.where(
-            self.foreground_mask[:, :, None] != 0,
+            mask[:, :, None] != 0,
             blended,
             frame,
         )
@@ -712,7 +1020,7 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
         # video_path = "/home/martin/Downloads/cat.mov"
         video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
+        video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
