@@ -27,7 +27,7 @@
 
         img {
             border: 1px solid #ccc;
-            max-width: 640px;
+            {#max-width: 640px;#}
         }
     </style>
 
@@ -64,7 +64,7 @@
     <div>
         <h2>Camera Feed</h2>
         <!-- Changed url_for('video_feed') to Django's url tag -->
-        <img id="camera-feed" src="{% url 'video_feed' %}" width="640" height="480">
+        <img id="camera-feed" src="{% url 'video_feed' %}" >
         <canvas id="snapshot-canvas" width="640" height="480" style="display: none;"></canvas>
     </div>
     <div class=" card p-2">
