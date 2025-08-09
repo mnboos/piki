@@ -631,7 +631,7 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
     try:
         from picamera2 import Picamera2, Preview
         from picamera2.encoders import JpegEncoder, MJPEGEncoder
-        from picamera2.outputs import FileOutput, CircularOutput
+        from picamera2.outputs import FileOutput
         from libcamera import controls
 
         def stream_camera():
@@ -703,8 +703,6 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
             "Hardware initialization failed, using local file to stream",
             traceback.format_exc(),
         )
-        # traceback.print_exc()
-
         streamer_func = get_file_streamer(stream_output)
 
     thread_pool.submit(streamer_func)
