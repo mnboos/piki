@@ -709,16 +709,19 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
 
 
 def get_file_streamer(stream_output: StreamingOutput):
-    # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
-    video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
-    # video_path = "/home/martin/Downloads/cat.mov"
-    video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-    # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-    video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
+    video_path = os.environ.get("MOCK_CAMERA_VIDEO_PATH")
+    if not video_path:
+        # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
+        video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
+        # video_path = "/home/martin/Downloads/cat.mov"
+        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+        # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+        video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
 
-    # video_path = "/home/martin/Downloads/output_converted.mov"
-    # video_path = "/home/martin/Downloads/output_file.mov"
-    # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
+        # video_path = "/home/martin/Downloads/output_converted.mov"
+        # video_path = "/home/martin/Downloads/output_file.mov"
+        # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
+
     def stream_file():
         if not os.path.isfile(video_path):
             raise ValueError("File not found: ", video_path)
