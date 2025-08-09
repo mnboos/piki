@@ -1,8 +1,7 @@
-import dataclasses
 import os
 import random
 from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import Condition, Event, Queue
+from multiprocessing import Event, Queue
 import multiprocessing as mp
 import io
 import time
@@ -44,7 +43,9 @@ def get_measure(description: str):
     return measure
 
 
-def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, timestamp: int):
+def run_object_detection(
+    frame_data: np.ndarray, fg_mask: np.ndarray, rois, timestamp: int
+):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
     and returns its result along with its unique process ID.
@@ -54,7 +55,9 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, time
 
     frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
 
-    padded_images_with_roi = MotionDetector.get_padded_roi_images(frame=frame_data, rois=rois)
+    padded_images_with_roi = MotionDetector.get_padded_roi_images(
+        frame=frame_data, rois=rois
+    )
     # if bboxes:
     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
     # print("rois: ", len(rois))
@@ -64,12 +67,13 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, time
     # lab[:,:,0] = clahe.apply(lab[:,:,0])
     # frame_data = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
+    result = 0, []
     worker_pid = mp.current_process().pid
     if True:
         # imgs = MotionDetector.get_padded_roi_images(fg_mask)
         total_duration = 0
         all_detections = []
-        for (img, roi) in padded_images_with_roi:
+        for img, roi in padded_images_with_roi:
             duration, detections = detect_objects(img)
             total_duration += duration
             all_detections.extend(detections)
@@ -77,13 +81,13 @@ def run_object_detection(frame_data: np.ndarray, fg_mask: np.ndarray, rois, time
 
         # result = detect_objects(frame_data)
         result = total_duration, all_detections
-    else:
-        result = 0, []
+    # else:
+    #     result = 0, []
 
-    frame_resized = cv2.resize(frame_data, dsize=None, fx=1/3, fy=1/3)
+    frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / 3, fy=1 / 3)
     cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
 
-    det = MotionDetector(100,200)
+    det = MotionDetector(100, 200)
     highlighted_frame = det.highlight_movement_on(frame=frame_resized, mask=fg_mask)
 
     return worker_pid, timestamp, highlighted_frame, result
@@ -107,7 +111,7 @@ def on_done(future: Future):
                 output_buffer.append(
                     (worker_pid, timestamp, frame, detected_objects[1])
                 )
-    except BrokenProcessPool as ex:
+    except BrokenProcessPool:
         print("Pool already broken, when future was done. Shutting down...")
     except KeyboardInterrupt:
         print("Future done, shutting down...")
@@ -116,7 +120,7 @@ def on_done(future: Future):
 class MotionDetector:
     def __init__(self, min_roi_size: int, max_roi_size: int):
         self.backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
-        self.foreground_mask: np.ndarray | None = None
+        self.foreground_mask = None
         # self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         self.morph_kernel = np.ones((3, 3), np.uint8)
         self.denoise = True
@@ -129,8 +133,9 @@ class MotionDetector:
     def moving_pixel_count(self):
         return cv2.countNonZero(self.foreground_mask)
 
-    def _expand_roi_to_min_size(self, roi: tuple[int, int, int, int],
-                                img_shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    def _expand_roi_to_min_size(
+        self, roi: tuple[int, int, int, int], img_shape: tuple[int, int]
+    ) -> tuple[int, int, int, int]:
         """
         Expands an ROI from its center to a minimum target size, but does not
         shift the ROI if it hits a boundary. Instead, the expansion is clipped
@@ -203,14 +208,17 @@ class MotionDetector:
     #
     #     return new_x, new_y, new_w, new_h
 
-    def _edge_distance(self, roi: tuple[int, int, int, int], img_shape: tuple[int, int]) -> float:
+    @staticmethod
+    def _edge_distance(
+        roi: tuple[int, int, int, int], img_shape: tuple[int, int]
+    ) -> float:
         """Calculate distance to nearest edge for prioritization."""
         x, y, w, h = roi
         img_h, img_w = img_shape
         return min(x, y, img_w - (x + w), img_h - (y + h))
 
     def is_moving(self, frame: np.ndarray):
-        motion_ms = get_measure("Detect motion")
+        # motion_ms = get_measure("Detect motion")
         # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if self.denoise:
@@ -225,7 +233,10 @@ class MotionDetector:
         # motion_ms()
         return is_moving, fg_mask[:]
 
-    def _cluster_with_constraints(self, boxes: list, max_dimension: int, merge_threshold: int=999999) -> list:
+    @staticmethod
+    def _cluster_with_constraints(
+        boxes: list, max_dimension: int, merge_threshold: int = 999999
+    ) -> list:
         """
         Private helper to greedily cluster boxes, respecting max size and proximity.
         """
@@ -250,8 +261,12 @@ class MotionDetector:
                 # Calculate the current cluster's bounding box
                 cluster_x = min(boxes[k][0] for k in current_cluster_indices)
                 cluster_y = min(boxes[k][1] for k in current_cluster_indices)
-                cluster_xw = max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices)
-                cluster_yh = max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices)
+                cluster_xw = max(
+                    boxes[k][0] + boxes[k][2] for k in current_cluster_indices
+                )
+                cluster_yh = max(
+                    boxes[k][1] + boxes[k][3] for k in current_cluster_indices
+                )
                 cluster_w = cluster_xw - cluster_x
                 cluster_h = cluster_yh - cluster_y
                 cluster_cx = cluster_x + cluster_w / 2
@@ -262,7 +277,10 @@ class MotionDetector:
                         continue
 
                     jx, jy, jw, jh = boxes[j]
-                    dist = np.sqrt((cluster_cx - (jx + jw/2))**2 + (cluster_cy - (jy + jh/2))**2)
+                    dist = np.sqrt(
+                        (cluster_cx - (jx + jw / 2)) ** 2
+                        + (cluster_cy - (jy + jh / 2)) ** 2
+                    )
 
                     if dist > merge_threshold:
                         continue
@@ -288,14 +306,21 @@ class MotionDetector:
             # Finalize the cluster's bounding box
             final_x = min(boxes[k][0] for k in current_cluster_indices)
             final_y = min(boxes[k][1] for k in current_cluster_indices)
-            final_w = max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices) - final_x
-            final_h = max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices) - final_y
+            final_w = (
+                max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices)
+                - final_x
+            )
+            final_h = (
+                max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices)
+                - final_y
+            )
 
             final_rois.append((final_x, final_y, final_w, final_h))
 
         return final_rois
 
-    def apply_non_max_suppression(self, boxes, overlap_threshold=0.3):
+    @staticmethod
+    def apply_non_max_suppression(boxes, overlap_threshold=0.3):
         """
         Applies Non-Max Suppression to a list of bounding boxes to remove redundant,
         overlapping ROIs.
@@ -312,7 +337,6 @@ class MotionDetector:
         if not boxes:
             return []
 
-
         # Ensure boxes are in a standard list of lists format
         # The NMS function can be picky about this.
         bbox_list = [[int(x), int(y), int(w), int(h)] for (x, y, w, h) in boxes]
@@ -328,9 +352,9 @@ class MotionDetector:
         # It returns the *indices* of the boxes to keep.
         indices_to_keep = cv2.dnn.NMSBoxes(
             bboxes=bbox_list,
-            scores=scores_np, # Pass the correctly typed array
+            scores=scores_np,  # Pass the correctly typed array
             score_threshold=0,
-            nms_threshold=overlap_threshold
+            nms_threshold=overlap_threshold,
         )
 
         # If NMS returns indices, use them to build the final list of boxes
@@ -350,8 +374,6 @@ class MotionDetector:
 
         Args:
             mask (np.ndarray): The input binary mask.
-            max_roi_size (int): The maximum dimension (width or height) for a merged ROI.
-            merge_radius (int): The distance to consider blobs part of the same cluster.
 
         Returns:
             list: A list of the final, fully optimized ROIs.
@@ -394,11 +416,11 @@ class MotionDetector:
 
         return final_rois
 
-
-    def get_bounding_boxes(self,
+    def get_bounding_boxes(
+        self,
         foreground_mask: np.ndarray,
     ):
-        measure = get_measure("ROI retrieval")
+        # measure = get_measure("ROI retrieval")
         # res = self.method1_connected_components(foreground_mask)
         # res = self.method1_with_clustering(foreground_mask)
         res = self.create_rois(mask=foreground_mask)
@@ -410,7 +432,9 @@ class MotionDetector:
         return res
 
     @staticmethod
-    def get_padded_roi_images(*, frame: np.ndarray, rois, min_dimension=300, pad_color=(0, 0, 0)):
+    def get_padded_roi_images(
+        *, frame: np.ndarray, rois, min_dimension=300, pad_color=(0, 0, 0)
+    ):
         """
         Takes clustered ROIs, crops them, and then uses cv2.copyMakeBorder to pad
         them to the minimum required size. This is the simpler, more robust method.
@@ -431,14 +455,19 @@ class MotionDetector:
             x, y, w, h = current_roi
             # 1. Crop the ROI from the high-resolution frame first.
             # Ensure cropping coordinates are integers and within bounds.
-            x, y, w, h = int(x) * scale_factor, int(y) *scale_factor, int(w)*scale_factor, int(h)*scale_factor
+            x, y, w, h = (
+                int(x) * scale_factor,
+                int(y) * scale_factor,
+                int(w) * scale_factor,
+                int(h) * scale_factor,
+            )
 
             x = max(0, x)
             y = max(0, y)
             w = min(frame_w - x, w)
             h = min(frame_h - y, h)
 
-            roi_crop = frame[y:y + h, x:x + w]
+            roi_crop = frame[y : y + h, x : x + w]
 
             # Get the current dimensions of the crop
             current_h, current_w, _ = roi_crop.shape
@@ -457,19 +486,20 @@ class MotionDetector:
 
             # 4. Use cv2.copyMakeBorder to add the black padding
             padded_image = cv2.copyMakeBorder(
-                roi_crop,
-                top,
-                bottom,
-                left,
-                right,
-                cv2.BORDER_CONSTANT,
-                value=pad_color
+                roi_crop, top, bottom, left, right, cv2.BORDER_CONSTANT, value=pad_color
             )
 
             # As a final check, resize to the exact target size in case of minor floating point errors
             # or if the original ROI was already larger than min_dimension
-            if padded_image.shape[0] != min_dimension or padded_image.shape[1] != min_dimension:
-                padded_image = cv2.resize(padded_image, (min_dimension, min_dimension), interpolation=cv2.INTER_AREA)
+            if (
+                padded_image.shape[0] != min_dimension
+                or padded_image.shape[1] != min_dimension
+            ):
+                padded_image = cv2.resize(
+                    padded_image,
+                    (min_dimension, min_dimension),
+                    interpolation=cv2.INTER_AREA,
+                )
 
             final_roi_images.append((padded_image, current_roi))
 
@@ -477,7 +507,7 @@ class MotionDetector:
 
     def highlight_movement_on(
         self,
-            *,
+        *,
         frame: np.ndarray,
         mask: np.ndarray,
         transparency_factor: float = 0.4,
@@ -508,8 +538,6 @@ class MotionDetector:
         )
 
 
-
-
 # This class instance will hold the camera frames
 class StreamingOutput(io.BufferedIOBase):
     def __init__(self, highlight_movement: bool = False) -> None:
@@ -518,10 +546,12 @@ class StreamingOutput(io.BufferedIOBase):
         # self.backSub = cv2.createBackgroundSubtractorMOG2()
         print("StreamingOutput created")
 
-        min_roi_size = int(ai_input_size/scale_factor)
-        max_roi_size = int((ai_input_size+100) / scale_factor)
+        min_roi_size = int(ai_input_size / scale_factor)
+        max_roi_size = int((ai_input_size + 100) / scale_factor)
 
-        self.motion_detector = MotionDetector(min_roi_size=min_roi_size, max_roi_size=max_roi_size)
+        self.motion_detector = MotionDetector(
+            min_roi_size=min_roi_size, max_roi_size=max_roi_size
+        )
         self.highlight_movement = highlight_movement
 
     def write(self, buf_hires: bytes) -> None:
@@ -531,7 +561,9 @@ class StreamingOutput(io.BufferedIOBase):
         if len(active_futures) == NUM_AI_WORKERS:
             return
 
-        buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
+        buf_hires = cv2.imdecode(
+            np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
+        )
         buf_hires = cv2.cvtColor(buf_hires, cv2.COLOR_RGB2BGR)
 
         h_hi, w_hi = buf_hires.shape[:2]
@@ -539,29 +571,29 @@ class StreamingOutput(io.BufferedIOBase):
 
         buf = cv2.resize(buf_hires, (w_lo, h_lo))
 
-
-
         # with self.condition:
         # buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
         # buf: np.ndarray
         # self.frame = buf
 
         if buf is not None and buf.size:
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # todo: should we do this before ai processing?
+            clahe = cv2.createCLAHE(
+                clipLimit=2.0, tileGridSize=(8, 8)
+            )  # todo: should we do this before ai processing?
             gray = cv2.cvtColor(buf, cv2.COLOR_RGB2GRAY)
             # lab = cv2.cvtColor(gray, cv2.COLOR_BGR2LAB)
             gray = clahe.apply(gray)
             # buf = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
             has_movement, mask = self.motion_detector.is_moving(gray)
-            if has_movement and self.highlight_movement:
-                measure_paint_movement = get_measure("Paint movement")
-                # highlighted_frame = self.motion_detector.highlight_movement_on(frame=buf[:], mask=mask)
-                # cv2.resize(highlighted_frame, (w_lo, h_lo), highlighted_frame)
-                # buf = highlighted_frame  # todo: remove this after testing
-                # measure_paint_movement()
-            else:
-                highlighted_frame = buf
+            # if has_movement and self.highlight_movement:
+            #     # measure_paint_movement = get_measure("Paint movement")
+            #     # highlighted_frame = self.motion_detector.highlight_movement_on(frame=buf[:], mask=mask)
+            #     # cv2.resize(highlighted_frame, (w_lo, h_lo), highlighted_frame)
+            #     # buf = highlighted_frame  # todo: remove this after testing
+            #     # measure_paint_movement()
+            # else:
+            #     highlighted_frame = buf
 
             if has_movement and len(active_futures) < NUM_AI_WORKERS:
                 try:
@@ -571,7 +603,6 @@ class StreamingOutput(io.BufferedIOBase):
 
                     # buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
                     # buf_hires: np.ndarray
-
 
                     rois = self.motion_detector.create_rois(mask=mask)
                     future: Future = process_pool.submit(
@@ -593,13 +624,10 @@ class StreamingOutput(io.BufferedIOBase):
                 output_buffer.append((0, 0, buf, []))
             else:
                 # this is for testing only
-                output_buffer.append((0, 0, highlighted_frame, []))
-
+                output_buffer.append((0, 0, buf, []))
 
 
 def _stream_cam_or_file_to(stream_output: StreamingOutput):
-
-
     try:
         from picamera2 import Picamera2, Preview
         from picamera2.encoders import JpegEncoder, MJPEGEncoder
@@ -665,79 +693,85 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
 
             atexit.register(cleanup)
 
-        streamer_func = stream_camera
+        if os.environ.get("MOCK_CAMERA"):
+            streamer_func = get_file_streamer(stream_output)
+        else:
+            streamer_func = stream_camera
 
-    except ModuleNotFoundError as e:
+    except ModuleNotFoundError:
         print(
             "Hardware initialization failed, using local file to stream",
             traceback.format_exc(),
         )
         # traceback.print_exc()
 
-        # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
-        video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
-        # video_path = "/home/martin/Downloads/cat.mov"
-        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-        video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
-        # video_path = "/home/martin/Downloads/output_converted.mov"
-        # video_path = "/home/martin/Downloads/output_file.mov"
-        # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
-
-        def stream_file():
-            if not os.path.isfile(video_path):
-                raise ValueError("File not found: ", video_path)
-
-            print("Starting videostream in 3s...")
-            # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
-            time.sleep(3)
-
-            cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                raise RuntimeError(f"Error: Could not open video at {video_path}")
-
-            def close_video():
-                cap.release()
-
-            atexit.register(close_video)
-
-            # max_fps = 30
-            # motion_detector = MotionDetector()
-
-            while True:
-                if stream_output.closed:
-                    break
-
-                time.sleep(0.015)
-                try:
-                    ret, frame = cap.read()
-
-                    if not ret:
-                        # If it ended, rewind to the first frame (frame 0)
-                        print("Video stream ended. Rewinding.")
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        continue  # Skip the rest of this iteration and try reading the new first frame
-                    else:
-                        # frame_resized = cv2.resize(frame, resolution)
-                        # frame_bytes_resized = cv2.imencode(".jpeg", frame_resized)[1].tobytes()
-                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        frame_bytes_hires = cv2.imencode(".jpeg", frame)[1].tobytes()
-                        stream_output.write(frame_bytes_hires)
-                except KeyboardInterrupt:
-                    print("shutting down here!!!")
-                    break
-                except Exception:
-                    traceback.print_exc()
-                    raise
-            print("Stopping filestream...")
-            cap.release()
-
-        if not os.path.isfile(video_path):
-            raise RuntimeError(f"File not found: {video_path}")
-
-        streamer_func = stream_file
+        streamer_func = get_file_streamer(stream_output)
 
     thread_pool.submit(streamer_func)
+
+
+def get_file_streamer(stream_output: StreamingOutput):
+    # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
+    video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
+    # video_path = "/home/martin/Downloads/cat.mov"
+    video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+    # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+    video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
+
+    # video_path = "/home/martin/Downloads/output_converted.mov"
+    # video_path = "/home/martin/Downloads/output_file.mov"
+    # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
+    def stream_file():
+        if not os.path.isfile(video_path):
+            raise ValueError("File not found: ", video_path)
+
+        print("Starting videostream in 3s...")
+        # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
+        time.sleep(3)
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Error: Could not open video at {video_path}")
+
+        def close_video():
+            cap.release()
+
+        atexit.register(close_video)
+
+        # max_fps = 30
+        # motion_detector = MotionDetector()
+
+        while True:
+            if stream_output.closed:
+                break
+
+            time.sleep(0.015)
+            try:
+                ret, frame = cap.read()
+
+                if not ret:
+                    # If it ended, rewind to the first frame (frame 0)
+                    print("Video stream ended. Rewinding.")
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue  # Skip the rest of this iteration and try reading the new first frame
+                else:
+                    # frame_resized = cv2.resize(frame, resolution)
+                    # frame_bytes_resized = cv2.imencode(".jpeg", frame_resized)[1].tobytes()
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame_bytes_hires = cv2.imencode(".jpeg", frame)[1].tobytes()
+                    stream_output.write(frame_bytes_hires)
+            except KeyboardInterrupt:
+                print("shutting down here!!!")
+                break
+            except Exception:
+                traceback.print_exc()
+                raise
+        print("Stopping filestream...")
+        cap.release()
+
+    if not os.path.isfile(video_path):
+        raise RuntimeError(f"File not found: {video_path}")
+    return stream_file
 
 
 input_buffer = StreamingOutput(highlight_movement=True)
