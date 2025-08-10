@@ -1,8 +1,10 @@
+import dataclasses
 import os
 import random
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Event, Queue
 import multiprocessing as mp
+from ctypes import c_float, c_int
 import io
 import time
 import atexit
@@ -25,11 +27,33 @@ scale_factor = 3
 ai_input_size = 300
 
 max_output_timestamp = 0
-# output_buffer = Queue(maxsize=10)
 output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))
+
+is_mask_streaming_enabled = Event()
+is_object_detection_disabled = Event()
+mask_output_buffer = MultiprocessingDequeue[np.ndarray](queue=Queue(maxsize=10))
+mask_transparency = mp.Value(c_float, 0.5)
 
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
+
+
+@dataclasses.dataclass
+class ForegroundMaskOptions:
+    mog2_history = mp.Value(c_int, 500)
+    mog2_var_threshold = mp.Value(c_int, 16)
+    denoise_kernelsize = mp.Value(c_int, 33)
+
+
+class TuningSettings:
+    def __init__(self):
+        self.foreground_mask_options = ForegroundMaskOptions()
+
+    def update(self):
+        pass
+
+
+settings = TuningSettings()
 
 
 def get_measure(description: str):
@@ -87,10 +111,10 @@ def run_object_detection(
     frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / 3, fy=1 / 3)
     cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
 
-    det = MotionDetector(100, 200)
-    highlighted_frame = det.highlight_movement_on(frame=frame_resized, mask=fg_mask)
+    # det = MotionDetector(100, 200)
+    # highlighted_frame = det.highlight_movement_on(frame=frame_resized, mask=fg_mask)
 
-    return worker_pid, timestamp, highlighted_frame, result
+    return worker_pid, timestamp, frame_resized, result
     # return worker_pid, timestamp, frame_data, result
 
 
@@ -119,11 +143,14 @@ def on_done(future: Future):
 
 class MotionDetector:
     def __init__(self, min_roi_size: int, max_roi_size: int):
-        self.backSub = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
+        self.backSub = cv2.createBackgroundSubtractorMOG2(
+            detectShadows=False,
+            history=settings.foreground_mask_options.mog2_history.value,
+            varThreshold=settings.foreground_mask_options.mog2_var_threshold.value,
+        )
         self.foreground_mask = None
         # self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         self.morph_kernel = np.ones((3, 3), np.uint8)
-        self.denoise = True
         self.pixelcount_threshold = 1500
 
         self.min_area = 500
@@ -182,32 +209,6 @@ class MotionDetector:
 
         return int(final_x), int(final_y), int(final_w), int(final_h)
 
-    # def _expand_roi_to_min_size(self, roi: tuple[int, int, int, int],
-    #                             img_shape: tuple[int, int]) -> tuple[int, int, int, int]:
-    #     """Expand ROI to minimum size, handling image boundaries."""
-    #     x, y, w, h = roi
-    #     img_h, img_w = img_shape
-    #
-    #     # Calculate expansion needed
-    #     target_size = max(self.min_roi_size, max(w, h))  # Keep aspect ratio considerations
-    #
-    #     expand_w = max(0, target_size - w)
-    #     expand_h = max(0, target_size - h)
-    #
-    #     # Expand around center
-    #     new_x = x - expand_w // 2
-    #     new_y = y - expand_h // 2
-    #     new_w = w + expand_w
-    #     new_h = h + expand_h
-    #
-    #     # Handle boundaries
-    #     new_x = max(0, min(new_x, img_w - target_size))
-    #     new_y = max(0, min(new_y, img_h - target_size))
-    #     new_w = min(new_w, img_w - new_x)
-    #     new_h = min(new_h, img_h - new_y)
-    #
-    #     return new_x, new_y, new_w, new_h
-
     @staticmethod
     def _edge_distance(
         roi: tuple[int, int, int, int], img_shape: tuple[int, int]
@@ -221,8 +222,10 @@ class MotionDetector:
         # motion_ms = get_measure("Detect motion")
         # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        if self.denoise:
-            cv2.GaussianBlur(frame, (33, 33), 0, frame)
+        denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
+        if denoise_kernelsize >= 1:
+            kernel = (denoise_kernelsize,) * 2
+            cv2.GaussianBlur(frame, kernel, 0, frame)
         fg_mask = self.backSub.apply(frame)
         # Remove noise
         cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
@@ -388,11 +391,13 @@ class MotionDetector:
 
         # if num_labels > 1:
         for i in range(1, num_labels):
-            if stats[i, cv2.CC_STAT_AREA] >= self.min_area:
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= self.min_area:
                 x = stats[i, cv2.CC_STAT_LEFT]
                 y = stats[i, cv2.CC_STAT_TOP]
                 w = stats[i, cv2.CC_STAT_WIDTH]
                 h = stats[i, cv2.CC_STAT_HEIGHT]
+                fullness = area / (w * h)
                 initial_boxes.append((x, y, w, h))
 
         if not initial_boxes:
@@ -512,23 +517,25 @@ class MotionDetector:
         mask: np.ndarray,
         transparency_factor: float = 0.4,
         overlay_color_bgr: tuple[int, int, int] = (0, 0, 255),
+        draw_boxes: bool = True,
     ) -> np.ndarray:
-        boxes = self.get_bounding_boxes(mask)
-        for x, y, w, h in boxes:
-            # rect_color = (0, 0, 255)
-            rect_color = (
-                random.randint(0, 255),
-                random.randint(0, 255),
-                random.randint(0, 255),
-            )
-            cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
+        if draw_boxes:
+            boxes = self.get_bounding_boxes(mask)
+            for x, y, w, h in boxes:
+                # rect_color = (0, 0, 255)
+                rect_color = (
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                )
+                cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
 
         colored_overlay = np.full(frame.shape, overlay_color_bgr, dtype=np.uint8)
         blended = cv2.addWeighted(
             frame,
-            1 - transparency_factor,
-            colored_overlay,
             transparency_factor,
+            colored_overlay,
+            1 - transparency_factor,
             0,
         )
         return np.where(
@@ -553,6 +560,12 @@ class StreamingOutput(io.BufferedIOBase):
             min_roi_size=min_roi_size, max_roi_size=max_roi_size
         )
         self.highlight_movement = highlight_movement
+
+    def update_motion_detector(self):
+        self.motion_detector = MotionDetector(
+            min_roi_size=self.motion_detector.min_roi_size,
+            max_roi_size=self.motion_detector.max_roi_size,
+        )
 
     def write(self, buf_hires: bytes) -> None:
         if self.closed:
@@ -580,12 +593,26 @@ class StreamingOutput(io.BufferedIOBase):
             clahe = cv2.createCLAHE(
                 clipLimit=2.0, tileGridSize=(8, 8)
             )  # todo: should we do this before ai processing?
-            gray = cv2.cvtColor(buf, cv2.COLOR_RGB2GRAY)
+            gray = cv2.cvtColor(buf_hires, cv2.COLOR_RGB2GRAY)
             # lab = cv2.cvtColor(gray, cv2.COLOR_BGR2LAB)
             gray = clahe.apply(gray)
             # buf = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
-            has_movement, mask = self.motion_detector.is_moving(gray)
+            has_movement, mask = self.motion_detector.is_moving(buf)
+            if is_mask_streaming_enabled.is_set():
+                # frame_copy = gray
+                buf_highlighted = self.motion_detector.highlight_movement_on(
+                    frame=buf,
+                    mask=mask,
+                    overlay_color_bgr=(
+                        147,
+                        20,
+                        255,
+                    ),
+                    transparency_factor=mask_transparency.value,
+                    draw_boxes=False,
+                )
+                mask_output_buffer.append(buf_highlighted)
             # if has_movement and self.highlight_movement:
             #     # measure_paint_movement = get_measure("Paint movement")
             #     # highlighted_frame = self.motion_detector.highlight_movement_on(frame=buf[:], mask=mask)
@@ -711,13 +738,13 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
 def get_file_streamer(stream_output: StreamingOutput):
     video_path = os.environ.get("MOCK_CAMERA_VIDEO_PATH")
     if not video_path:
-        # video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
-        video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
+        video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
+        # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
-        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+        # video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-        video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
-
+        # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
+        # video_path = "/home/martin/Downloads/VID_20250808_080717.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
@@ -746,7 +773,9 @@ def get_file_streamer(stream_output: StreamingOutput):
             if stream_output.closed:
                 break
 
-            time.sleep(0.015)
+            fps = 60
+
+            time.sleep(1 / fps)
             try:
                 ret, frame = cap.read()
 

@@ -1,0 +1,75 @@
+{% extends "core/base.html" %}
+
+{% block main %}
+    <div class="card p-2">
+        <h2>Foreground</h2>
+        <img id="mask-feed" src="{% url 'mask_feed' %}" alt="mask feed">
+    </div>
+    <div class=" card p-2">
+        <h2>Foreground Detection</h2>
+        <form action="{{ request.path }}" method="post">
+            {% csrf_token %}
+            <div class="card ">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        Debug Settings
+                    </h5>
+
+                    <div class="form-check form-switch">
+                        <label class="form-check-label">
+                            Show mask full size
+                            <input type="checkbox" name="fullsize_mask" class="form-check-input"
+                                   value="{{ request.session.fullsize_mask }}">
+                        </label>
+                    </div>
+                    <br>
+
+                    <label class="">
+                        Mask Transparency
+                        <input type="range" name="mask_transparency" class="form-range " min="0" max="90"
+                               value="{{ request.session.mask_transparency }}">
+                    </label>
+                </div>
+                <div class="card-body">
+                    <h5 class="card-title">
+                        Algorithm Settings
+                    </h5>
+
+                    <label class="form-check-label">
+                        Mog2 History
+                        <input type="number" name="mog2_history" class=" " min="0" max="10000"
+                               value="{{ request.session.mog2_history }}">
+                    </label>
+                    <br>
+                    <label class="form-check-label">
+                        Mog2 Var Threshold
+                        <input type="number" name="mog2_var_threshold"  min="0" max="256"
+                               value="{{ request.session.mog2_var_threshold }}">
+                    </label>
+                    <br>
+                    <label class="form-check-label">
+                        Denoise strength (only odd positive integers allowed, use 0 to disable denoise)
+                        <input type="number" name="denoise_strength"  min="0" max="256"
+                               value="{{ request.session.denoise_strength }}">
+                    </label>
+                    <br>
+                </div>
+
+
+            <br>
+            </div>
+
+            <hr>
+            <input type="submit" value="Apply" class="btn btn-primary float-end ">
+        </form>
+
+
+
+
+    </div>
+
+{% endblock %}
+
+{% block footer %}
+
+{% endblock %}
