@@ -90,7 +90,8 @@ def stream_camera():
                     thickness,
                 )
 
-            success, buffer = cv2.imencode(".jpeg", frame)
+            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            success, buffer = cv2.imencode(".jpeg", bgr)
             if success:
                 frame_bytes = buffer.tobytes()
                 yield (b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n")

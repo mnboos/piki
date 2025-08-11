@@ -1,3 +1,4 @@
+import json
 import time
 from pathlib import Path
 
@@ -13,175 +14,216 @@ from ctypes import c_float
 from rich.live import Live
 from rich.table import Table
 
-prob_threshold = mp.Value(c_float, 0.5)
+prob_threshold = mp.Value(c_float, 0.05)
 
-models = {"nanodet", "mobilenetv2_ssdlite", "mobilenetv3_ssdlite", ""}
+# model_file = "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
+# model_file = "ssd-mobilenet-v2-tflite-100-int8-default-v1.tflite"
+# model_file = "ssd-mobilenet-v2-tflite-fpn-100-uint8-default-v1.tflite"
+model_file = "efficientdet-tflite-lite0-int8-v1.tflite"
 
+COCO_LABELS = {
+    1: 'person', 2: 'bicycle', 3: 'car', 4: 'motorcycle', 5: 'airplane',
+    6: 'bus', 7: 'train', 8: 'truck', 9: 'boat', 10: 'traffic light',
+    11: 'fire hydrant', 13: 'stop sign', 14: 'parking meter', 15: 'bench',
+    16: 'bird', 17: 'cat', 18: 'dog', 19: 'horse', 20: 'sheep', 21: 'cow',
+    22: 'elephant', 23: 'bear', 24: 'zebra', 25: 'giraffe', 27: 'backpack',
+    28: 'umbrella', 31: 'handbag', 32: 'tie', 33: 'suitcase', 34: 'frisbee',
+    35: 'skis', 36: 'snowboard', 37: 'sports ball', 38: 'kite', 39: 'baseball bat',
+    40: 'baseball glove', 41: 'skateboard', 42: 'surfboard', 43: 'tennis racket',
+    44: 'bottle', 46: 'wine glass', 47: 'cup', 48: 'fork', 49: 'knife',
+    50: 'spoon', 51: 'bowl', 52: 'banana', 53: 'apple', 54: 'sandwich',
+    55: 'orange', 56: 'broccoli', 57: 'carrot', 58: 'hot dog', 59: 'pizza',
+    60: 'donut', 61: 'cake', 62: 'chair', 63: 'couch', 64: 'potted plant',
+    65: 'bed', 67: 'dining table', 70: 'toilet', 72: 'tv', 73: 'laptop',
+    74: 'mouse', 75: 'remote', 76: 'keyboard', 77: 'cell phone', 78: 'microwave',
+    79: 'oven', 80: 'toaster', 81: 'sink', 82: 'refrigerator', 84: 'book',
+    85: 'clock', 86: 'vase', 87: 'scissors', 88: 'teddy bear', 89: 'hair drier',
+    90: 'toothbrush'
+}
 try:
     print("Loading model...")
     model_path = str(
         Path(__file__).parent
-        / "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
+        / model_file
     )
-    is_quant = "quant" in model_path.lower()
+    is_quant = "quant" in model_file or "int8" in model_file
 
-    ip = Interpreter(model_path=model_path)
+    interpreter = Interpreter(model_path=model_path)
 
-    ip.allocate_tensors()
-    inp_id = ip.get_input_details()[0]["index"]
-    out_det = ip.get_output_details()
-    out_id0 = out_det[0]["index"]
-    out_id1 = out_det[1]["index"]
-    out_id2 = out_det[2]["index"]
-    out_id3 = out_det[3]["index"]
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    inp_id = input_details[0]["index"]
+    output_details = interpreter.get_output_details()
+
+    print("--- Input Details ---")
+    # Use json.dumps for pretty printing
+    print(input_details)
+    print("--- Output Details ---")
+    # Use json.dumps for pretty printing
+    print(output_details)
+
+    height = 320
+    width = 320
+
+    interpreter.resize_tensor_input(input_details[0]["index"], (1, height, width, 3))
+    interpreter.allocate_tensors()  # Must re-allocate tensors after resizing
+
+    out_id0 = output_details[0]["index"]
+    out_id1 = output_details[1]["index"]
+    out_id2 = output_details[2]["index"]
+    out_id3 = output_details[3]["index"]
 
     image_classes = {
-        1: "person",
-        2: "bicycle",
-        3: "car",
-        4: "motorcycle",
-        5: "airplane",
-        6: "bus",
-        7: "train",
-        8: "truck",
-        9: "boat",
-        10: "traffic light",
-        11: "fire hydrant",
-        13: "stop sign",
-        14: "parking meter",
-        15: "bench",
-        16: "bird",
-        17: "cat",
-        18: "dog",
-        19: "horse",
-        20: "sheep",
-        21: "cow",
-        22: "elephant",
-        23: "bear",
-        24: "zebra",
-        25: "giraffe",
-        27: "backpack",
-        28: "umbrella",
-        31: "handbag",
-        32: "tie",
-        33: "suitcase",
-        34: "frisbee",
-        35: "skis",
-        36: "snowboard",
-        37: "sports ball",
-        38: "kite",
-        39: "baseball bat",
-        40: "baseball glove",
-        41: "skateboard",
-        42: "surfboard",
-        43: "tennis racket",
-        44: "bottle",
-        46: "wine glass",
-        47: "cup",
-        48: "fork",
-        49: "knife",
-        50: "spoon",
-        51: "bowl",
-        52: "banana",
-        53: "apple",
-        54: "sandwich",
-        55: "orange",
-        56: "broccoli",
-        57: "carrot",
-        58: "hot dog",
-        59: "pizza",
-        60: "donut",
-        61: "cake",
-        62: "chair",
-        63: "couch",
-        64: "potted plant",
-        65: "bed",
-        67: "dining table",
-        70: "toilet",
-        72: "tv",
-        73: "laptop",
-        74: "mouse",
-        75: "remote",
-        76: "keyboard",
-        77: "cell phone",
-        78: "microwave",
-        79: "oven",
-        80: "toaster",
-        81: "sink",
-        82: "refrigerator",
-        84: "book",
-        85: "clock",
-        86: "vase",
-        87: "scissors",
-        88: "teddy bear",
-        89: "hair drier",
-        90: "toothbrush",
+        0: 'person',
+        1: 'bicycle',
+        2: 'car',
+        3: 'motorcycle',
+        4: 'airplane',
+        5: 'bus',
+        6: 'train',
+        7: 'truck',
+        8: 'boat',
+        9: 'traffic light',
+        10: 'fire hydrant',
+        11: 'stop sign',
+        12: 'parking meter',
+        13: 'bench',
+        14: 'bird',
+        15: 'cat',
+        16: 'dog',
+        17: 'horse',
+        18: 'sheep',
+        19: 'cow',
+        20: 'elephant',
+        21: 'bear',
+        22: 'zebra',
+        23: 'giraffe',
+        24: 'backpack',
+        25: 'umbrella',
+        26: 'handbag',
+        27: 'tie',
+        28: 'suitcase',
+        29: 'frisbee',
+        30: 'skis',
+        31: 'snowboard',
+        32: 'sports ball',
+        33: 'kite',
+        34: 'baseball bat',
+        35: 'baseball glove',
+        36: 'skateboard',
+        37: 'surfboard',
+        38: 'tennis racket',
+        39: 'bottle',
+        40: 'wine glass',
+        41: 'cup',
+        42: 'fork',
+        43: 'knife',
+        44: 'spoon',
+        45: 'bowl',
+        46: 'banana',
+        47: 'apple',
+        48: 'sandwich',
+        49: 'orange',
+        50: 'broccoli',
+        51: 'carrot',
+        52: 'hot dog',
+        53: 'pizza',
+        54: 'donut',
+        55: 'cake',
+        56: 'chair',
+        57: 'couch',
+        58: 'potted plant',
+        59: 'bed',
+        60: 'dining table',
+        61: 'toilet',
+        62: 'tv',
+        63: 'laptop',
+        64: 'mouse',
+        65: 'remote',
+        66: 'keyboard',
+        67: 'cell phone',
+        68: 'microwave',
+        69: 'oven',
+        70: 'toaster',
+        71: 'sink',
+        72: 'refrigerator',
+        73: 'book',
+        74: 'clock',
+        75: 'vase',
+        76: 'scissors',
+        77: 'teddy bear',
+        78: 'hair drier',
+        79: 'toothbrush'
     }
-
-    def detect_objects(image: np.ndarray, out_size=(300, 300)) -> tuple[int, list]:
+    def detect_objects(image: np.ndarray) -> tuple[int, list]:
         # image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
         # orig_shape = image.shape
         # print("orig: ", orig_shape)
 
-        image = cv2.resize(image, out_size, interpolation=cv2.INTER_AREA)
+        # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        image = cv2.resize(image, (width, height))
+
+        input_data = np.expand_dims(image, axis=0)
+
+        input_scale, input_zero_point = input_details[0]["quantization"]
+        # input_data = (np.float32(input_data) / input_scale) + input_zero_point
+        # input_data = input_data.astype(np.uint8)
+
         # img_arr = np.array(resized_img)
 
-        if not is_quant:
-            image = image.astype(np.float32) / 128 - 1
+        # if not is_quant:
+        #     image = image.astype(np.float32) / 128 - 1
 
         # ======================================================================
         # FIX: Add the batch dimension to make the input tensor 4D
         # Before: img_arr.shape was (300, 300, 3)
         # After:  input_tensor.shape will be (1, 300, 300, 3)
-        image = np.expand_dims(image, axis=0)
+
 
         # ======================================================================
 
         ms = lambda: int(round(time.time() * 1000))
 
-        def print_coco_label(cl_id, t):
-            print(
-                "class: {}, label: {}, time: {:,} ms".format(
-                    cl_id, image_classes[cl_id], t
-                )
-            )
-
-        def process_results(*, boxes, classes, scores, num_det, original_img_size: tuple[int, int]):
-            i = 0
-            img_width, img_height = original_img_size
-            n_obj = int(num_det[i])
-
-            results = []
-            # print("{} - found objects:".format(fname))
-            for j in range(n_obj):
-                cl_id = int(classes[i][j]) + 1
-                label = image_classes[cl_id]
-                score = scores[i][j]
-                if score < 0.5:
-                    continue
-                box = boxes[i][j]
-                ymin, xmin, ymax, xmax = box
-
-                # Calculate absolute coordinates
-                abs_xmin = int(xmin * img_width)
-                abs_ymin = int(ymin * img_height)
-                abs_xmax = int(xmax * img_width)
-                abs_ymax = int(ymax * img_height)
-
-                results.append((label, score, [abs_xmin, abs_ymin, abs_xmax, abs_ymax]))
-            return results
-
         t0 = time.perf_counter()
-        ip.set_tensor(inp_id, image)
-        ip.invoke()
+        interpreter.set_tensor(inp_id, input_data)
+        interpreter.invoke()
         tt = round((time.perf_counter() - t0) * 1000)
         # print("Inference:", tt, "ms")
-        boxes = ip.get_tensor(out_id0)
-        classes = ip.get_tensor(out_id1)
-        scores = ip.get_tensor(out_id2)
-        num_det = ip.get_tensor(out_id3)
-        return tt, process_results(boxes=boxes, classes=classes, scores=scores, num_det=num_det, original_img_size=image.shape[:2])
+        # boxes = interpreter.get_tensor(out_id0)
+        # classes = interpreter.get_tensor(out_id1)
+        # scores = interpreter.get_tensor(out_id2)
+        # num_det = interpreter.get_tensor(out_id3)
+
+        boxes = interpreter.get_tensor(output_details[0]["index"])[0]
+        classes = interpreter.get_tensor(output_details[1]["index"])[0]
+        scores = interpreter.get_tensor(output_details[2]["index"])[0]
+        num_det = interpreter.get_tensor(output_details[3]["index"])[0]
+
+        num_objects_found = int(num_det)
+
+        results = []
+        threshold = prob_threshold.value
+        for i in range(num_objects_found):
+            confidence = scores[i]
+            coco_class_id = int(classes[i])
+            if coco_class_id and coco_class_id in COCO_LABELS and confidence >= threshold:
+                # Get bounding box coordinates and scale them to the original image size
+                ymin = int(max(1, boxes[i][0] ))
+                xmin = int(max(1, boxes[i][1] ))
+                ymax = int(max(1, boxes[i][2] ))
+                xmax = int(max(1, boxes[i][3] ))
+
+                # Draw the bounding box
+                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
+
+                # Get the object name from the label map
+                label = COCO_LABELS[coco_class_id]
+                print("label: ", label, confidence)
+                results.append((label, confidence, [xmin, ymin, xmax, ymax]))
+
+        return tt, results
+        # return tt, process_results(boxes=boxes, classes=classes, scores=scores, num_det=num_det, original_img_size=image.shape[:2])
 except:
     traceback.print_exc()
     raise
