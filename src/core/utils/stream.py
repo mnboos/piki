@@ -23,7 +23,7 @@ live_stream_enabled = Event()
 dashboard_queue = retrieve_queue()
 dashboard = LiveMetricsDashboard(retrieve_queue())
 
-preview_downscale_factor = 3
+preview_downscale_factor = 2
 ai_input_size = 320
 
 max_output_timestamp = 0
@@ -68,7 +68,11 @@ def get_measure(description: str):
 
 
 def run_object_detection(
-    frame_data: np.ndarray, fg_mask: np.ndarray, rois, timestamp: int
+    frame_hires: np.ndarray,
+    frame_lores: np.ndarray,
+    fg_mask: np.ndarray,
+    rois,
+    timestamp: int,
 ):
     """
     Symbolic AI function. It gets the raw frame data, processes it,
@@ -80,7 +84,7 @@ def run_object_detection(
     # frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
 
     padded_images_with_roi = MotionDetector.get_padded_roi_images(
-        frame=frame_data, rois=rois
+        frame=frame_hires, rois=rois
     )
     # if bboxes:
     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
@@ -91,29 +95,23 @@ def run_object_detection(
     # lab[:,:,0] = clahe.apply(lab[:,:,0])
     # frame_data = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
-    result = 0, []
     worker_pid = mp.current_process().pid
-    if True:
-        # imgs = MotionDetector.get_padded_roi_images(fg_mask)
-        total_duration = 0
-        all_detections = []
-        # print(f"detecting on images: {len(padded_images_with_roi)}")
-        for img, roi in padded_images_with_roi:
-            duration, detections = detect_objects(img)
-            total_duration += duration
-            all_detections.extend(detections)
-            # print("result for img: ", result, roi)
 
-        # result = detect_objects(frame_data)
-        result = total_duration, all_detections
-    # else:
-    #     result = 0, []
+    result = detect_objects(frame_hires)
 
-    frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / preview_downscale_factor, fy=1 / preview_downscale_factor)
+    # total_duration = 0
+    # all_detections = []
+    # for img, roi in padded_images_with_roi:
+    #     duration, detections = detect_objects(img)
+    #     total_duration += duration
+    #     all_detections.extend(detections)
+    # result = total_duration, all_detections
+
+    # frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / preview_downscale_factor, fy=1 / preview_downscale_factor)
     # cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
 
     det = MotionDetector(320, 400)
-    highlighted_frame = det.highlight_movement_on(frame=frame_resized, mask=fg_mask)
+    highlighted_frame = det.highlight_movement_on(frame=frame_lores, mask=fg_mask)
 
     return worker_pid, timestamp, highlighted_frame, result
     # return worker_pid, timestamp, frame_data, result
@@ -147,17 +145,14 @@ class MotionDetector:
             history=settings.foreground_mask_options.mog2_history.value,
             varThreshold=settings.foreground_mask_options.mog2_var_threshold.value,
         )
-        self.foreground_mask = None
-        # self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        self.morph_kernel = np.ones((3, 3), np.uint8)
+        self.morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        # self.morph_kernel = np.ones((3, 3), np.uint8)
         self.pixelcount_threshold = 500
 
         self.min_area = 500
         self.min_roi_size = min_roi_size
         self.max_roi_size = max_roi_size
-
-    def moving_pixel_count(self):
-        return cv2.countNonZero(self.foreground_mask)
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     def _expand_roi_to_min_size(
         self, roi: tuple[int, int, int, int], img_shape: tuple[int, int]
@@ -221,19 +216,28 @@ class MotionDetector:
         # motion_ms = get_measure("Detect motion")
         # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+        # lab = cv2.cvtColor(frame, cv2.COLOR_RGB2Lab)
+        # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
+        # frame = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+
+        frame = self.clahe.apply(frame)
+
         denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
         if denoise_kernelsize >= 1:
             kernel = (denoise_kernelsize,) * 2
             cv2.GaussianBlur(frame, kernel, 0, frame)
+
         fg_mask = self.backSub.apply(frame)
         # Remove noise
-        cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
-        # Connect nearby regions (cat body parts)
-        cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self.morph_kernel, fg_mask)
-        self.foreground_mask = fg_mask
-        is_moving = self.moving_pixel_count() >= self.pixelcount_threshold
+        cv2.dilate(fg_mask, self.morph_kernel, iterations=1, dst=fg_mask)
+        cv2.erode(fg_mask, self.morph_kernel, iterations=2, dst=fg_mask)
+        cv2.dilate(fg_mask, self.morph_kernel, iterations=1, dst=fg_mask)
+        # cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
+        # # Connect nearby regions (cat body parts)
+        # cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self.morph_kernel, fg_mask)
+        is_moving = cv2.countNonZero(fg_mask) >= self.pixelcount_threshold
         # motion_ms()
-        return is_moving, fg_mask[:]
+        return is_moving, fg_mask
 
     @staticmethod
     def _cluster_with_constraints(
@@ -497,14 +501,19 @@ class MotionDetector:
             # As a final check, resize to the exact target size in case of minor floating point errors
             # or if the original ROI was already larger than min_dimension
             if (
-                padded_image.shape[0] != min_dimension
-                or padded_image.shape[1] != min_dimension
+                padded_image.shape[0] > min_dimension
+                or padded_image.shape[1] > min_dimension
             ):
-                padded_image = cv2.resize(
-                    padded_image,
-                    (min_dimension, min_dimension),
-                    interpolation=cv2.INTER_AREA,
-                )
+                # print("resize: ")
+                # padded_image = cv2.resize(
+                #     padded_image,
+                #     (min_dimension, min_dimension),
+                #     interpolation=cv2.INTER_AREA,
+                # )
+                center = padded_image.shape
+                x = center[1] / 2 - w / 2
+                y = center[0] / 2 - h / 2
+                padded_image = padded_image[int(y) : int(y + h), int(x) : int(x + w)]
 
             final_roi_images.append((padded_image, current_roi))
 
@@ -530,7 +539,9 @@ class MotionDetector:
                 )
                 cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
 
-        colored_overlay = np.full(frame.shape, overlay_color_rgb, dtype=np.uint8)
+        colored_overlay = np.full(
+            frame.shape, overlay_color_rgb, dtype=np.uint8
+        )  # todo: do this only once
         blended = cv2.addWeighted(
             frame,
             transparency_factor,
@@ -560,9 +571,7 @@ class StreamingOutput(io.BufferedIOBase):
             min_roi_size=min_roi_size, max_roi_size=max_roi_size
         )
         self.highlight_movement = highlight_movement
-        self.clahe = cv2.createCLAHE(
-            clipLimit=2.0, tileGridSize=(8, 8)
-        )
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     def update_motion_detector(self):
         self.motion_detector = MotionDetector(
@@ -581,19 +590,27 @@ class StreamingOutput(io.BufferedIOBase):
             np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
         )
 
-        lab = cv2.cvtColor(buf_hires, cv2.COLOR_RGB2Lab)
-        lab[:,:,0] = self.clahe.apply(lab[:,:,0])
-        buf_hires = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+        # lab = cv2.cvtColor(buf_hires, cv2.COLOR_RGB2Lab)
+        # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
+        # buf_hires = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
         # r = self.clahe.apply(buf_hires[:,:,0])
         # g = self.clahe.apply(buf_hires[:,:,1])
         # b = self.clahe.apply(buf_hires[:,:,2])
         # buf_hires = np.stack((r, g, b), axis=2)
 
-        h_hi, w_hi = buf_hires.shape[:2]
-        w_lo, h_lo = int(w_hi / preview_downscale_factor), int(h_hi / preview_downscale_factor)
+        # h_hi, w_hi = buf_hires.shape[:2]
+        # w_lo, h_lo = (
+        #     int(w_hi / preview_downscale_factor),
+        #     int(h_hi / preview_downscale_factor),
+        # )
 
-        buf = cv2.resize(buf_hires, (w_lo, h_lo))
+        buf = cv2.resize(
+            buf_hires,
+            None,
+            fx=1 / preview_downscale_factor,
+            fy=1 / preview_downscale_factor,
+        )
 
         # with self.condition:
         # buf = cv2.imdecode(np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -617,14 +634,6 @@ class StreamingOutput(io.BufferedIOBase):
                     draw_boxes=False,
                 )
                 mask_output_buffer.append(buf_highlighted)
-            # if has_movement and self.highlight_movement:
-            #     # measure_paint_movement = get_measure("Paint movement")
-            #     # highlighted_frame = self.motion_detector.highlight_movement_on(frame=buf[:], mask=mask)
-            #     # cv2.resize(highlighted_frame, (w_lo, h_lo), highlighted_frame)
-            #     # buf = highlighted_frame  # todo: remove this after testing
-            #     # measure_paint_movement()
-            # else:
-            #     highlighted_frame = buf
 
             if has_movement and len(active_futures) < NUM_AI_WORKERS:
                 try:
@@ -638,7 +647,8 @@ class StreamingOutput(io.BufferedIOBase):
                     rois = self.motion_detector.create_rois(mask=mask)
                     future: Future = process_pool.submit(
                         run_object_detection,
-                        frame_data=buf_hires[:],
+                        frame_hires=buf_hires,
+                        frame_lores=buf,
                         fg_mask=mask,
                         rois=rois,
                         timestamp=timestamp,
@@ -745,9 +755,9 @@ def get_file_streamer(stream_output: StreamingOutput):
         video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
         # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
-        # video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-        video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
+        # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/13867923-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/VID_20250808_080717.mp4"
         # video_path = "/home/martin/Downloads/output_converted.mov"
@@ -780,7 +790,7 @@ def get_file_streamer(stream_output: StreamingOutput):
 
             fps = 60
 
-            time.sleep(1 / fps)
+            # time.sleep(1 / fps)
             try:
                 ret, frame = cap.read()
 

@@ -66,7 +66,7 @@ def stream_camera():
     try:
         stream.live_stream_enabled.set()
         while True:
-            # time.sleep(0.01)
+            time.sleep(0.01)
             if stream.output_buffer.queue.empty():
                 continue
 
