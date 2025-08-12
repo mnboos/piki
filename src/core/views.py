@@ -44,13 +44,13 @@ def config(request):
         request.session["mog2_var_threshold"] = mog2_var_threshold
 
         denoise_strength = int(request.POST.get("denoise_strength"))
-        if not denoise_strength % 2:
+        if denoise_strength != 0 and not denoise_strength % 2:
             denoise_strength += 1
 
         opt.foreground_mask_options.denoise_kernelsize.value = denoise_strength
         request.session["denoise_strength"] = denoise_strength
 
-        stream.input_buffer.update_motion_detector()
+        stream.frame_handler.update_motion_detector()
 
     return render(request, "core/config.html", {})
 

@@ -32,30 +32,33 @@
                 </div>
                 <div class="card-body">
                     <h5 class="card-title">
-                        Algorithm Settings
+                        Background Model
                     </h5>
+
+                    <label class="form-check-label">
+                        Background Stability (Mog2 var threshold)
+                        <input type="number" name="mog2_var_threshold"  min="0" max="256"
+                               value="{{ request.session.mog2_var_threshold }}">
+                        <sub>Name it somehow as the oppositve of sensitivity (the lower the number, the more sensitive it is)</sub>
+                    </label>
+                    <br>
 
                     <label class="form-check-label">
                         Mog2 History
                         <input type="number" name="mog2_history" class=" " min="0" max="10000"
                                value="{{ request.session.mog2_history }}">
+                        <sub>Change labeling to 'Seconds' and use fps in backend to calculate history length</sub>
                     </label>
                     <br>
+
                     <label class="form-check-label">
-                        Mog2 Var Threshold
-                        <input type="number" name="mog2_var_threshold"  min="0" max="256"
-                               value="{{ request.session.mog2_var_threshold }}">
-                    </label>
-                    <br>
-                    <label class="form-check-label">
-                        Denoise strength (only odd positive integers allowed, use 0 to disable denoise)
+                        Denoise strength
                         <input type="number" name="denoise_strength"  min="0" max="256"
                                value="{{ request.session.denoise_strength }}">
+                        <sub>Only odd, positive integers allowed. Use 0 to disable.</sub>
                     </label>
                     <br>
                 </div>
-
-
             <br>
             </div>
 

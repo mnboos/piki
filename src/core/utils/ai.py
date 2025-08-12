@@ -8,7 +8,7 @@ import numpy as np
 import multiprocessing as mp
 from ctypes import c_float
 
-prob_threshold = mp.Value(c_float, 0.2)
+prob_threshold = mp.Value(c_float, 0.4)
 
 # model_file = "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
 # model_file = "ssd-mobilenet-v2-tflite-100-int8-default-v1.tflite"

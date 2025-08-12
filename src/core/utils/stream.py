@@ -38,11 +38,26 @@ mask_transparency = mp.Value(c_float, 0.5)
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
+
 # --- New Globals for Shared Memory ---
 SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
 shm_lock = Lock()  # To synchronize access to the shared memory
-shared_mem = None # Will hold the SharedMemory instance
-shared_array = None # The numpy array view of the shared memory
+shared_mem: SharedMemory | None = None # Will hold the SharedMemory instance
+shared_array: np.ndarray | None = None # The numpy array view of the shared memory
+
+try:
+    import picamera2
+    from picamera2.encoders import MJPEGEncoder
+    from picamera2.outputs import FileOutput
+    from libcamera import controls
+    PICAMERA_AVAILABLE = True
+except ImportError:
+    print("Picamera2 not available", traceback.format_exc())
+    PICAMERA_AVAILABLE = False
+    picamera2 = None
+    MJPEGEncoder = None
+    FileOutput = None
+    controls = None
 
 @dataclasses.dataclass
 class ForegroundMaskOptions:
@@ -187,83 +202,6 @@ def run_object_detection(
     finally:
         if existing_shm is not None:
             existing_shm.close()
-
-# def run_object_detection(
-#     shm_name: str,
-#     shape: tuple,
-#     dtype: np.dtype,
-#     rois,
-#     timestamp: int,
-# ):
-#     """
-#     Symbolic AI function. It gets the raw frame data, processes it,
-#     and returns its result along with its unique process ID.
-#     """
-#
-#     from .ai import detect_objects
-#
-#     # Attach to the existing shared memory block
-#     existing_shm = shared_memory.SharedMemory(name=shm_name)
-#
-#     # Create a numpy array view pointing to the shared memory
-#     frame_in_shm = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
-#
-#     # Acquire the lock, quickly make a local copy of the frame, then release the lock.
-#     # This minimizes the time the main process is blocked from writing the next frame.
-#     with shm_lock:
-#         frame_hires = frame_in_shm.copy()
-#
-#     # We are done with the shared memory block in this process, so we can close it.
-#     existing_shm.close()
-#
-#     # frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
-#
-#     padded_images_with_roi = MotionDetector.get_padded_roi_images(
-#         frame=frame_hires, rois=rois
-#     )
-#     # if bboxes:
-#     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
-#     # print("rois: ", len(rois))
-#
-#     # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # todo: should we do this before ai processing?
-#     # lab = cv2.cvtColor(frame_data, cv2.COLOR_BGR2LAB)
-#     # lab[:,:,0] = clahe.apply(lab[:,:,0])
-#     # frame_data = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
-#
-#     worker_pid = mp.current_process().pid
-#
-#     # result = detect_objects(frame_hires)
-#
-#     total_duration = 0
-#     all_detections = []
-#     for img, roi, frame_coords in padded_images_with_roi:
-#         rx, ry = frame_coords
-#         duration, detections = detect_objects(img)
-#         total_duration += duration
-#         for label, confidence, local_coords in detections:
-#             dx, dy, dw, dh = local_coords
-#             new_x = dx + rx
-#             new_y = dy + ry
-#             all_detections.append((label, confidence, (new_x, new_y, dw, dh)))
-#
-#     result = total_duration, all_detections
-#
-#     # frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / preview_downscale_factor, fy=1 / preview_downscale_factor)
-#     # cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
-#
-#     # det = MotionDetector(320, 400)
-#     # highlighted_frame = det.highlight_movement_on(frame=frame_lores, mask=fg_mask)
-#
-#     frame_lores = cv2.resize(
-#         frame_hires,
-#         None,
-#         fx=1 / preview_downscale_factor,
-#         fy=1 / preview_downscale_factor,
-#     )
-#
-#     return worker_pid, timestamp, frame_lores, result
-#     # return worker_pid, timestamp, frame_data, result
-
 
 def on_done(future: Future):
     global max_output_timestamp
@@ -520,7 +458,7 @@ class MotionDetector:
         # If NMS returns indices, use them to build the final list of boxes
         if len(indices_to_keep) > 0:
             # The indices can be a nested list, so we flatten them
-            final_boxes = [boxes[i] for i in indices_to_keep.flatten()]
+            final_boxes = [boxes[i] for i in np.array(indices_to_keep).flatten()]
         else:
             # If NMS suppressed everything, return an empty list
             final_boxes = []
@@ -554,18 +492,21 @@ class MotionDetector:
                 y = stats[i, cv2.CC_STAT_TOP]
                 w = stats[i, cv2.CC_STAT_WIDTH]
                 h = stats[i, cv2.CC_STAT_HEIGHT]
-                fullness = area / (w * h)
+                # fullness = area / (w * h)
                 initial_boxes.append((x, y, w, h))
 
         if not initial_boxes:
             return []
 
         # # 3. Cluster the initial boxes with full constraints (Intelligent)
-        # clustered_rois = self._cluster_with_constraints(
-        #     initial_boxes,
-        #     max_dimension=self.max_roi_size,
-        # )
-        clustered_rois = initial_boxes
+        enable_clustering = True  # todo: make configurable
+        if enable_clustering:
+            clustered_rois = self._cluster_with_constraints(
+                initial_boxes,
+                max_dimension=self.max_roi_size,
+            )
+        else:
+            clustered_rois = initial_boxes
 
         # 4. Finalize ROIs to enforce minimum size and handle edge cases (Format for AI)
         final_rois = []
@@ -686,87 +627,7 @@ class MotionDetector:
 
             final_roi_images.append((final_image, scale, effective_origin))
 
-        # print("roi images: ", final_roi_images)
         return final_roi_images
-
-    # @staticmethod
-    # def get_padded_roi_images(
-    #     *, frame: np.ndarray, rois, target_size=320, pad_color=(0, 0, 0)
-    # ):
-    #     """
-    #     Takes clustered ROIs, crops them, and then uses cv2.copyMakeBorder to pad
-    #     them to the minimum required size. This is the simpler, more robust method.
-    #
-    #     Args:
-    #         frame (np.array): The original, full-resolution video frame.
-    #         rois (list): A list of (x, y, w, h) tuples from the clustering step.
-    #         target_size (int): The required dimension (width and height) for the final ROI.
-    #         pad_color (tuple): The BGR color for the padding.
-    #
-    #     Returns:
-    #         list: A list of final ROI images (as NumPy arrays), all of size min_dimension x min_dimension.
-    #     """
-    #     final_roi_images = []
-    #     frame_h, frame_w, _ = frame.shape
-    #
-    #     for current_roi in rois:
-    #         x, y, w, h = current_roi
-    #         # 1. Crop the ROI from the high-resolution frame first.
-    #         # Ensure cropping coordinates are integers and within bounds.
-    #         x, y, w, h = (
-    #             max(0, x * preview_downscale_factor),
-    #             max(0, y * preview_downscale_factor),
-    #             int(w * preview_downscale_factor),
-    #             int(h * preview_downscale_factor),
-    #         )
-    #
-    #         w = min(frame_w - x, w)
-    #         h = min(frame_h - y, h)
-    #
-    #         roi_crop = frame[y : y + h, x : x + w]
-    #         # if the roi is bigger than the targetsize in any direction, crop and resize
-    #         if (
-    #             roi_crop.shape[0] > target_size
-    #             or roi_crop.shape[1] > target_size
-    #         ):
-    #             min_crop_size = min(roi_crop.shape[0], roi_crop.shape[1])
-    #             center = roi_crop.shape
-    #             x = int(center[1] / 2 - min_crop_size / 2)
-    #             y = int(center[0] / 2 - min_crop_size / 2)
-    #             cropped = roi_crop[y : y + min_crop_size, x : x + min_crop_size]
-    #             scale = min_crop_size / target_size
-    #             x *= scale
-    #             y *= scale
-    #             padded_image = cv2.resize(cropped, (target_size, target_size))
-    #
-    #         elif roi_crop.shape[0] < target_size or roi_crop.shape[1] < target_size:
-    #             # Get the current dimensions of the crop
-    #             current_h, current_w, _ = roi_crop.shape
-    #
-    #             # 2. Calculate how much padding is needed for width and height
-    #             delta_w = max(0, target_size - current_w)
-    #             delta_h = max(0, target_size - current_h)
-    #
-    #             # 3. Distribute the padding to top/bottom and left/right
-    #             # This ensures the original crop stays centered in the padded image.
-    #             top = delta_h // 2
-    #             bottom = delta_h - top  # Handles odd numbers correctly
-    #
-    #             left = delta_w // 2
-    #             right = delta_w - left
-    #
-    #             # 4. Use cv2.copyMakeBorder to add the black padding
-    #             padded_image = cv2.copyMakeBorder(
-    #                 roi_crop, top, bottom, left, right, cv2.BORDER_CONSTANT, value=pad_color
-    #             )
-    #         else:
-    #             padded_image = roi_crop
-    #
-    #         assert padded_image.shape[0]==target_size and padded_image.shape[1]==target_size, f"Padded image has wrong dimensions. Expected ({target_size}, {target_size}), actual {padded_image.shape[:2]}"
-    #
-    #         final_roi_images.append((padded_image, current_roi, (x,y)))
-    #
-    #     return final_roi_images
 
     def highlight_movement_on(
         self,
@@ -805,14 +666,13 @@ class MotionDetector:
         )
 
 class FrameHandler:
-    def __init__(self, highlight_movement: bool = False):
+    def __init__(self):
         min_roi_size = int(ai_input_size / preview_downscale_factor)
         max_roi_size = int((ai_input_size + 100) / preview_downscale_factor)
 
         self.motion_detector = MotionDetector(
             min_roi_size=min_roi_size, max_roi_size=max_roi_size
         )
-        self.highlight_movement = highlight_movement
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     def update_motion_detector(self):
@@ -849,7 +709,13 @@ class FrameHandler:
         if frame_lores is not None and frame_lores.size:
             has_movement, mask = self.motion_detector.is_moving(frame_lores)
             if is_mask_streaming_enabled.is_set():
-                # clahe_recolored = cv2.cvtColor(cl, cv2.COLOR_GRAY2BGR)
+                grayscale_output = True
+                if grayscale_output:
+                    gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+                    frame_lores = cv2.merge((gray,gray,gray))
+                else:
+                    frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
+
                 buf_highlighted = self.motion_detector.highlight_movement_on(
                     frame=frame_lores,
                     mask=mask,
@@ -859,7 +725,7 @@ class FrameHandler:
                         255,
                     ),
                     transparency_factor=mask_transparency.value,
-                    draw_boxes=False,
+                    draw_boxes=True,
                 )
                 mask_output_buffer.append(buf_highlighted)
 
@@ -915,8 +781,6 @@ class FrameHandler:
 
 # This class instance will hold the camera frames
 class StreamingOutput(io.BufferedIOBase):
-    def __init__(self, highlight_movement: bool = False) -> None:
-        self.frame_handler = FrameHandler(highlight_movement=highlight_movement)
 
     def write(self, buf_hires: bytes) -> None:
         if self.closed:
@@ -929,82 +793,72 @@ class StreamingOutput(io.BufferedIOBase):
             np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
         )
 
-        self.frame_handler.process_frame(frame_hires=buf_hires)
+        frame_handler.process_frame(frame_hires=buf_hires)
 
 
-def _stream_cam_or_file_to(stream_output: StreamingOutput):
+input_buffer = StreamingOutput()
+frame_handler = FrameHandler()
+
+def stream_camera():
     try:
-        from picamera2 import Picamera2, Preview
-        from picamera2.encoders import JpegEncoder, MJPEGEncoder
-        from picamera2.outputs import FileOutput
-        from libcamera import controls
+        print("Starting stream in 5 seconds...")
+        time.sleep(5)
+        picam2 = picamera2.Picamera2()
 
-        def stream_camera():
-            try:
-                print("Starting stream in 5 seconds...")
-                time.sleep(5)
-                picam2 = Picamera2()
-                # resolution = (640, 480)
-                camera_config = picam2.create_video_configuration(
-                    # main={"size": (1296, 972)},
-                    # main={"size": resolution},
-                    # queue=False,
-                    controls={
-                        "FrameRate": 20,
-                        "ColourGains": (1, 1),
-                        "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,
-                    },
-                )
-                picam2.configure(camera_config)
-                picam2.start_preview(Preview.NULL)
+        # noinspection PyUnresolvedReferences
+        noise_reduction_mode = controls.draft.NoiseReductionModeEnum.Fast
 
-                class MeasuringJpegEncoder(JpegEncoder):
-                    def encode_func(self, request, name):
-                        measure_encode = get_measure("JpegEncoder")
-                        res = super().encode_func(request, name)
-                        measure_encode()
-                        return res
-
-                class MeasuringMJPEGEncoder(MJPEGEncoder):
-                    def encode(self, request, name):
-                        measure_encode = get_measure("MJPEGEncoder")
-                        res = super().encode(request, name)
-                        measure_encode()
-                        return res
-
-
-                encoder = MJPEGEncoder()
-
-                picam2.start_recording(encoder, FileOutput(stream_output))
-            except:
-                traceback.print_exc()
-                raise
-
-            def cleanup_camera():
-                print("Cleaning up picam2")
-                picam2.stop_encoder()
-                picam2.stop_recording()
-                encoder.stop()
-                picam2.close()
-
-            atexit.register(cleanup_camera)
-
-        if os.environ.get("MOCK_CAMERA"):
-            streamer_func = get_file_streamer(stream_output)
-        else:
-            streamer_func = stream_camera
-
-    except ModuleNotFoundError:
-        print(
-            "Hardware initialization failed, using local file to stream",
-            traceback.format_exc(),
+        camera_config = picam2.create_video_configuration(
+            # main={"size": (1296, 972)},
+            # main={"size": resolution},
+            # queue=False,
+            controls={
+                "FrameRate": 20,
+                "ColourGains": (1, 1),
+                "NoiseReductionMode": noise_reduction_mode,
+            },
         )
-        streamer_func = get_file_streamer(stream_output)
+        picam2.configure(camera_config)
+        picam2.start_preview(picamera2.Preview.NULL)
 
+        # class MeasuringJpegEncoder(JpegEncoder):
+        #     def encode_func(self, request, name):
+        #         measure_encode = get_measure("JpegEncoder")
+        #         res = super().encode_func(request, name)
+        #         measure_encode()
+        #         return res
+        #
+        # class MeasuringMJPEGEncoder(MJPEGEncoder):
+        #     def encode(self, request, name):
+        #         measure_encode = get_measure("MJPEGEncoder")
+        #         res = super().encode(request, name)
+        #         measure_encode()
+        #         return res
+
+        encoder = MJPEGEncoder()
+
+        picam2.start_recording(encoder, FileOutput(input_buffer))
+    except:
+        traceback.print_exc()
+        raise
+
+    @atexit.register
+    def cleanup_camera():
+        print("Cleaning up picam2")
+        picam2.stop_encoder()
+        picam2.stop_recording()
+        encoder.stop()
+        picam2.close()
+
+def _stream_cam_or_file_to():
+    if not PICAMERA_AVAILABLE or os.environ.get("MOCK_CAMERA"):
+        streamer_func = get_file_streamer()
+    else:
+        streamer_func = stream_camera
     thread_pool.submit(streamer_func)
 
 
-def get_file_streamer(stream_output: StreamingOutput):
+def get_file_streamer():
     video_path = os.environ.get("MOCK_CAMERA_VIDEO_PATH")
     if not video_path:
         video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
@@ -1035,19 +889,13 @@ def get_file_streamer(stream_output: StreamingOutput):
         sleep_time = round(1 / fps, 4)
         print("FPS: ", fps, sleep_time)
 
+        @atexit.register
         def close_video():
             cap.release()
-
-        atexit.register(close_video)
-
-        frame_handler = FrameHandler(highlight_movement=True)
 
         last_time = time.perf_counter()
 
         while True:
-            if stream_output.closed:
-                break
-
             now = time.perf_counter()
             time_passed = now - last_time
             last_time = now
@@ -1081,13 +929,14 @@ def get_file_streamer(stream_output: StreamingOutput):
     return stream_file
 
 
-input_buffer = StreamingOutput(highlight_movement=True)
+
 # This single instance will be imported by other parts of the app
 
 
 def start_stream_nonblocking():
-    _stream_cam_or_file_to(input_buffer)
+    _stream_cam_or_file_to()
 
+@atexit.register
 def cleanup():
     print("[DJANGO SHUTDOWN] Stopping processes...")
 
@@ -1099,5 +948,3 @@ def cleanup():
     cleanup_shared_memory()
 
     print("[DJANGO SHUTDOWN] Processes stopped.")
-
-atexit.register(cleanup)
