@@ -42,7 +42,7 @@ thread_pool = ThreadPoolExecutor(max_workers=1)
 class ForegroundMaskOptions:
     mog2_history = mp.Value(c_int, 500)
     mog2_var_threshold = mp.Value(c_int, 16)
-    denoise_kernelsize = mp.Value(c_int, 33)
+    denoise_kernelsize = mp.Value(c_int, 7)
 
 
 class TuningSettings:
@@ -69,8 +69,8 @@ def get_measure(description: str):
 
 def run_object_detection(
     frame_hires: np.ndarray,
-    frame_lores: np.ndarray,
-    fg_mask: np.ndarray,
+    # frame_lores: np.ndarray,
+    # fg_mask: np.ndarray,
     rois,
     timestamp: int,
 ):
@@ -83,9 +83,9 @@ def run_object_detection(
 
     # frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
 
-    padded_images_with_roi = MotionDetector.get_padded_roi_images(
-        frame=frame_hires, rois=rois
-    )
+    # padded_images_with_roi = MotionDetector.get_padded_roi_images(
+    #     frame=frame_hires, rois=rois
+    # )
     # if bboxes:
     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
     # print("rois: ", len(rois))
@@ -110,10 +110,10 @@ def run_object_detection(
     # frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / preview_downscale_factor, fy=1 / preview_downscale_factor)
     # cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
 
-    det = MotionDetector(320, 400)
-    highlighted_frame = det.highlight_movement_on(frame=frame_lores, mask=fg_mask)
+    # det = MotionDetector(320, 400)
+    # highlighted_frame = det.highlight_movement_on(frame=frame_lores, mask=fg_mask)
 
-    return worker_pid, timestamp, highlighted_frame, result
+    return worker_pid, timestamp, frame_hires, result
     # return worker_pid, timestamp, frame_data, result
 
 
@@ -555,10 +555,8 @@ class MotionDetector:
             frame,
         )
 
-
-# This class instance will hold the camera frames
-class StreamingOutput(io.BufferedIOBase):
-    def __init__(self, highlight_movement: bool = False) -> None:
+class FrameHandler:
+    def __init__(self, highlight_movement: bool = False):
         # self.frame: bytes = b""
         # self.condition = Condition()
         # self.backSub = cv2.createBackgroundSubtractorMOG2()
@@ -579,34 +577,9 @@ class StreamingOutput(io.BufferedIOBase):
             max_roi_size=self.motion_detector.max_roi_size,
         )
 
-    def write(self, buf_hires: bytes) -> None:
-        if self.closed:
-            raise RuntimeError("Stream is closed")
-
-        if len(active_futures) == NUM_AI_WORKERS:
-            return
-
-        buf_hires = cv2.imdecode(
-            np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
-        )
-
-        # lab = cv2.cvtColor(buf_hires, cv2.COLOR_RGB2Lab)
-        # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
-        # buf_hires = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
-
-        # r = self.clahe.apply(buf_hires[:,:,0])
-        # g = self.clahe.apply(buf_hires[:,:,1])
-        # b = self.clahe.apply(buf_hires[:,:,2])
-        # buf_hires = np.stack((r, g, b), axis=2)
-
-        # h_hi, w_hi = buf_hires.shape[:2]
-        # w_lo, h_lo = (
-        #     int(w_hi / preview_downscale_factor),
-        #     int(h_hi / preview_downscale_factor),
-        # )
-
+    def process_frame(self, frame_hires: np.ndarray):
         buf = cv2.resize(
-            buf_hires,
+            frame_hires,
             None,
             fx=1 / preview_downscale_factor,
             fy=1 / preview_downscale_factor,
@@ -647,9 +620,9 @@ class StreamingOutput(io.BufferedIOBase):
                     rois = self.motion_detector.create_rois(mask=mask)
                     future: Future = process_pool.submit(
                         run_object_detection,
-                        frame_hires=buf_hires,
-                        frame_lores=buf,
-                        fg_mask=mask,
+                        frame_hires=frame_hires,
+                        # frame_lores=buf,
+                        # fg_mask=mask,
                         rois=rois,
                         timestamp=timestamp,
                     )
@@ -666,6 +639,25 @@ class StreamingOutput(io.BufferedIOBase):
             else:
                 # this is for testing only
                 output_buffer.append((0, 0, buf, []))
+
+
+# This class instance will hold the camera frames
+class StreamingOutput(io.BufferedIOBase):
+    def __init__(self, highlight_movement: bool = False) -> None:
+        self.frame_handler = FrameHandler(highlight_movement=highlight_movement)
+
+    def write(self, buf_hires: bytes) -> None:
+        if self.closed:
+            raise RuntimeError("Stream is closed")
+
+        if len(active_futures) == NUM_AI_WORKERS:
+            return
+
+        buf_hires = cv2.imdecode(
+            np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
+        )
+
+        self.frame_handler.process_frame(frame_hires=buf_hires)
 
 
 def _stream_cam_or_file_to(stream_output: StreamingOutput):
@@ -708,19 +700,10 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
                         measure_encode()
                         return res
 
-                # encoder = MeasuringJpegEncoder(num_threads=1)
-                # encoder = MeasuringMJPEGEncoder()
-                encoder = MJPEGEncoder()
-                # encoder = H264Encoder(100_000, repeat=True)
 
-                # encoder.output = CircularOutput(file=stream_output, buffersize=10)
-                # encoder.frame_skip_count = 10
-                # encoder.use_hw = True
+                encoder = MJPEGEncoder()
 
                 picam2.start_recording(encoder, FileOutput(stream_output))
-                # picam2.start()
-                # if not encoder.running:
-                #     picam2.start_encoder(encoder)
             except:
                 traceback.print_exc()
                 raise
@@ -755,8 +738,8 @@ def get_file_streamer(stream_output: StreamingOutput):
         video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
         # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
-        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+        # video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
+        video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/13867923-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/VID_20250808_080717.mp4"
@@ -776,21 +759,29 @@ def get_file_streamer(stream_output: StreamingOutput):
         if not cap.isOpened():
             raise RuntimeError(f"Error: Could not open video at {video_path}")
 
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        sleep_time = round(1 / fps, 4)
+        print("FPS: ", fps, sleep_time)
+
         def close_video():
             cap.release()
 
         atexit.register(close_video)
 
-        # max_fps = 30
-        # motion_detector = MotionDetector()
+        frame_handler = FrameHandler(highlight_movement=True)
+
+        last_time = time.perf_counter()
 
         while True:
             if stream_output.closed:
                 break
 
-            fps = 60
+            now = time.perf_counter()
+            time_passed = now - last_time
+            last_time = now
 
-            # time.sleep(1 / fps)
+            remaining_sleep_time = max(sleep_time - time_passed, 0.05)
+            time.sleep(remaining_sleep_time)
             try:
                 ret, frame = cap.read()
 
@@ -800,12 +791,10 @@ def get_file_streamer(stream_output: StreamingOutput):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue  # Skip the rest of this iteration and try reading the new first frame
                 else:
-                    # frame_resized = cv2.resize(frame, resolution)
-                    # frame_bytes_resized = cv2.imencode(".jpeg", frame_resized)[1].tobytes()
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    # frame = cv2.resize(frame, (ai_input_size, ai_input_size))
-                    frame_bytes_hires = cv2.imencode(".jpeg", frame)[1].tobytes()
-                    stream_output.write(frame_bytes_hires)
+                    # frame_bytes_hires = cv2.imencode(".jpeg", frame)[1].tobytes()
+                    # stream_output.write(frame_bytes_hires)
+                    frame_handler.process_frame(frame_hires=frame)
             except KeyboardInterrupt:
                 print("shutting down here!!!")
                 break

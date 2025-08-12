@@ -115,12 +115,12 @@ try:
     inp_id = input_details[0]["index"]
     output_details = interpreter.get_output_details()
 
-    print("--- Input Details ---")
-    # Use json.dumps for pretty printing
-    print(input_details)
-    print("--- Output Details ---")
-    # Use json.dumps for pretty printing
-    print(output_details)
+    # print("--- Input Details ---")
+    # # Use json.dumps for pretty printing
+    # print(input_details)
+    # print("--- Output Details ---")
+    # # Use json.dumps for pretty printing
+    # print(output_details)
 
     height = 320
     width = 320
