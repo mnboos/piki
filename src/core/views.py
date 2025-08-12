@@ -54,42 +54,79 @@ def config(request):
 
     return render(request, "core/config.html", {})
 
-
 def stream_camera():
-    """Video streaming generator function, converted to pure OpenCV."""
+    """Video streaming generator function with corrected drawing logic."""
 
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
+    font_scale = 0.5
     text_color = (255, 255, 255)  # White in BGR
+    box_color = (0, 255, 128)  # A nice green for the boxes
     thickness = 2
 
     try:
         stream.live_stream_enabled.set()
         while True:
-            time.sleep(0.01)
+            # This is an efficient way to wait for new frames without burning CPU
+            stream.output_buffer.wait_for_data()
             if stream.output_buffer.queue.empty():
                 continue
 
             latest_result = stream.output_buffer.popleft()
             if not latest_result:
                 continue
-            worker_pid, timestamp, frame, detected_objects = latest_result
 
-            for label, confidence, bbox in detected_objects:
-                x, y, _, _ = bbox
-                text_position = (int(x), int(y))
-                text_to_draw = f"{label} ({confidence:.2%})"
+            # The 'frame' here is the low-resolution preview frame
+            _worker_pid, _timestamp, frame, detected_objects = latest_result
 
+            # Get the dimensions of the frame we are drawing on.
+            frame_height, frame_width, _ = frame.shape
+
+            for label, confidence, bbox_normalized in detected_objects:
+                # 1. Unpack the NORMALIZED coordinates [ymin, xmin, ymax, xmax]
+                #    These are proportional and work for any frame size.
+                ymin, xmin, ymax, xmax = bbox_normalized
+
+                # 2. Clamp values to the [0.0, 1.0] range to prevent errors
+                ymin = max(0.0, ymin)
+                xmin = max(0.0, xmin)
+                ymax = min(1.0, ymax)
+                xmax = min(1.0, xmax)
+
+                # 3. Denormalize to get PIXEL coordinates for the CURRENT frame
+                left = int(xmin * frame_width)
+                top = int(ymin * frame_height)
+                right = int(xmax * frame_width)
+                bottom = int(ymax * frame_height)
+
+                # 4. Draw the bounding box using the calculated pixel coordinates
+                cv2.rectangle(frame, (left, top), (right, bottom), box_color, thickness)
+
+                # 5. Prepare and draw the text label
+                text_to_draw = f"{label} ({confidence:.1%})"
+
+                # Create a solid background for the text for better readability
+                (text_w, text_h), _ = cv2.getTextSize(
+                    text_to_draw, font, font_scale, thickness
+                )
+                text_bg_rect_start = (left, top - text_h - 7)
+                text_bg_rect_end = (left + text_w, top)
+                cv2.rectangle(
+                    frame, text_bg_rect_start, text_bg_rect_end, box_color, -1
+                )  # -1 thickness for filled rectangle
+
+                # Position text on top of the background
                 cv2.putText(
                     frame,
                     text_to_draw,
-                    text_position,
+                    (left, top - 5),  # Position text inside the background
                     font,
                     font_scale,
-                    text_color,
-                    thickness,
+                    (0, 0, 0),  # Black text for contrast
+                    1,
+                    cv2.LINE_AA,
                 )
 
+            # Convert the processed RGB frame to BGR for web streaming and encode
             bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             success, buffer = cv2.imencode(".jpeg", bgr)
             if success:
@@ -97,6 +134,51 @@ def stream_camera():
                 yield (b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n")
     finally:
         stream.live_stream_enabled.clear()
+
+# def stream_camera():
+#     """Video streaming generator function, converted to pure OpenCV."""
+#
+#     font = cv2.FONT_HERSHEY_SIMPLEX
+#     font_scale = 0.6
+#     text_color = (255, 255, 255)  # White in BGR
+#     thickness = 2
+#
+#     try:
+#         stream.live_stream_enabled.set()
+#         while True:
+#             time.sleep(0.01)
+#             if stream.output_buffer.queue.empty():
+#                 continue
+#
+#             latest_result = stream.output_buffer.popleft()
+#             if not latest_result:
+#                 continue
+#             worker_pid, timestamp, frame, detected_objects = latest_result
+#
+#             for label, confidence, bbox in detected_objects:
+#                 x, y, w, h = bbox
+#                 text_position = (x, y)
+#                 text_to_draw = f"{label} ({confidence:.2%})"
+#
+#                 cv2.rectangle(frame, (x,y), (x+w, y+h), text_color, 2)
+#
+#                 cv2.putText(
+#                     frame,
+#                     text_to_draw,
+#                     text_position,
+#                     font,
+#                     font_scale,
+#                     text_color,
+#                     thickness,
+#                 )
+#
+#             bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+#             success, buffer = cv2.imencode(".jpeg", bgr)
+#             if success:
+#                 frame_bytes = buffer.tobytes()
+#                 yield (b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n")
+#     finally:
+#         stream.live_stream_enabled.clear()
 
 
 def stream_mask():

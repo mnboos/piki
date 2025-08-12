@@ -27,11 +27,10 @@ def create_queue_manager():
     # s.serve_forever()
     m.start()
 
+    @atexit.register
     def cleanup():
         print("Cleaning up...")
         m.shutdown()
-
-    atexit.register(cleanup)
 
 
 def retrieve_queue(max_retries=10):
@@ -41,11 +40,10 @@ def retrieve_queue(max_retries=10):
             m = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
             m.connect()
 
+            @atexit.register
             def cleanup():
                 if hasattr(m, "shutdown"):
                     m.shutdown()
-
-            atexit.register(cleanup)
 
             assert hasattr(m, _manager_getter_name)
             return getattr(m, _manager_getter_name)()

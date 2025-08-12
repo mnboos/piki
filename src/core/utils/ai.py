@@ -1,20 +1,14 @@
-import json
 import time
 from pathlib import Path
 
-import cv2
 from ai_edge_litert.interpreter import Interpreter
 import traceback
 import numpy as np
 
-# from PIL import Image
 import multiprocessing as mp
 from ctypes import c_float
 
-from rich.live import Live
-from rich.table import Table
-
-prob_threshold = mp.Value(c_float, 0.05)
+prob_threshold = mp.Value(c_float, 0.2)
 
 # model_file = "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
 # model_file = "ssd-mobilenet-v2-tflite-100-int8-default-v1.tflite"
@@ -115,13 +109,6 @@ try:
     inp_id = input_details[0]["index"]
     output_details = interpreter.get_output_details()
 
-    # print("--- Input Details ---")
-    # # Use json.dumps for pretty printing
-    # print(input_details)
-    # print("--- Output Details ---")
-    # # Use json.dumps for pretty printing
-    # print(output_details)
-
     height = 320
     width = 320
 
@@ -217,43 +204,14 @@ try:
     }
 
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
-        # image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
-
-        # orig_shape = image.shape
-        # print("orig: ", orig_shape)
-
-        # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        image = cv2.resize(image, (width, height))
+        assert image.shape[0] == width and image.shape[1] == height, f"Image shape is {image.shape}, but expected ({width}, {height})"
 
         input_data = np.expand_dims(image, axis=0)
-
-        input_scale, input_zero_point = input_details[0]["quantization"]
-        # input_data = (np.float32(input_data) / input_scale) + input_zero_point
-        # input_data = input_data.astype(np.uint8)
-
-        # img_arr = np.array(resized_img)
-
-        # if not is_quant:
-        #     image = image.astype(np.float32) / 128 - 1
-
-        # ======================================================================
-        # FIX: Add the batch dimension to make the input tensor 4D
-        # Before: img_arr.shape was (300, 300, 3)
-        # After:  input_tensor.shape will be (1, 300, 300, 3)
-
-        # ======================================================================
-
-        ms = lambda: int(round(time.time() * 1000))
 
         t0 = time.perf_counter()
         interpreter.set_tensor(inp_id, input_data)
         interpreter.invoke()
         tt = round((time.perf_counter() - t0) * 1000)
-        # print("Inference:", tt, "ms")
-        # boxes = interpreter.get_tensor(out_id0)
-        # classes = interpreter.get_tensor(out_id1)
-        # scores = interpreter.get_tensor(out_id2)
-        # num_det = interpreter.get_tensor(out_id3)
 
         boxes = interpreter.get_tensor(output_details[0]["index"])[0]
         classes = interpreter.get_tensor(output_details[1]["index"])[0]
@@ -265,7 +223,7 @@ try:
         results = []
         threshold = prob_threshold.value
         for i in range(num_objects_found):
-            confidence = scores[i]
+            confidence = round(float(scores[i]), 3)
             coco_class_id = int(classes[i])
             if (
                 coco_class_id
@@ -273,21 +231,24 @@ try:
                 and confidence >= threshold
             ):
                 # Get bounding box coordinates and scale them to the original image size
-                ymin = int(max(1, boxes[i][0]))
-                xmin = int(max(1, boxes[i][1]))
-                ymax = int(max(1, boxes[i][2]))
-                xmax = int(max(1, boxes[i][3]))
+                ymin, xmin, ymax, xmax = boxes[i]
+                ymin = max(0.0, ymin)
+                xmin = max(0.0, xmin)
+                ymax = min(1.0, ymax)
+                xmax = min(1.0, xmax)
 
-                # Draw the bounding box
-                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
+
+                x = int(xmin * width)
+                y = int(ymin * height)
+                w = int((xmax - xmin) * width)
+                h = int((ymax - ymin) * height)
 
                 # Get the object name from the label map
                 label = COCO_LABELS[coco_class_id]
                 # print("label: ", label, confidence)
-                results.append((label, confidence, [xmin, ymin, xmax, ymax]))
+                results.append((label, confidence, (x,y,w,h)))
 
         return tt, results
-        # return tt, process_results(boxes=boxes, classes=classes, scores=scores, num_det=num_det, original_img_size=image.shape[:2])
 except:
     traceback.print_exc()
     raise

@@ -2,7 +2,8 @@ import dataclasses
 import os
 import random
 from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import Event, Queue
+from multiprocessing import Event, Queue, shared_memory, Lock
+from multiprocessing.shared_memory import SharedMemory
 import multiprocessing as mp
 from ctypes import c_float, c_int
 import io
@@ -37,6 +38,11 @@ mask_transparency = mp.Value(c_float, 0.5)
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
+# --- New Globals for Shared Memory ---
+SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
+shm_lock = Lock()  # To synchronize access to the shared memory
+shared_mem = None # Will hold the SharedMemory instance
+shared_array = None # The numpy array view of the shared memory
 
 @dataclasses.dataclass
 class ForegroundMaskOptions:
@@ -55,6 +61,32 @@ class TuningSettings:
 
 settings = TuningSettings()
 
+def setup_shared_memory(frame_shape, frame_dtype):
+    """Creates the shared memory block based on the first frame's properties."""
+    global shared_mem, shared_array
+    try:
+        # Create a new shared memory block
+        size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
+        shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
+        print(f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB")
+    except FileExistsError:
+        # If it already exists from a previous crashed run, unlink it and retry
+        print("Shared memory block already exists, unlinking and recreating.")
+        SharedMemory(name=SHM_NAME).unlink()
+        size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
+        shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
+
+    # Create a NumPy array that uses the shared memory buffer
+    shared_array = np.ndarray(frame_shape, dtype=frame_dtype, buffer=shared_mem.buf)
+    return shared_array
+
+def cleanup_shared_memory():
+    """Closes and unlinks the shared memory block on application exit."""
+    global shared_mem
+    print("Cleaning up shared memory...")
+    if shared_mem:
+        shared_mem.close()
+        shared_mem.unlink() # Free the memory block
 
 def get_measure(description: str):
     now = time.perf_counter()
@@ -66,55 +98,171 @@ def get_measure(description: str):
 
     return measure
 
-
 def run_object_detection(
-    frame_hires: np.ndarray,
-    # frame_lores: np.ndarray,
-    # fg_mask: np.ndarray,
+    shm_name: str,
+    shape: tuple,
+    dtype: np.dtype,
     rois,
     timestamp: int,
 ):
-    """
-    Symbolic AI function. It gets the raw frame data, processes it,
-    and returns its result along with its unique process ID.
-    """
+    existing_shm = None
+    try:
+        from .ai import detect_objects
 
-    from .ai import detect_objects
+        # --- Shared Memory Access ---
+        existing_shm = shared_memory.SharedMemory(name=shm_name)
+        frame_in_shm = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
+        with shm_lock:
+            frame_hires = frame_in_shm.copy()
 
-    # frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
+        frame_h, frame_w, _ = frame_hires.shape
+        worker_pid = mp.current_process().pid
 
-    # padded_images_with_roi = MotionDetector.get_padded_roi_images(
-    #     frame=frame_hires, rois=rois
-    # )
-    # if bboxes:
-    # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
-    # print("rois: ", len(rois))
+        # --- AI Processing ---
+        padded_images_and_details = MotionDetector.get_padded_roi_images(
+            frame=frame_hires, rois=rois, target_size=ai_input_size
+        )
 
-    # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # todo: should we do this before ai processing?
-    # lab = cv2.cvtColor(frame_data, cv2.COLOR_BGR2LAB)
-    # lab[:,:,0] = clahe.apply(lab[:,:,0])
-    # frame_data = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+        total_duration = 0
+        all_detections = []
 
-    worker_pid = mp.current_process().pid
+        for img, scale, effective_origin in padded_images_and_details:
+            eff_orig_x, eff_orig_y = effective_origin
 
-    result = detect_objects(frame_hires)
+            duration, detections = detect_objects(img)
+            total_duration += duration
 
-    # total_duration = 0
-    # all_detections = []
-    # for img, roi in padded_images_with_roi:
-    #     duration, detections = detect_objects(img)
-    #     total_duration += duration
-    #     all_detections.extend(detections)
-    # result = total_duration, all_detections
+            # 'detections' is a list of (label, confidence, local_pixel_bbox)
+            # where local_pixel_bbox is (x, y, w, h)
+            for label, confidence, local_pixel_bbox in detections:
+                # --- START: Correct Transformation Logic ---
 
-    # frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / preview_downscale_factor, fy=1 / preview_downscale_factor)
-    # cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
+                # 1. Unpack the LOCAL PIXEL coordinates (x, y, w, h) from ai.py
+                local_px_x, local_px_y, local_px_w, local_px_h = local_pixel_bbox
 
-    # det = MotionDetector(320, 400)
-    # highlighted_frame = det.highlight_movement_on(frame=frame_lores, mask=fg_mask)
+                # 2. Convert to (xmin, ymin, xmax, ymax) format
+                local_px_xmin = local_px_x
+                local_px_ymin = local_px_y
+                local_px_xmax = local_px_x + local_px_w
+                local_px_ymax = local_px_y + local_px_h
 
-    return worker_pid, timestamp, frame_hires, result
-    # return worker_pid, timestamp, frame_data, result
+                # 3. Apply the 'scale' factor from the resizing step
+                scaled_px_xmin = local_px_xmin * scale
+                scaled_px_ymin = local_px_ymin * scale
+                scaled_px_xmax = local_px_xmax * scale
+                scaled_px_ymax = local_px_ymax * scale
+
+                # 4. Translate by the 'effective_origin' to get GLOBAL PIXEL coordinates
+                global_px_xmin = scaled_px_xmin + eff_orig_x
+                global_px_ymin = scaled_px_ymin + eff_orig_y
+                global_px_xmax = scaled_px_xmax + eff_orig_x
+                global_px_ymax = scaled_px_ymax + eff_orig_y
+
+                # 5. Re-normalize the FINAL GLOBAL pixel coordinates for views.py
+                final_norm_coords = [
+                    global_px_ymin / frame_h,
+                    global_px_xmin / frame_w,
+                    global_px_ymax / frame_h,
+                    global_px_xmax / frame_w,
+                ]
+
+                all_detections.append((label, confidence, final_norm_coords))
+                # --- END: Correct Transformation Logic ---
+
+        result = total_duration, all_detections
+
+        frame_lores = cv2.resize(
+            frame_hires,
+            None,
+            fx=1 / preview_downscale_factor,
+            fy=1 / preview_downscale_factor,
+        )
+
+        return worker_pid, timestamp, frame_lores, result
+
+    except Exception as e:
+        print(f"!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!")
+        traceback.print_exc()
+        raise e
+    finally:
+        if existing_shm is not None:
+            existing_shm.close()
+
+# def run_object_detection(
+#     shm_name: str,
+#     shape: tuple,
+#     dtype: np.dtype,
+#     rois,
+#     timestamp: int,
+# ):
+#     """
+#     Symbolic AI function. It gets the raw frame data, processes it,
+#     and returns its result along with its unique process ID.
+#     """
+#
+#     from .ai import detect_objects
+#
+#     # Attach to the existing shared memory block
+#     existing_shm = shared_memory.SharedMemory(name=shm_name)
+#
+#     # Create a numpy array view pointing to the shared memory
+#     frame_in_shm = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
+#
+#     # Acquire the lock, quickly make a local copy of the frame, then release the lock.
+#     # This minimizes the time the main process is blocked from writing the next frame.
+#     with shm_lock:
+#         frame_hires = frame_in_shm.copy()
+#
+#     # We are done with the shared memory block in this process, so we can close it.
+#     existing_shm.close()
+#
+#     # frame_data = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
+#
+#     padded_images_with_roi = MotionDetector.get_padded_roi_images(
+#         frame=frame_hires, rois=rois
+#     )
+#     # if bboxes:
+#     # rois = merge_boxes_opencv(boxes=bboxes, frame_shape=frame_data.shape[:2])
+#     # print("rois: ", len(rois))
+#
+#     # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # todo: should we do this before ai processing?
+#     # lab = cv2.cvtColor(frame_data, cv2.COLOR_BGR2LAB)
+#     # lab[:,:,0] = clahe.apply(lab[:,:,0])
+#     # frame_data = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+#
+#     worker_pid = mp.current_process().pid
+#
+#     # result = detect_objects(frame_hires)
+#
+#     total_duration = 0
+#     all_detections = []
+#     for img, roi, frame_coords in padded_images_with_roi:
+#         rx, ry = frame_coords
+#         duration, detections = detect_objects(img)
+#         total_duration += duration
+#         for label, confidence, local_coords in detections:
+#             dx, dy, dw, dh = local_coords
+#             new_x = dx + rx
+#             new_y = dy + ry
+#             all_detections.append((label, confidence, (new_x, new_y, dw, dh)))
+#
+#     result = total_duration, all_detections
+#
+#     # frame_resized = cv2.resize(frame_data, dsize=None, fx=1 / preview_downscale_factor, fy=1 / preview_downscale_factor)
+#     # cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR, frame_resized)
+#
+#     # det = MotionDetector(320, 400)
+#     # highlighted_frame = det.highlight_movement_on(frame=frame_lores, mask=fg_mask)
+#
+#     frame_lores = cv2.resize(
+#         frame_hires,
+#         None,
+#         fx=1 / preview_downscale_factor,
+#         fy=1 / preview_downscale_factor,
+#     )
+#
+#     return worker_pid, timestamp, frame_lores, result
+#     # return worker_pid, timestamp, frame_data, result
 
 
 def on_done(future: Future):
@@ -126,16 +274,21 @@ def on_done(future: Future):
         if timestamp >= max_output_timestamp or True:
             max_output_timestamp = timestamp
 
-            inference_time = detected_objects[0]
-            dashboard.update(worker_id=worker_pid, inference_time=inference_time)
-            if live_stream_enabled.is_set():
-                output_buffer.append(
-                    (worker_pid, timestamp, frame, detected_objects[1])
-                )
+            if detected_objects:
+                inference_time, detections = detected_objects
+                dashboard.update(worker_id=worker_pid, inference_time=inference_time)
+                if live_stream_enabled.is_set():
+                    output_buffer.append(
+                        (worker_pid, timestamp, frame, detections)
+                    )
     except BrokenProcessPool:
         print("Pool already broken, when future was done. Shutting down...")
+        traceback.print_exc()
     except KeyboardInterrupt:
         print("Future done, shutting down...")
+    except:
+        traceback.print_exc()
+        raise
 
 
 class MotionDetector:
@@ -220,7 +373,8 @@ class MotionDetector:
         # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
         # frame = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
-        frame = self.clahe.apply(frame)
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        frame = self.clahe.apply(gray)
 
         denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
         if denoise_kernelsize >= 1:
@@ -442,82 +596,177 @@ class MotionDetector:
 
     @staticmethod
     def get_padded_roi_images(
-        *, frame: np.ndarray, rois, min_dimension=320, pad_color=(0, 0, 0)
+        *, frame: np.ndarray, rois, target_size=320, pad_color=(0, 0, 0)
     ):
         """
-        Takes clustered ROIs, crops them, and then uses cv2.copyMakeBorder to pad
-        them to the minimum required size. This is the simpler, more robust method.
-
-        Args:
-            frame (np.array): The original, full-resolution video frame.
-            rois (list): A list of (x, y, w, h) tuples from the clustering step.
-            min_dimension (int): The required dimension (width and height) for the final ROI.
-            pad_color (tuple): The BGR color for the padding.
+        Crops ROIs from a frame, preserves their aspect ratio by either center-cropping
+        or padding, and resizes them to a square target size.
 
         Returns:
-            list: A list of final ROI images (as NumPy arrays), all of size min_dimension x min_dimension.
+            list: A list of tuples, where each tuple contains:
+                  (padded_image, scale_factor, effective_origin_xy)
         """
         final_roi_images = []
         frame_h, frame_w, _ = frame.shape
 
+
         for current_roi in rois:
-            x, y, w, h = current_roi
-            # 1. Crop the ROI from the high-resolution frame first.
-            # Ensure cropping coordinates are integers and within bounds.
-            x, y, w, h = (
-                int(x) * preview_downscale_factor,
-                int(y) * preview_downscale_factor,
-                int(w) * preview_downscale_factor,
-                int(h) * preview_downscale_factor,
+            # 1. Get HI-RES coordinates for the initial crop
+            x_hires, y_hires, w_hires, h_hires = (
+                int(current_roi[0] * preview_downscale_factor),
+                int(current_roi[1] * preview_downscale_factor),
+                int(current_roi[2] * preview_downscale_factor),
+                int(current_roi[3] * preview_downscale_factor),
             )
 
-            x = max(0, x)
-            y = max(0, y)
-            w = min(frame_w - x, w)
-            h = min(frame_h - y, h)
+            # Clamp to frame boundaries
+            x_hires, y_hires = max(0, x_hires), max(0, y_hires)
+            w_hires, h_hires = min(frame_w - x_hires, w_hires), min(frame_h - y_hires, h_hires)
 
-            roi_crop = frame[y : y + h, x : x + w]
+            roi_crop = frame[y_hires : y_hires + h_hires, x_hires : x_hires + w_hires]
 
-            # Get the current dimensions of the crop
-            current_h, current_w, _ = roi_crop.shape
+            # 2. Handle the different size cases to preserve aspect ratio
+            crop_h, crop_w, _ = roi_crop.shape
+            scale = 1.0
+            if crop_h > target_size or crop_w > target_size:
+                # --- CASE 1: ROI is LARGER than target ---
+                # Crop from the center to maintain aspect ratio before resizing.
 
-            # 2. Calculate how much padding is needed for width and height
-            delta_w = max(0, min_dimension - current_w)
-            delta_h = max(0, min_dimension - current_h)
+                # Find the shorter side
+                min_dim = min(crop_h, crop_w)
 
-            # 3. Distribute the padding to top/bottom and left/right
-            # This ensures the original crop stays centered in the padded image.
-            top = delta_h // 2
-            bottom = delta_h - top  # Handles odd numbers correctly
+                # Calculate the scaling factor
+                scale = min_dim / target_size
 
-            left = delta_w // 2
-            right = delta_w - left
+                # Calculate the starting coordinates for a centered square crop
+                start_x = (crop_w - min_dim) // 2
+                start_y = (crop_h - min_dim) // 2
 
-            # 4. Use cv2.copyMakeBorder to add the black padding
-            padded_image = cv2.copyMakeBorder(
-                roi_crop, top, bottom, left, right, cv2.BORDER_CONSTANT, value=pad_color
+                # Perform the square crop from the original ROI
+                square_crop = roi_crop[
+                    start_y : start_y + min_dim, start_x : start_x + min_dim
+                ]
+
+                # Update the effective origin to account for the crop
+                effective_origin = (x_hires + start_x, y_hires + start_y)
+
+                # Resize the aspect-ratio-correct square crop to the target size
+                final_image = cv2.resize(
+                    square_crop,
+                    (target_size, target_size),
+                    interpolation=cv2.INTER_AREA,
+                )
+
+            else:
+                # --- CASE 2: ROI is SMALLER than or equal to target ---
+                # Pad the image to make it square.
+                delta_w = target_size - crop_w
+                delta_h = target_size - crop_h
+                top, bottom = delta_h // 2, delta_h - (delta_h // 2)
+                left, right = delta_w // 2, delta_w - (delta_w // 2)
+
+                final_image = cv2.copyMakeBorder(
+                    roi_crop,
+                    top,
+                    bottom,
+                    left,
+                    right,
+                    cv2.BORDER_CONSTANT,
+                    value=pad_color,
+                )
+
+                # The effective origin is offset by the negative padding
+                effective_origin = (x_hires - left, y_hires - top)
+                # Scale remains 1.0 because we did not resize the original content
+
+            # Assert that the final image is the correct size
+            assert final_image.shape[:2] == (target_size, target_size), (
+                "Final image processing failed."
             )
 
-            # As a final check, resize to the exact target size in case of minor floating point errors
-            # or if the original ROI was already larger than min_dimension
-            if (
-                padded_image.shape[0] > min_dimension
-                or padded_image.shape[1] > min_dimension
-            ):
-                # print("resize: ")
-                # padded_image = cv2.resize(
-                #     padded_image,
-                #     (min_dimension, min_dimension),
-                #     interpolation=cv2.INTER_AREA,
-                # )
-                center = padded_image.shape
-                x = center[1] / 2 - w / 2
-                y = center[0] / 2 - h / 2
-                padded_image = padded_image[int(y) : int(y + h), int(x) : int(x + w)]
+            final_roi_images.append((final_image, scale, effective_origin))
 
-            final_roi_images.append((padded_image, current_roi))
-
+        # print("roi images: ", final_roi_images)
         return final_roi_images
+
+    # @staticmethod
+    # def get_padded_roi_images(
+    #     *, frame: np.ndarray, rois, target_size=320, pad_color=(0, 0, 0)
+    # ):
+    #     """
+    #     Takes clustered ROIs, crops them, and then uses cv2.copyMakeBorder to pad
+    #     them to the minimum required size. This is the simpler, more robust method.
+    #
+    #     Args:
+    #         frame (np.array): The original, full-resolution video frame.
+    #         rois (list): A list of (x, y, w, h) tuples from the clustering step.
+    #         target_size (int): The required dimension (width and height) for the final ROI.
+    #         pad_color (tuple): The BGR color for the padding.
+    #
+    #     Returns:
+    #         list: A list of final ROI images (as NumPy arrays), all of size min_dimension x min_dimension.
+    #     """
+    #     final_roi_images = []
+    #     frame_h, frame_w, _ = frame.shape
+    #
+    #     for current_roi in rois:
+    #         x, y, w, h = current_roi
+    #         # 1. Crop the ROI from the high-resolution frame first.
+    #         # Ensure cropping coordinates are integers and within bounds.
+    #         x, y, w, h = (
+    #             max(0, x * preview_downscale_factor),
+    #             max(0, y * preview_downscale_factor),
+    #             int(w * preview_downscale_factor),
+    #             int(h * preview_downscale_factor),
+    #         )
+    #
+    #         w = min(frame_w - x, w)
+    #         h = min(frame_h - y, h)
+    #
+    #         roi_crop = frame[y : y + h, x : x + w]
+    #         # if the roi is bigger than the targetsize in any direction, crop and resize
+    #         if (
+    #             roi_crop.shape[0] > target_size
+    #             or roi_crop.shape[1] > target_size
+    #         ):
+    #             min_crop_size = min(roi_crop.shape[0], roi_crop.shape[1])
+    #             center = roi_crop.shape
+    #             x = int(center[1] / 2 - min_crop_size / 2)
+    #             y = int(center[0] / 2 - min_crop_size / 2)
+    #             cropped = roi_crop[y : y + min_crop_size, x : x + min_crop_size]
+    #             scale = min_crop_size / target_size
+    #             x *= scale
+    #             y *= scale
+    #             padded_image = cv2.resize(cropped, (target_size, target_size))
+    #
+    #         elif roi_crop.shape[0] < target_size or roi_crop.shape[1] < target_size:
+    #             # Get the current dimensions of the crop
+    #             current_h, current_w, _ = roi_crop.shape
+    #
+    #             # 2. Calculate how much padding is needed for width and height
+    #             delta_w = max(0, target_size - current_w)
+    #             delta_h = max(0, target_size - current_h)
+    #
+    #             # 3. Distribute the padding to top/bottom and left/right
+    #             # This ensures the original crop stays centered in the padded image.
+    #             top = delta_h // 2
+    #             bottom = delta_h - top  # Handles odd numbers correctly
+    #
+    #             left = delta_w // 2
+    #             right = delta_w - left
+    #
+    #             # 4. Use cv2.copyMakeBorder to add the black padding
+    #             padded_image = cv2.copyMakeBorder(
+    #                 roi_crop, top, bottom, left, right, cv2.BORDER_CONSTANT, value=pad_color
+    #             )
+    #         else:
+    #             padded_image = roi_crop
+    #
+    #         assert padded_image.shape[0]==target_size and padded_image.shape[1]==target_size, f"Padded image has wrong dimensions. Expected ({target_size}, {target_size}), actual {padded_image.shape[:2]}"
+    #
+    #         final_roi_images.append((padded_image, current_roi, (x,y)))
+    #
+    #     return final_roi_images
 
     def highlight_movement_on(
         self,
@@ -557,11 +806,6 @@ class MotionDetector:
 
 class FrameHandler:
     def __init__(self, highlight_movement: bool = False):
-        # self.frame: bytes = b""
-        # self.condition = Condition()
-        # self.backSub = cv2.createBackgroundSubtractorMOG2()
-        print("StreamingOutput created")
-
         min_roi_size = int(ai_input_size / preview_downscale_factor)
         max_roi_size = int((ai_input_size + 100) / preview_downscale_factor)
 
@@ -578,7 +822,19 @@ class FrameHandler:
         )
 
     def process_frame(self, frame_hires: np.ndarray):
-        buf = cv2.resize(
+        global shared_array
+
+        # --- Shared Memory Logic ---
+        # On the first run, create the shared memory block
+        if shared_array is None:
+            setup_shared_memory(frame_hires.shape, frame_hires.dtype)
+
+        # Lock the shared memory, copy the new frame data into it, and then unlock.
+        # This ensures a worker process doesn't read a partially updated frame.
+        with shm_lock:
+            shared_array[:] = frame_hires
+
+        frame_lores = cv2.resize(
             frame_hires,
             None,
             fx=1 / preview_downscale_factor,
@@ -590,13 +846,12 @@ class FrameHandler:
         # buf: np.ndarray
         # self.frame = buf
 
-        if buf is not None and buf.size:
-            gray = cv2.cvtColor(buf, cv2.COLOR_RGB2GRAY)
-            has_movement, mask = self.motion_detector.is_moving(gray)
+        if frame_lores is not None and frame_lores.size:
+            has_movement, mask = self.motion_detector.is_moving(frame_lores)
             if is_mask_streaming_enabled.is_set():
                 # clahe_recolored = cv2.cvtColor(cl, cv2.COLOR_GRAY2BGR)
                 buf_highlighted = self.motion_detector.highlight_movement_on(
-                    frame=buf,
+                    frame=frame_lores,
                     mask=mask,
                     overlay_color_rgb=(
                         147,
@@ -618,27 +873,44 @@ class FrameHandler:
                     # buf_hires: np.ndarray
 
                     rois = self.motion_detector.create_rois(mask=mask)
+
+                    # worker_pid, timestamp, frame, detected_objects = run_object_detection(
+                    #     shm_name=SHM_NAME,
+                    #     shape=frame_hires.shape,
+                    #     dtype=frame_hires.dtype,
+                    #     rois=rois,
+                    #     timestamp=timestamp,)
+                    # if timestamp >= max_output_timestamp or True:
+                    #     max_output_timestamp = timestamp
+                    #
+                    #     if detected_objects:
+                    #         inference_time, detections = detected_objects
+                    #         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
+                    #         if live_stream_enabled.is_set():
+                    #             output_buffer.append(
+                    #                 (worker_pid, timestamp, frame, detections))
+
                     future: Future = process_pool.submit(
                         run_object_detection,
-                        frame_hires=frame_hires,
-                        # frame_lores=buf,
-                        # fg_mask=mask,
+                        shm_name=SHM_NAME,
+                        shape=frame_hires.shape,
+                        dtype=frame_hires.dtype,
                         rois=rois,
                         timestamp=timestamp,
                     )
-
                     active_futures.append(future)
                     future.add_done_callback(on_done)
 
-                except RuntimeError as e:
+                except:
                     traceback.print_exc()
-                    raise KeyboardInterrupt from e
+                    raise
             elif not has_movement and not active_futures:
                 # print("not detecting on current frame")
-                output_buffer.append((0, 0, buf, []))
+                output_buffer.append((0, 0, frame_lores, []))
             else:
-                # this is for testing only
-                output_buffer.append((0, 0, buf, []))
+                # this is for testing only, this will actually rewind a little
+                # output_buffer.append((0, 0, frame_lores, []))
+                pass
 
 
 # This class instance will hold the camera frames
@@ -708,14 +980,14 @@ def _stream_cam_or_file_to(stream_output: StreamingOutput):
                 traceback.print_exc()
                 raise
 
-            def cleanup():
+            def cleanup_camera():
                 print("Cleaning up picam2")
                 picam2.stop_encoder()
                 picam2.stop_recording()
                 encoder.stop()
                 picam2.close()
 
-            atexit.register(cleanup)
+            atexit.register(cleanup_camera)
 
         if os.environ.get("MOCK_CAMERA"):
             streamer_func = get_file_streamer(stream_output)
@@ -759,7 +1031,7 @@ def get_file_streamer(stream_output: StreamingOutput):
         if not cap.isOpened():
             raise RuntimeError(f"Error: Could not open video at {video_path}")
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = round(cap.get(cv2.CAP_PROP_FPS))
         sleep_time = round(1 / fps, 4)
         print("FPS: ", fps, sleep_time)
 
@@ -816,7 +1088,6 @@ input_buffer = StreamingOutput(highlight_movement=True)
 def start_stream_nonblocking():
     _stream_cam_or_file_to(input_buffer)
 
-
 def cleanup():
     print("[DJANGO SHUTDOWN] Stopping processes...")
 
@@ -825,8 +1096,8 @@ def cleanup():
 
     thread_pool.shutdown(wait=True, cancel_futures=True)
     process_pool.shutdown(wait=True, cancel_futures=True)
+    cleanup_shared_memory()
 
     print("[DJANGO SHUTDOWN] Processes stopped.")
-
 
 atexit.register(cleanup)
