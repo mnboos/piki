@@ -2,13 +2,11 @@ import time
 from pathlib import Path
 
 from ai_edge_litert.interpreter import Interpreter
+import ai_edge_litert.interpreter as interpreter
 import traceback
 import numpy as np
 
-import multiprocessing as mp
-from ctypes import c_float
-
-prob_threshold = mp.Value(c_float, 0.4)
+from .shared import prob_threshold
 
 # model_file = "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
 # model_file = "ssd-mobilenet-v2-tflite-100-int8-default-v1.tflite"
@@ -102,6 +100,20 @@ try:
     model_path = str(Path(__file__).parent / model_file)
     is_quant = "quant" in model_file or "int8" in model_file
 
+    # armnn_delegate = interpreter.load_delegate(
+    #     library="/home/martin/Downloads/ArmNN-linux-x86_64/delegate/libarmnnDelegate.so",
+    #     options={
+    #         "backends": "GpuAcc,CpuAcc",  # Prioritize GPU, fallback to CPU
+    #         "logging-severity": "info",  # Optional: for verbose logging
+    #     },
+    # )
+    # print("Arm NN delegate loaded successfully.")
+    # delegates_list = [armnn_delegate]
+    #
+    # interpreter = Interpreter(
+    #     model_path=model_path, experimental_delegates=delegates_list
+    # )
+
     interpreter = Interpreter(model_path=model_path)
 
     interpreter.allocate_tensors()
@@ -120,91 +132,10 @@ try:
     out_id2 = output_details[2]["index"]
     out_id3 = output_details[3]["index"]
 
-    image_classes = {
-        0: "person",
-        1: "bicycle",
-        2: "car",
-        3: "motorcycle",
-        4: "airplane",
-        5: "bus",
-        6: "train",
-        7: "truck",
-        8: "boat",
-        9: "traffic light",
-        10: "fire hydrant",
-        11: "stop sign",
-        12: "parking meter",
-        13: "bench",
-        14: "bird",
-        15: "cat",
-        16: "dog",
-        17: "horse",
-        18: "sheep",
-        19: "cow",
-        20: "elephant",
-        21: "bear",
-        22: "zebra",
-        23: "giraffe",
-        24: "backpack",
-        25: "umbrella",
-        26: "handbag",
-        27: "tie",
-        28: "suitcase",
-        29: "frisbee",
-        30: "skis",
-        31: "snowboard",
-        32: "sports ball",
-        33: "kite",
-        34: "baseball bat",
-        35: "baseball glove",
-        36: "skateboard",
-        37: "surfboard",
-        38: "tennis racket",
-        39: "bottle",
-        40: "wine glass",
-        41: "cup",
-        42: "fork",
-        43: "knife",
-        44: "spoon",
-        45: "bowl",
-        46: "banana",
-        47: "apple",
-        48: "sandwich",
-        49: "orange",
-        50: "broccoli",
-        51: "carrot",
-        52: "hot dog",
-        53: "pizza",
-        54: "donut",
-        55: "cake",
-        56: "chair",
-        57: "couch",
-        58: "potted plant",
-        59: "bed",
-        60: "dining table",
-        61: "toilet",
-        62: "tv",
-        63: "laptop",
-        64: "mouse",
-        65: "remote",
-        66: "keyboard",
-        67: "cell phone",
-        68: "microwave",
-        69: "oven",
-        70: "toaster",
-        71: "sink",
-        72: "refrigerator",
-        73: "book",
-        74: "clock",
-        75: "vase",
-        76: "scissors",
-        77: "teddy bear",
-        78: "hair drier",
-        79: "toothbrush",
-    }
-
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
-        assert image.shape[0] == width and image.shape[1] == height, f"Image shape is {image.shape}, but expected ({width}, {height})"
+        assert image.shape[0] == width and image.shape[1] == height, (
+            f"Image shape is {image.shape}, but expected ({width}, {height})"
+        )
 
         input_data = np.expand_dims(image, axis=0)
 
@@ -237,7 +168,6 @@ try:
                 ymax = min(1.0, ymax)
                 xmax = min(1.0, xmax)
 
-
                 x = int(xmin * width)
                 y = int(ymin * height)
                 w = int((xmax - xmin) * width)
@@ -246,7 +176,7 @@ try:
                 # Get the object name from the label map
                 label = COCO_LABELS[coco_class_id]
                 # print("label: ", label, confidence)
-                results.append((label, confidence, (x,y,w,h)))
+                results.append((label, confidence, (x, y, w, h)))
 
         return tt, results
 except:

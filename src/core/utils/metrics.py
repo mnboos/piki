@@ -35,7 +35,7 @@ def create_queue_manager():
 
 def retrieve_queue(max_retries=10):
     retries = 0
-    while True:
+    while retries < max_retries:
         try:
             m = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
             m.connect()
@@ -66,10 +66,13 @@ def retrieve_queue(max_retries=10):
 
             time.sleep(backoff)
             continue
+    return None
 
 
 class LiveMetricsDashboard:
-    def __init__(self, queue: Queue) -> None:
+    def __init__(self) -> None:
+        queue = retrieve_queue(max_retries=100)
+
         self.queue = MultiprocessingDequeue(queue)
         self.state: dict[int, dict] = {}
 
