@@ -38,7 +38,7 @@ class TuningSettings:
 
 settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
-is_mask_streaming_enabled = Event()
+# is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
 
@@ -364,6 +364,7 @@ class SharedMemoryObject:
 class DebugSettings(SharedMemoryObject):
     """The in-memory version of our settings."""
 
+    debug_enabled: bool
     render_bboxes: bool
 
     def __init__(self, *, render_bboxes: bool, _dict_proxy=None):

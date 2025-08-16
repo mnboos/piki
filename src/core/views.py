@@ -70,6 +70,7 @@ def stream_camera():
     thickness = 2
 
     try:
+        app_settings.debug_settings.debug_enabled = False
         live_stream_enabled.set()
         shared.is_object_detection_disabled.clear()
         while True:
@@ -146,9 +147,10 @@ def stream_camera():
 
 def stream_mask():
     try:
-        shared.is_mask_streaming_enabled.set()
+        # shared.is_mask_streaming_enabled.set()
         shared.is_object_detection_disabled.set()
         shared.live_stream_enabled.clear()
+        app_settings.debug_settings.debug_enabled = True
         while True:
             time.sleep(0.01)
             if shared.mask_output_buffer.queue.empty():
@@ -168,8 +170,9 @@ def stream_mask():
                     + b"\r\n"
                 )
     finally:
-        shared.is_mask_streaming_enabled.clear()
+        # shared.is_mask_streaming_enabled.clear()
         shared.is_object_detection_disabled.clear()
+        app_settings.debug_settings.debug_enabled = False
 
 
 def video_feed(request):

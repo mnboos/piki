@@ -19,7 +19,8 @@ from .func import (
 from .metrics import LiveMetricsDashboard
 from .shared import (
     mask_transparency,
-    is_mask_streaming_enabled,
+    app_settings,
+    # is_mask_streaming_enabled,
     output_buffer,
     mask_output_buffer,
     live_stream_enabled,
@@ -250,7 +251,7 @@ def process_frame(frame_hires: np.ndarray):
 
     if frame_lores is not None and frame_lores.size:
         has_movement, mask = motion_detector.is_moving(frame_lores)
-        if is_mask_streaming_enabled.is_set():
+        if app_settings.debug_settings.debug_enabled:
             grayscale_output = True
             if grayscale_output:
                 gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
