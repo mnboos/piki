@@ -27,6 +27,7 @@ from .shared import (
     NUM_AI_WORKERS,
     preview_downscale_factor,
     ai_input_size,
+    is_object_detection_disabled,
 )
 
 
@@ -70,12 +71,9 @@ def cleanup_shared_memory():
         shared_mem.unlink()  # Free the memory block
 
 
-dashboard = LiveMetricsDashboard()
-
 active_futures: list[Future] = []
-
 max_output_timestamp = 0
-
+dashboard = LiveMetricsDashboard()
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
 thread_pool = ThreadPoolExecutor(max_workers=1)
 
@@ -113,10 +111,12 @@ def run_object_detection(
     rois,
     timestamp: int,
 ):
+    worker_pid = mp.current_process().pid
+    if is_object_detection_disabled.set():
+        return worker_pid, timestamp, None, (0, [])
+
     existing_shm = None
     try:
-        from .ai import detect_objects
-
         # --- Shared Memory Access ---
         existing_shm = shared_memory.SharedMemory(name=SHM_NAME)
         frame_in_shm = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
@@ -124,7 +124,6 @@ def run_object_detection(
             frame_hires = frame_in_shm.copy()
 
         frame_h, frame_w, _ = frame_hires.shape
-        worker_pid = mp.current_process().pid
 
         # --- AI Processing ---
         padded_images_and_details = get_padded_roi_images(
@@ -136,6 +135,8 @@ def run_object_detection(
 
         total_duration = 0
         all_detections = []
+
+        from .ai import detect_objects
 
         for img, scale, effective_origin in padded_images_and_details:
             eff_orig_x, eff_orig_y = effective_origin
@@ -270,32 +271,13 @@ def process_frame(frame_hires: np.ndarray):
             )
             mask_output_buffer.append(buf_highlighted)
 
-        if has_movement and len(active_futures) < NUM_AI_WORKERS:
+        elif has_movement and len(active_futures) < NUM_AI_WORKERS:
             try:
                 timestamp = time.monotonic_ns()
 
                 global max_output_timestamp
 
-                # buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
-                # buf_hires: np.ndarray
-
                 rois = motion_detector.create_rois(mask=mask)
-
-                # worker_pid, timestamp, frame, detected_objects = run_object_detection(
-                #     shm_name=SHM_NAME,
-                #     shape=frame_hires.shape,
-                #     dtype=frame_hires.dtype,
-                #     rois=rois,
-                #     timestamp=timestamp,)
-                # if timestamp >= max_output_timestamp or True:
-                #     max_output_timestamp = timestamp
-                #
-                #     if detected_objects:
-                #         inference_time, detections = detected_objects
-                #         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
-                #         if live_stream_enabled.is_set():
-                #             output_buffer.append(
-                #                 (worker_pid, timestamp, frame, detections))
 
                 future: Future = process_pool.submit(
                     run_object_detection,
@@ -313,10 +295,6 @@ def process_frame(frame_hires: np.ndarray):
         elif not has_movement and not active_futures:
             # print("not detecting on current frame")
             output_buffer.append((0, 0, frame_lores, []))
-        else:
-            # this is for testing only, this will actually rewind a little
-            # output_buffer.append((0, 0, frame_lores, []))
-            pass
 
 
 # This class instance will hold the camera frames
@@ -440,7 +418,7 @@ def get_file_streamer(video_path: str | None):
             time_passed = now - last_time
             last_time = now
 
-            remaining_sleep_time = max(sleep_time - time_passed, 0.05)
+            remaining_sleep_time = max(sleep_time - time_passed, sleep_time)
             time.sleep(remaining_sleep_time)
             try:
                 ret, frame = cap.read()

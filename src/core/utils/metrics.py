@@ -1,12 +1,15 @@
 import errno
 
-from .helpers import MultiprocessingDequeue
+from rich.console import group
+from rich.panel import Panel
+
+from .shared import MultiprocessingDequeue
 from rich.live import Live
 from rich.table import Table
 import atexit
 import time
 
-from multiprocessing import Queue
+from multiprocessing import Queue, Manager
 from multiprocessing.managers import BaseManager
 
 
@@ -17,36 +20,34 @@ class QueueManager(BaseManager):
 _manager_getter_name = "get_dashboard_queue"
 QUEUE_KEY = b"abcd-foobar!!"
 
-_queue = Queue(20)
-QueueManager.register(_manager_getter_name, callable=lambda: _queue)
+# m = QueueManager()
+queue = Queue(10)
 
 
-def create_queue_manager():
-    m = QueueManager(address=("", 50000), authkey=QUEUE_KEY)
-    # s = m.get_server()
-    # s.serve_forever()
-    m.start()
+QueueManager.register(_manager_getter_name, callable=lambda: queue)
+queue_manager = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
 
-    @atexit.register
-    def cleanup():
-        print("Cleaning up...")
-        m.shutdown()
+
+def cleanup():
+    print("[Metrics] Shutting down...")
+    queue_manager.shutdown()
+    print("[Metrics] Shut down")
+
+
+# @atexit.register
+# def cleanup():
+#     if hasattr(queue_manager, "shutdown"):
+#         queue_manager.shutdown()
 
 
 def retrieve_queue(max_retries=10):
     retries = 0
     while retries < max_retries:
         try:
-            m = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
-            m.connect()
+            # m = QueueManager(address=("127.0.0.1", 50000), authkey=QUEUE_KEY)
+            queue_manager.connect()
 
-            @atexit.register
-            def cleanup():
-                if hasattr(m, "shutdown"):
-                    m.shutdown()
-
-            assert hasattr(m, _manager_getter_name)
-            return getattr(m, _manager_getter_name)()
+            return getattr(queue_manager, _manager_getter_name)()
         except OSError as e:
             if e.errno == errno.EADDRINUSE:
                 raise RuntimeError(
@@ -79,6 +80,11 @@ class LiveMetricsDashboard:
     def update(self, *, worker_id: int, inference_time: float) -> None:
         self.queue.append((worker_id, inference_time))
 
+    @group()
+    def get_panels(self):
+        yield Panel("Hello", style="on blue")
+        yield Panel("World", style="on red")
+
     def _generate_table(self) -> Table:
         """Draws a Rich Table from the current dashboard_data."""
         table = Table(title="Multi-Process Inference Monitor")
@@ -94,7 +100,9 @@ class LiveMetricsDashboard:
         return table
 
     def run(self):
+        # m.start()
         with Live(self._generate_table(), screen=False) as live:
+            # with Live(Panel(self.get_panels()), screen=False) as live:
             while True:
                 try:
                     worker_id, inference_time = self.queue.queue.get()

@@ -5,7 +5,12 @@ from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
 
 from .utils import clamp
-from .utils.shared import settings, live_stream_enabled, setup_motion_detector
+from .utils.shared import (
+    settings,
+    live_stream_enabled,
+    setup_motion_detector,
+    app_settings,
+)
 from .utils import shared
 
 
@@ -66,6 +71,7 @@ def stream_camera():
 
     try:
         live_stream_enabled.set()
+        shared.is_object_detection_disabled.clear()
         while True:
             # This is an efficient way to wait for new frames without burning CPU
             shared.output_buffer.wait_for_data()
@@ -134,58 +140,15 @@ def stream_camera():
                 frame_bytes = buffer.tobytes()
                 yield b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n"
     finally:
+        print("disable livestream")
         live_stream_enabled.clear()
-
-
-# def stream_camera():
-#     """Video streaming generator function, converted to pure OpenCV."""
-#
-#     font = cv2.FONT_HERSHEY_SIMPLEX
-#     font_scale = 0.6
-#     text_color = (255, 255, 255)  # White in BGR
-#     thickness = 2
-#
-#     try:
-#         stream.live_stream_enabled.set()
-#         while True:
-#             time.sleep(0.01)
-#             if stream.output_buffer.queue.empty():
-#                 continue
-#
-#             latest_result = stream.output_buffer.popleft()
-#             if not latest_result:
-#                 continue
-#             worker_pid, timestamp, frame, detected_objects = latest_result
-#
-#             for label, confidence, bbox in detected_objects:
-#                 x, y, w, h = bbox
-#                 text_position = (x, y)
-#                 text_to_draw = f"{label} ({confidence:.2%})"
-#
-#                 cv2.rectangle(frame, (x,y), (x+w, y+h), text_color, 2)
-#
-#                 cv2.putText(
-#                     frame,
-#                     text_to_draw,
-#                     text_position,
-#                     font,
-#                     font_scale,
-#                     text_color,
-#                     thickness,
-#                 )
-#
-#             bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-#             success, buffer = cv2.imencode(".jpeg", bgr)
-#             if success:
-#                 frame_bytes = buffer.tobytes()
-#                 yield (b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n")
-#     finally:
-#         stream.live_stream_enabled.clear()
 
 
 def stream_mask():
     try:
         shared.is_mask_streaming_enabled.set()
+        shared.is_object_detection_disabled.set()
+        shared.live_stream_enabled.clear()
         while True:
             time.sleep(0.01)
             if shared.mask_output_buffer.queue.empty():
@@ -195,7 +158,8 @@ def stream_mask():
             if frame is None or not frame.size:
                 continue
 
-            success, buffer = cv2.imencode(".jpg", frame)
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 10]
+            success, buffer = cv2.imencode(".jpg", frame, encode_param)
             if success:
                 frame_bytes = buffer.tobytes()
                 yield (
@@ -204,9 +168,8 @@ def stream_mask():
                     + b"\r\n"
                 )
     finally:
-        print("disable stream")
-        # stream.is_object_detection_disabled.clear()
-        # stream.is_mask_streaming_enabled.clear()
+        shared.is_mask_streaming_enabled.clear()
+        shared.is_object_detection_disabled.clear()
 
 
 def video_feed(request):

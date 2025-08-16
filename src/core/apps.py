@@ -21,11 +21,12 @@ class CoreConfig(AppConfig):
 
             if len(sys.argv) >= 2 and sys.argv[1] == "runserver":
                 # Import our shared objects and worker logic
-                from .utils.metrics import create_queue_manager, retrieve_queue
+                from .utils.metrics import queue_manager, retrieve_queue
 
                 print("Starting queue manager...")
 
-                create_queue_manager()
+                queue_manager.start()
+
                 time.sleep(1)
                 manager_started = False
                 retries = 0
