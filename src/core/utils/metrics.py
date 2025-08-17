@@ -1,6 +1,7 @@
 import errno
 
 from rich.console import group
+from rich.layout import Layout
 from rich.panel import Panel
 
 from .shared import MultiprocessingDequeue
@@ -76,38 +77,55 @@ class LiveMetricsDashboard:
 
         self.queue = MultiprocessingDequeue(queue)
         self.state: dict[int, dict] = {}
+        self.layout = self.create_layout()
 
     def update(self, *, worker_id: int, inference_time: float) -> None:
         self.queue.append((worker_id, inference_time))
 
-    @group()
-    def get_panels(self):
-        yield Panel("Hello", style="on blue")
-        yield Panel("World", style="on red")
-
-    def _generate_table(self) -> Table:
+    def _workers_table(self) -> Table:
         """Draws a Rich Table from the current dashboard_data."""
-        table = Table(title="Multi-Process Inference Monitor")
+        table = Table()
+        table.expand = True
         table.add_column("Worker ID", style="cyan")
         table.add_column("Inference Time (ms)", justify="right", style="magenta")
         table.add_column("Items Processed", justify="right", style="green")
 
         for worker_id, data in self.state.items():
             table.add_row(
-                f"Worker {worker_id}",
+                str(worker_id),
                 str(data["inference_time"]),
             )
         return table
 
+    @group()
+    def get_panels(self):
+        yield
+        yield Panel("World")
+
+    def create_layout(self):
+        l = Layout()
+        # l.split_column(Layout(name="upper"), Layout(name="lower"))
+        # l["lower"].split_row(
+        #     Layout(name="left"),
+        #     Layout(name="right"),
+        # )
+        l.split_row(
+            Layout(Panel(self._workers_table(), title="Workers"), name="left"),
+            Layout(name="right"),
+        )
+        return l
+
     def run(self):
         # m.start()
-        with Live(self._generate_table(), screen=False) as live:
-            # with Live(Panel(self.get_panels()), screen=False) as live:
+        # with Live(self._generate_table(), screen=False) as live:
+        with Live(self.layout, screen=True) as live:
             while True:
                 try:
                     worker_id, inference_time = self.queue.queue.get()
+                    # worker_id, inference_time = self.queue.popleft_blocking()
                 except EOFError:
-                    self.queue.queue = retrieve_queue()
+                    print("reconnect")
+                    self.queue.queue = retrieve_queue(3)
                 # print("got data", d)
                 # worker_id, inference_time = self.queue.popleft()
 
@@ -116,4 +134,4 @@ class LiveMetricsDashboard:
                     "items": 1,
                 }
 
-                live.update(self._generate_table())
+                live.update(self.create_layout())

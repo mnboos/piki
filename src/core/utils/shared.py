@@ -1,10 +1,13 @@
 import atexit
 import dataclasses
 import multiprocessing as mp
+import os
 import random
 from ctypes import c_float, c_int
 from multiprocessing import Event, Queue, Condition, Manager
+from multiprocessing import Semaphore
 from typing import TypeVar, Generic
+from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor
 import inspect
 
 import cv2
@@ -36,10 +39,20 @@ class TuningSettings:
         pass
 
 
+live_stream_enabled = Event()
+worker_ready = Event()
+
+NUM_AI_WORKERS: int = 2
+preview_downscale_factor = 2
+ai_input_size = 320
+
 settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
+
+# DJANGO_RELOAD_ISSUED = Event()
+# DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)
 
 
 class MultiprocessingDequeue(Generic[T]):
@@ -75,11 +88,6 @@ class MultiprocessingDequeue(Generic[T]):
 output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))
 mask_output_buffer = MultiprocessingDequeue[np.ndarray](queue=Queue(maxsize=10))
 prob_threshold = mp.Value(c_float, 0.4)
-live_stream_enabled = Event()
-
-NUM_AI_WORKERS: int = 2
-preview_downscale_factor = 2
-ai_input_size = 320
 
 
 class MotionDetector:

@@ -20,7 +20,6 @@ from .metrics import LiveMetricsDashboard
 from .shared import (
     mask_transparency,
     app_settings,
-    # is_mask_streaming_enabled,
     output_buffer,
     mask_output_buffer,
     live_stream_enabled,
@@ -31,13 +30,25 @@ from .shared import (
     is_object_detection_disabled,
 )
 
-
 SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
 shm_lock = Lock()  # To synchronize access to the shared memory
 shared_mem: SharedMemory | None = None  # Will hold the SharedMemory instance
 shared_array: Optional[np.typing.NDArray] = (
     None  # The numpy array view of the shared memory
 )
+
+
+def init_worker():
+    pid = os.getpid()
+    print(f"[Worker-{pid}]: Setup")
+
+    @atexit.register
+    def _cleanup():
+        print(f"[Worker-{pid}] Shutting down....")
+
+
+process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
+thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 
 
 def setup_shared_memory(frame_shape, frame_dtype):
@@ -75,24 +86,22 @@ def cleanup_shared_memory():
 active_futures: list[Future] = []
 max_output_timestamp = 0
 dashboard = LiveMetricsDashboard()
-process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS)
-thread_pool = ThreadPoolExecutor(max_workers=1)
 
 
-try:
-    import picamera2
-    from picamera2.encoders import MJPEGEncoder
-    from picamera2.outputs import FileOutput
-    from libcamera import controls
-
-    PICAMERA_AVAILABLE = True
-except ImportError:
-    print("Picamera2 not available", traceback.format_exc())
-    PICAMERA_AVAILABLE = False
-    picamera2 = None
-    MJPEGEncoder = None
-    FileOutput = None
-    controls = None
+# try:
+#     import picamera2
+#     from picamera2.encoders import MJPEGEncoder
+#     from picamera2.outputs import FileOutput
+#     from libcamera import controls
+#
+#     PICAMERA_AVAILABLE = True
+# except ImportError:
+#     print("Picamera2 not available", traceback.format_exc())
+#     PICAMERA_AVAILABLE = False
+#     picamera2 = None
+#     MJPEGEncoder = None
+#     FileOutput = None
+#     controls = None
 
 
 def get_measure(description: str):
@@ -101,7 +110,7 @@ def get_measure(description: str):
     def measure():
         end = time.perf_counter()
         ms = str(round((end - now) * 1000, 2)).rjust(5)
-        print(f"{description}: {ms} ms")
+        print(f"{description}: {ms} ms!")
 
     return measure
 
@@ -195,7 +204,7 @@ def run_object_detection(
 
     except Exception as e:
         print(
-            f"!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!"
+            f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!"
         )
         traceback.print_exc()
         raise e
@@ -210,7 +219,9 @@ def on_done(future: Future):
 
     try:
         worker_pid, timestamp, frame, detected_objects = future.result()
-        if timestamp >= max_output_timestamp or True:
+        if timestamp < max_output_timestamp:
+            print(f"Worker-{worker_pid} was slow, the results came too late :(")
+        else:
             max_output_timestamp = timestamp
 
             if detected_objects:
@@ -222,7 +233,7 @@ def on_done(future: Future):
         print("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
     except KeyboardInterrupt:
-        print("Future done, shutting down...")
+        print("Future done, shutting down....")
     except:
         traceback.print_exc()
         raise
@@ -230,6 +241,10 @@ def on_done(future: Future):
 
 def process_frame(frame_hires: np.ndarray):
     global shared_array
+
+    # if DJANGO_RELOAD_ISSUED.is_set():
+    #     print("skipping frame due to reload")
+    #     return
 
     # --- Shared Memory Logic ---
     # On the first run, create the shared memory block
@@ -271,15 +286,11 @@ def process_frame(frame_hires: np.ndarray):
                 draw_boxes=True,
             )
             mask_output_buffer.append(buf_highlighted)
-
         elif has_movement and len(active_futures) < NUM_AI_WORKERS:
             try:
                 timestamp = time.monotonic_ns()
 
-                global max_output_timestamp
-
                 rois = motion_detector.create_rois(mask=mask)
-
                 future: Future = process_pool.submit(
                     run_object_detection,
                     shape=frame_hires.shape,
@@ -289,12 +300,10 @@ def process_frame(frame_hires: np.ndarray):
                 )
                 active_futures.append(future)
                 future.add_done_callback(on_done)
-
             except:
                 traceback.print_exc()
                 raise
         elif not has_movement and not active_futures:
-            # print("not detecting on current frame")
             output_buffer.append((0, 0, frame_lores, []))
 
 
@@ -302,7 +311,7 @@ def process_frame(frame_hires: np.ndarray):
 class StreamingOutput(io.BufferedIOBase):
     def write(self, buf_hires: bytes) -> None:
         if self.closed:
-            raise RuntimeError("Stream is closed")
+            raise RuntimeError("Stream is closed!! ")
 
         if len(active_futures) == NUM_AI_WORKERS:
             return
@@ -317,63 +326,77 @@ class StreamingOutput(io.BufferedIOBase):
 input_buffer = StreamingOutput()
 
 
-def stream_camera():
-    try:
-        print("Starting stream in 5 seconds...")
-        time.sleep(5)
-        picam2 = picamera2.Picamera2()
-
-        # noinspection PyUnresolvedReferences
-        noise_reduction_mode = controls.draft.NoiseReductionModeEnum.Fast
-
-        camera_config = picam2.create_video_configuration(
-            # main={"size": (1296, 972)},
-            # main={"size": resolution},
-            # queue=False,
-            controls={
-                "FrameRate": 20,
-                "ColourGains": (1, 1),
-                "NoiseReductionMode": noise_reduction_mode,
-            },
-        )
-        picam2.configure(camera_config)
-        picam2.start_preview(picamera2.Preview.NULL)
-
-        # class MeasuringJpegEncoder(JpegEncoder):
-        #     def encode_func(self, request, name):
-        #         measure_encode = get_measure("JpegEncoder")
-        #         res = super().encode_func(request, name)
-        #         measure_encode()
-        #         return res
-        #
-        # class MeasuringMJPEGEncoder(MJPEGEncoder):
-        #     def encode(self, request, name):
-        #         measure_encode = get_measure("MJPEGEncoder")
-        #         res = super().encode(request, name)
-        #         measure_encode()
-        #         return res
-
-        encoder = MJPEGEncoder()
-
-        picam2.start_recording(encoder, FileOutput(input_buffer))
-    except:
-        traceback.print_exc()
-        raise
-
-    @atexit.register
-    def cleanup_camera():
-        print("Cleaning up picam2")
-        picam2.stop_encoder()
-        picam2.stop_recording()
-        encoder.stop()
-        picam2.close()
-
-
 def stream_nonblocking():
+    try:
+        import picamera2
+        from libcamera import controls
+
+        picamera_available = True
+    except ImportError:
+        print("Picamera2 not available", traceback.format_exc())
+        picamera_available = False
+        picamera2 = None
+        controls = None
+
     mock_video_path = os.environ.get("MOCK_CAMERA_VIDEO_PATH")
-    if not PICAMERA_AVAILABLE or mock_video_path or os.environ.get("MOCK_CAMERA"):
+    if not picamera_available or mock_video_path or os.environ.get("MOCK_CAMERA"):
         streamer_func = get_file_streamer(video_path=mock_video_path)
     else:
+
+        def stream_camera():
+            from picamera2.encoders import MJPEGEncoder
+            from picamera2.outputs import FileOutput
+
+            try:
+                print("Starting stream in 5 seconds...")
+                time.sleep(5)
+                picam2 = picamera2.Picamera2()
+
+                # noinspection PyUnresolvedReferences
+                noise_reduction_mode = controls.draft.NoiseReductionModeEnum.Fast
+
+                camera_config = picam2.create_video_configuration(
+                    # main={"size": (1296, 972)},
+                    # main={"size": resolution},
+                    # queue=False,
+                    controls={
+                        "FrameRate": 20,
+                        "ColourGains": (1, 1),
+                        "NoiseReductionMode": noise_reduction_mode,
+                    },
+                )
+                picam2.configure(camera_config)
+                picam2.start_preview(picamera2.Preview.NULL)
+
+                # class MeasuringJpegEncoder(JpegEncoder):
+                #     def encode_func(self, request, name):
+                #         measure_encode = get_measure("JpegEncoder")
+                #         res = super().encode_func(request, name)
+                #         measure_encode()
+                #         return res
+                #
+                # class MeasuringMJPEGEncoder(MJPEGEncoder):
+                #     def encode(self, request, name):
+                #         measure_encode = get_measure("MJPEGEncoder")
+                #         res = super().encode(request, name)
+                #         measure_encode()
+                #         return res
+
+                encoder = MJPEGEncoder()
+
+                picam2.start_recording(encoder, FileOutput(input_buffer))
+            except:
+                traceback.print_exc()
+                raise
+
+            @atexit.register
+            def cleanup_camera():
+                print("Cleaning up picam2")
+                picam2.stop_encoder()
+                picam2.stop_recording()
+                encoder.stop()
+                picam2.close()
+
         streamer_func = stream_camera
     thread_pool.submit(streamer_func)
 
@@ -410,11 +433,17 @@ def get_file_streamer(video_path: str | None):
 
         @atexit.register
         def close_video():
+            print("Releasing filestream.....")
             cap.release()
+            print("Filestream released!")
 
         last_time = time.perf_counter()
 
+        cnt = 0
         while True:
+            parent_pid = os.getppid()
+            # print(f"[ppid-{parent_pid}] [pid-{os.getpid()}] streaming file :  ", cnt)
+            cnt += 1
             now = time.perf_counter()
             time_passed = now - last_time
             last_time = now
@@ -453,7 +482,7 @@ def get_file_streamer(video_path: str | None):
 
 @atexit.register
 def cleanup():
-    print("[DJANGO SHUTDOWN] Stopping processes...")
+    print("[DJANGO SHUTDOWN] Stopping processes.....", flush=True)
 
     # with input_buffer.condition:
     input_buffer.close()
@@ -462,4 +491,4 @@ def cleanup():
     process_pool.shutdown(wait=True, cancel_futures=True)
     cleanup_shared_memory()
 
-    print("[DJANGO SHUTDOWN] Processes stopped.")
+    print("[DJANGO SHUTDOWN] Processes stopped..")

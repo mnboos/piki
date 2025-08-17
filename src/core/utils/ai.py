@@ -6,7 +6,7 @@ import ai_edge_litert.interpreter as interpreter
 import traceback
 import numpy as np
 
-from .shared import prob_threshold
+from .shared import prob_threshold, worker_ready
 
 # model_file = "ssd_mobilenet_v1_0.75_depth_quantized_300x300_coco14_sync_2018_07_18.tflite"
 # model_file = "ssd-mobilenet-v2-tflite-100-int8-default-v1.tflite"
@@ -131,6 +131,8 @@ try:
     out_id1 = output_details[1]["index"]
     out_id2 = output_details[2]["index"]
     out_id3 = output_details[3]["index"]
+
+    worker_ready.set()
 
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
         assert image.shape[0] == width and image.shape[1] == height, (
