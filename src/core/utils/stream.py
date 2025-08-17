@@ -1,4 +1,7 @@
 import os
+import signal
+import threading
+from collections import namedtuple
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import shared_memory, Lock
 import multiprocessing as mp
@@ -30,6 +33,7 @@ from .shared import (
     is_object_detection_disabled,
 )
 
+
 SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
 shm_lock = Lock()  # To synchronize access to the shared memory
 shared_mem: SharedMemory | None = None  # Will hold the SharedMemory instance
@@ -37,16 +41,33 @@ shared_array: Optional[np.typing.NDArray] = (
     None  # The numpy array view of the shared memory
 )
 
+untracked_frames_count = 0
+
 
 def init_worker():
     pid = os.getpid()
+    ppid = os.getppid()
     print(f"[Worker-{pid}]: Setup")
+
+    def f():
+        while True:
+            try:
+                os.kill(ppid, 0)
+            except OSError:
+                os.kill(pid, signal.SIGTERM)
+            time.sleep(1)
+
+    thread = threading.Thread(target=f, daemon=True)
+    thread.start()
 
     @atexit.register
     def _cleanup():
         print(f"[Worker-{pid}] Shutting down....")
 
 
+tracker_lock = Lock()
+tracking = mp.Event()
+tracker: Optional[cv2.Tracker] = None
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 
@@ -107,10 +128,12 @@ dashboard = LiveMetricsDashboard()
 def get_measure(description: str):
     now = time.perf_counter()
 
-    def measure():
+    def measure(log: bool = True):
         end = time.perf_counter()
         ms = str(round((end - now) * 1000, 2)).rjust(5)
-        print(f"{description}: {ms} ms!")
+        if log:
+            print(f"{description}: {ms} ms!")
+        return ms
 
     return measure
 
@@ -213,12 +236,45 @@ def run_object_detection(
             existing_shm.close()
 
 
+def denormalize(bbox_normalized, frame_shape):
+    frame_height, frame_width, _ = frame_shape
+    ymin, xmin, ymax, xmax = bbox_normalized
+
+    # 2. Clamp values to the [0.0, 1.0] range to prevent errors
+    ymin = max(0.0, ymin)
+    xmin = max(0.0, xmin)
+    ymax = min(1.0, ymax)
+    xmax = min(1.0, xmax)
+
+    # 3. Denormalize to get PIXEL coordinates for the CURRENT frame
+    left = int(xmin * frame_width)
+    top = int(ymin * frame_height)
+    right = int(xmax * frame_width)
+    bottom = int(ymax * frame_height)
+    width = right - left
+    height = bottom - top
+    tp = namedtuple("Box", "x y w h")
+    return tp(left, top, width, height)
+
+
+def denormalize_detections(detections, frame_shape):
+    detections_denormalized = []
+    for label, confidence, bbox_normalized in detections:
+        x, y, w, h = denormalize(bbox_normalized, frame_shape)
+
+        detections_denormalized.append((label, confidence, (x, y, w, h)))
+    return detections_denormalized
+
+
 def on_done(future: Future):
     global max_output_timestamp
+    global tracker
     active_futures.remove(future)
 
+    # print(f"HANDLE DONE: {os.getpid()}")
+
     try:
-        worker_pid, timestamp, frame, detected_objects = future.result()
+        worker_pid, timestamp, frame_lores, detected_objects = future.result()
         if timestamp < max_output_timestamp:
             print(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
@@ -226,9 +282,30 @@ def on_done(future: Future):
 
             if detected_objects:
                 inference_time, detections = detected_objects
+
+                detections_denormalized = []
+
+                frame_height, frame_width, _ = frame_lores.shape
+                for label, confidence, bbox_normalized in detections:
+                    x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
+
+                    detections_denormalized.append((label, confidence, (x, y, w, h)))
+
+                    with tracker_lock:
+                        if label in ["suitcase"] and not tracking.is_set():
+                            if tracker is None:
+                                params = cv2.TrackerKCF.Params()
+                                print("orig params: ", params)
+                                params.max_patch_size = 100000
+                                tracker = cv2.TrackerKCF.create(params)
+                            print("Tracker init shape: ", frame_lores.shape)
+                            tracking.set()
+                            tracker.init(frame_lores, (x, y, w, h))
                 dashboard.update(worker_id=worker_pid, inference_time=inference_time)
                 if live_stream_enabled.is_set():
-                    output_buffer.append((worker_pid, timestamp, frame, detections))
+                    output_buffer.append(
+                        (worker_pid, timestamp, frame_lores, detections_denormalized)
+                    )
     except BrokenProcessPool:
         print("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
@@ -241,6 +318,8 @@ def on_done(future: Future):
 
 def process_frame(frame_hires: np.ndarray):
     global shared_array
+    global tracker
+    global untracked_frames_count
 
     # if DJANGO_RELOAD_ISSUED.is_set():
     #     print("skipping frame due to reload")
@@ -257,6 +336,8 @@ def process_frame(frame_hires: np.ndarray):
 
         shared_array[:] = frame_hires
 
+    # print("frame hires shape: ", frame_hires.shape)
+
     frame_lores = cv2.resize(
         frame_hires,
         None,
@@ -266,45 +347,75 @@ def process_frame(frame_hires: np.ndarray):
 
     if frame_lores is not None and frame_lores.size:
         has_movement, mask = motion_detector.is_moving(frame_lores)
-        if app_settings.debug_settings.debug_enabled:
-            grayscale_output = True
-            if grayscale_output:
-                gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
-                frame_lores = cv2.merge((gray, gray, gray))
-            else:
-                frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
 
-            buf_highlighted = motion_detector.highlight_movement_on(
-                frame=frame_lores,
-                mask=mask,
-                overlay_color_rgb=(
-                    147,
-                    20,
-                    255,
-                ),
-                transparency_factor=mask_transparency.value,
-                draw_boxes=True,
-            )
-            mask_output_buffer.append(buf_highlighted)
-        elif has_movement and len(active_futures) < NUM_AI_WORKERS:
-            try:
-                timestamp = time.monotonic_ns()
+        # is_tracking = tracking.is_set()
+        with tracker_lock:
+            if tracking.is_set():
+                measure_tracking = get_measure("tracking")
+                print("tracker update shape: ", frame_lores.shape)
+                found, bbox = tracker.update(frame_lores)
+                tracking_duration = measure_tracking(log=False)
+                print(f"Tracked in {tracking_duration} ms: ", found, bbox)
+                if found:
+                    output_buffer.append(
+                        (0, time.monotonic_ns(), frame_lores, [("tracker", 1, bbox)])
+                    )
+                else:
+                    untracked_frames_count += 1
+                    if untracked_frames_count >= 200:
+                        untracked_frames_count = 0
+                        tracker = None
+                        tracking.clear()
+                    else:
+                        output_buffer.append(
+                            (
+                                0,
+                                time.monotonic_ns(),
+                                frame_lores,
+                                [],
+                            )
+                        )
 
-                rois = motion_detector.create_rois(mask=mask)
-                future: Future = process_pool.submit(
-                    run_object_detection,
-                    shape=frame_hires.shape,
-                    dtype=frame_hires.dtype,
-                    rois=rois,
-                    timestamp=timestamp,
+        if not tracking.is_set():
+            if app_settings.debug_settings.debug_enabled:
+                grayscale_output = True
+                if grayscale_output:
+                    gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+                    frame_lores = cv2.merge((gray, gray, gray))
+                else:
+                    frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
+
+                buf_highlighted = motion_detector.highlight_movement_on(
+                    frame=frame_lores,
+                    mask=mask,
+                    overlay_color_rgb=(
+                        147,
+                        20,
+                        255,
+                    ),
+                    transparency_factor=mask_transparency.value,
+                    draw_boxes=True,
                 )
-                active_futures.append(future)
-                future.add_done_callback(on_done)
-            except:
-                traceback.print_exc()
-                raise
-        elif not has_movement and not active_futures:
-            output_buffer.append((0, 0, frame_lores, []))
+                mask_output_buffer.append(buf_highlighted)
+            elif has_movement and len(active_futures) < NUM_AI_WORKERS:
+                try:
+                    timestamp = time.monotonic_ns()
+
+                    rois = motion_detector.create_rois(mask=mask)
+                    future: Future = process_pool.submit(
+                        run_object_detection,
+                        shape=frame_hires.shape,
+                        dtype=frame_hires.dtype,
+                        rois=rois,
+                        timestamp=timestamp,
+                    )
+                    active_futures.append(future)
+                    future.add_done_callback(on_done)
+                except:
+                    traceback.print_exc()
+                    raise
+            elif not has_movement and not active_futures:
+                output_buffer.append((0, 0, frame_lores, []))
 
 
 # This class instance will hold the camera frames

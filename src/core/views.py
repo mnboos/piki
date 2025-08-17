@@ -89,22 +89,26 @@ def stream_camera():
             # Get the dimensions of the frame we are drawing on.
             frame_height, frame_width, _ = frame.shape
 
-            for label, confidence, bbox_normalized in detected_objects:
+            for label, confidence, bbox in detected_objects:
                 # 1. Unpack the NORMALIZED coordinates [ymin, xmin, ymax, xmax]
                 #    These are proportional and work for any frame size.
-                ymin, xmin, ymax, xmax = bbox_normalized
+                left, top, w, h = bbox
+                left = int(left)
+                top = int(top)
+                right = int(left + w)
+                bottom = int(top + h)
 
-                # 2. Clamp values to the [0.0, 1.0] range to prevent errors
-                ymin = max(0.0, ymin)
-                xmin = max(0.0, xmin)
-                ymax = min(1.0, ymax)
-                xmax = min(1.0, xmax)
-
-                # 3. Denormalize to get PIXEL coordinates for the CURRENT frame
-                left = int(xmin * frame_width)
-                top = int(ymin * frame_height)
-                right = int(xmax * frame_width)
-                bottom = int(ymax * frame_height)
+                # # 2. Clamp values to the [0.0, 1.0] range to prevent errors
+                # ymin = max(0.0, ymin)
+                # xmin = max(0.0, xmin)
+                # ymax = min(1.0, ymax)
+                # xmax = min(1.0, xmax)
+                #
+                # # 3. Denormalize to get PIXEL coordinates for the CURRENT frame
+                # left = int(xmin * frame_width)
+                # top = int(ymin * frame_height)
+                # right = int(xmax * frame_width)
+                # bottom = int(ymax * frame_height)
 
                 # 4. Draw the bounding box using the calculated pixel coordinates
                 cv2.rectangle(frame, (left, top), (right, bottom), box_color, thickness)
