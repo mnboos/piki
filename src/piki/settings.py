@@ -9,8 +9,17 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+import logging
+import os
 from pathlib import Path
+
+
+class RelativePathFilter(logging.Filter):
+    def filter(self, record):
+        # Assumes the project root is the current working directory.
+        # You might need to adjust this if your app runs from a different directory.
+        record.relativePath = os.path.relpath(record.pathname)
+        return True
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -125,3 +134,33 @@ MEDIA_ROOT = BASE_DIR / "media"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose", "filters": ["add_relative_path"],},
+    },
+    "filters": {
+        "add_relative_path": {
+            "()": "piki.settings.RelativePathFilter",  # Adjust the path if you put the class elsewhere
+        },
+    },
+    "formatters": {
+        "verbose": {
+            "format": "{asctime} | {levelname:<8} | {relativePath}:{lineno} | {processName} ({process:d}) | {threadName} ({thread:d}) | {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {message}",
+            "style": "{",
+        },
+    },
+    "loggers": {
+        "core": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": True,
+        },
+    },
+}
