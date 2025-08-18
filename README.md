@@ -48,7 +48,25 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Download and install rknn2
 wget https://github.com/radxa-pkg/rknn2/releases/download/2.3.0-1/rknpu2-rk356x_2.3.0-1_arm64.deb
 apt install ./rknpu2-rk356x_2.3.0-1_arm64.deb
+
+
+
 ```
+Download and enable overlay
+find the artifact here: 
+    - https://github.com/radxa-pkg/radxa-overlays/actions/runs/16897851208/job/47870978948 (it's named something like: linux-rk356x.zip)
+    or
+    - https://github.com/Qengineering/Radxa-Zero-3-NPU-Ubuntu22
+copy `rk3568-npu-enable.dtbo` to `/boot/dtb/rockchip/overlay/`
+then modify /boot/dietpiEnv.txt: 
+
+```
+overlay_path=rockchip
+# Multiple prefixes are supported separated by space
+overlay_prefix=radxa-zero3 rk3568 rockchip
+overlays=npu-enable
+```
+
 
 ## Install `Picamera2`
 
@@ -105,6 +123,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
