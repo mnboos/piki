@@ -1,7 +1,7 @@
 import os
 import signal
 import threading
-from collections import namedtuple
+from collections import deque, namedtuple
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import shared_memory, Lock
 import multiprocessing as mp
@@ -15,6 +15,7 @@ from typing import Optional
 import cv2
 import numpy as np
 import traceback
+import logging
 
 from .func import (
     get_padded_roi_images,
@@ -33,6 +34,7 @@ from .shared import (
     is_object_detection_disabled,
 )
 
+logger = logging.getLogger(__name__)
 
 SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
 shm_lock = Lock()  # To synchronize access to the shared memory
@@ -41,13 +43,16 @@ shared_array: Optional[np.typing.NDArray] = (
     None  # The numpy array view of the shared memory
 )
 
+last_known_bbox = None
+last_known_velocity = None
 untracked_frames_count = 0
-
+total_untracked_frames_count = 0
+velocity_buffer = deque(maxlen=15)
 
 def init_worker():
     pid = os.getpid()
     ppid = os.getppid()
-    print(f"[Worker-{pid}]: Setup")
+    logger.info(f"[Worker-{pid}]: Setup")
 
     def f():
         while True:
@@ -62,11 +67,12 @@ def init_worker():
 
     @atexit.register
     def _cleanup():
-        print(f"[Worker-{pid}] Shutting down....")
+        logger.info(f"[Worker-{pid}] Shutting down....")
 
 
 tracker_lock = Lock()
 tracking = mp.Event()
+coasting = mp.Event()
 tracker: Optional[cv2.Tracker] = None
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
@@ -81,12 +87,12 @@ def setup_shared_memory(frame_shape, frame_dtype):
         # Create a new shared memory block
         size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
-        print(
+        logger.info(
             f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB"
         )
     except FileExistsError:
         # If it already exists from a previous crashed run, unlink it and retry
-        print("Shared memory block already exists, unlinking and recreating.")
+        logger.info("Shared memory block already exists, unlinking and recreating.")
         SharedMemory(name=SHM_NAME).unlink()
         size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
@@ -98,7 +104,7 @@ def setup_shared_memory(frame_shape, frame_dtype):
 
 def cleanup_shared_memory():
     """Closes and unlinks the shared memory block on application exit."""
-    print("Cleaning up shared memory...")
+    logger.info("Cleaning up shared memory...")
     if shared_mem:
         shared_mem.close()
         shared_mem.unlink()  # Free the memory block
@@ -117,7 +123,7 @@ dashboard = LiveMetricsDashboard()
 #
 #     PICAMERA_AVAILABLE = True
 # except ImportError:
-#     print("Picamera2 not available", traceback.format_exc())
+#     logger.info("Picamera2 not available", traceback.format_exc())
 #     PICAMERA_AVAILABLE = False
 #     picamera2 = None
 #     MJPEGEncoder = None
@@ -132,7 +138,7 @@ def get_measure(description: str):
         end = time.perf_counter()
         ms = str(round((end - now) * 1000, 2)).rjust(5)
         if log:
-            print(f"{description}: {ms} ms!")
+            logger.info(f"{description}: {ms} ms!")
         return ms
 
     return measure
@@ -226,7 +232,7 @@ def run_object_detection(
         return worker_pid, timestamp, frame_lores, result
 
     except Exception as e:
-        print(
+        logger.info(
             f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!"
         )
         traceback.print_exc()
@@ -271,12 +277,12 @@ def on_done(future: Future):
     global tracker
     active_futures.remove(future)
 
-    # print(f"HANDLE DONE: {os.getpid()}")
+    # logger.info(f"HANDLE DONE: {os.getpid()}")
 
     try:
         worker_pid, timestamp, frame_lores, detected_objects = future.result()
         if timestamp < max_output_timestamp:
-            print(f"Worker-{worker_pid} was slow, the results came too late :(")
+            logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
             max_output_timestamp = timestamp
 
@@ -292,13 +298,18 @@ def on_done(future: Future):
                     detections_denormalized.append((label, confidence, (x, y, w, h)))
 
                     with tracker_lock:
-                        if label in ["suitcase"] and not tracking.is_set():
+                        if label in ["suitcase", "bicycle"] and not tracking.is_set():
                             if tracker is None:
-                                params = cv2.TrackerKCF.Params()
-                                print("orig params: ", params)
-                                params.max_patch_size = 100000
-                                tracker = cv2.TrackerKCF.create(params)
-                            print("Tracker init shape: ", frame_lores.shape)
+                                tracker_class = cv2.TrackerKCF
+                                # tracker_class = cv2.TrackerCSRT
+                                params = tracker_class.Params()
+                                logger.info("TrackerKCF params: %s", {k: getattr(params, k) for k in dir(params) if not k.startswith("_")})
+                                logger.info("orig params: %s", dir(params))
+
+                                # params.max_patch_size = 1024**2
+
+                                tracker = tracker_class.create(params)
+                            logger.info("Tracker init shape: %s", frame_lores.shape)
                             tracking.set()
                             tracker.init(frame_lores, (x, y, w, h))
                 dashboard.update(worker_id=worker_pid, inference_time=inference_time)
@@ -307,10 +318,10 @@ def on_done(future: Future):
                         (worker_pid, timestamp, frame_lores, detections_denormalized)
                     )
     except BrokenProcessPool:
-        print("Pool already broken, when future was done. Shutting down...")
+        logger.info("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
     except KeyboardInterrupt:
-        print("Future done, shutting down....")
+        logger.info("Future done, shutting down....")
     except:
         traceback.print_exc()
         raise
@@ -320,9 +331,14 @@ def process_frame(frame_hires: np.ndarray):
     global shared_array
     global tracker
     global untracked_frames_count
+    global total_untracked_frames_count
+    global last_known_bbox
+    global last_known_velocity
+
+    current_time = time.monotonic()
 
     # if DJANGO_RELOAD_ISSUED.is_set():
-    #     print("skipping frame due to reload")
+    #     logger.info("skipping frame due to reload")
     #     return
 
     # --- Shared Memory Logic ---
@@ -336,7 +352,7 @@ def process_frame(frame_hires: np.ndarray):
 
         shared_array[:] = frame_hires
 
-    # print("frame hires shape: ", frame_hires.shape)
+    # logger.info("frame hires shape: ", frame_hires.shape)
 
     frame_lores = cv2.resize(
         frame_hires,
@@ -351,30 +367,121 @@ def process_frame(frame_hires: np.ndarray):
         # is_tracking = tracking.is_set()
         with tracker_lock:
             if tracking.is_set():
-                measure_tracking = get_measure("tracking")
-                print("tracker update shape: ", frame_lores.shape)
-                found, bbox = tracker.update(frame_lores)
-                tracking_duration = measure_tracking(log=False)
-                print(f"Tracked in {tracking_duration} ms: ", found, bbox)
-                if found:
-                    output_buffer.append(
-                        (0, time.monotonic_ns(), frame_lores, [("tracker", 1, bbox)])
-                    )
+                # logger.info("tracker update shape: ", frame_lores.shape)
+
+                if not untracked_frames_count:
+                    measure_tracking = get_measure("tracking")
+                    found, bbox = tracker.update(frame_lores)
+                    tracking_duration = measure_tracking(log=False)
+                    # logger.info(f"Tracked in {tracking_duration} ms: ", found, bbox)
+
+
+                    if found:
+                        if not last_known_bbox:
+                            last_known_bbox = current_time, (0,0,0,0)
+
+                        last_time, last_bbox = last_known_bbox
+                        last_known_bbox = current_time, bbox
+
+                        x, y, w, h = bbox
+                        current_pos = np.array(
+                            [x + w / 2, y + h/2], dtype=np.float32
+                        )
+                        x, y, w, h = last_bbox
+                        last_pos = np.array(
+                            [x + w / 2, y + h/2], dtype=np.float32
+                        )
+
+                        dt = current_time - last_time
+
+                        if dt:
+                            instantaneous_velocity_vector =  (current_pos - last_pos) / dt
+                            velocity_buffer.append(instantaneous_velocity_vector)
+
+                        if len(velocity_buffer) > 0:
+                            average_velocity_vector = np.mean(
+                                list(velocity_buffer), axis=0
+                            )
+
+                            # 4. Calculate speed (magnitude) from the AVERAGE vector
+                            smoothed_pixels_per_second = np.linalg.norm(
+                                average_velocity_vector
+                            )
+
+                            STATIONARY_THRESHOLD_PIXELS_PER_SEC = 5
+                            # 5. Apply the stationary threshold
+                            if (
+                                smoothed_pixels_per_second
+                                < STATIONARY_THRESHOLD_PIXELS_PER_SEC
+                            ):
+                                logger.info("SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d", smoothed_pixels_per_second)
+                                final_speed_pixels_per_sec = (
+                                    0.0  # Snap to zero if it's just jitter
+                                )
+                            else:
+                                final_speed_pixels_per_sec = smoothed_pixels_per_second
+
+                            # Now use 'final_speed_pixels_per_sec' for all your calculations and display
+                            # (e.g., converting to m/s, km/h)
+
+                            # --- Example of converting to km/h ---
+                            # pixels_per_meter = 150.0
+                            # speed_mps = final_speed_pixels_per_sec / pixels_per_meter
+                            # speed_kph = speed_mps * 3.6
+
+                            logger.info(
+                                f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s"
+                            )
+
+                        # # Avoid division by zero if frames are too fast
+                        # if dt > 0:
+                        #     # Calculate distance in pixels
+                        #     pixel_distance = np.linalg.norm(current_pos - last_pos)
+                        #
+                        #     # Calculate speed in pixels per second
+                        #     pixels_per_second = pixel_distance / dt
+                        #     logger.info(f"Speed: {pixels_per_second:.2f} px/s")
+
+
+                            # logger.info("velocity: ", last_known_velocity)
+
+                        last_known_bbox = (current_time, bbox)
+                        output_buffer.append(
+                            (0, time.monotonic_ns(), frame_lores, [("tracker", 1, bbox)])
+                        )
+                    else:
+                        untracked_frames_count = 1
+                        total_untracked_frames_count += 1
                 else:
+                    total_untracked_frames_count += 1
                     untracked_frames_count += 1
-                    if untracked_frames_count >= 200:
+
+                    # predicted_x = last_known_bbox[0] + last_known_velocity[0]
+                    # predicted_y = last_known_bbox[1] + last_known_velocity[1]
+                    # predicted_bbox = (
+                    #     predicted_x,
+                    #     predicted_y,
+                    #     last_known_bbox[2],
+                    #     last_known_bbox[3],
+                    # )
+
+                    if total_untracked_frames_count >= 90:
+                        total_untracked_frames_count = 0
                         untracked_frames_count = 0
                         tracker = None
                         tracking.clear()
-                    else:
-                        output_buffer.append(
-                            (
-                                0,
-                                time.monotonic_ns(),
-                                frame_lores,
-                                [],
-                            )
+
+                    if untracked_frames_count > 30:
+                        untracked_frames_count = 0
+
+                    output_buffer.append(
+                        (
+                            0,
+                            time.monotonic_ns(),
+                            frame_lores,
+                            [],
                         )
+                    )
 
         if not tracking.is_set():
             if app_settings.debug_settings.debug_enabled:
@@ -444,7 +551,7 @@ def stream_nonblocking():
 
         picamera_available = True
     except ImportError:
-        print("Picamera2 not available", traceback.format_exc())
+        logger.info("Picamera2 not available: %s", traceback.format_exc())
         picamera_available = False
         picamera2 = None
         controls = None
@@ -459,7 +566,7 @@ def stream_nonblocking():
             from picamera2.outputs import FileOutput
 
             try:
-                print("Starting stream in 5 seconds...")
+                logger.info("Starting stream in 5 seconds...")
                 time.sleep(5)
                 picam2 = picamera2.Picamera2()
 
@@ -502,7 +609,7 @@ def stream_nonblocking():
 
             @atexit.register
             def cleanup_camera():
-                print("Cleaning up picam2")
+                logger.info("Cleaning up picam2")
                 picam2.stop_encoder()
                 picam2.stop_recording()
                 encoder.stop()
@@ -518,7 +625,7 @@ def get_file_streamer(video_path: str | None):
         # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/cat.mov"
         video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
+        video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
         # video_path = "/mnt/c/Users/mbo20/Downloads/13867923-uhd_3840_2160_30fps.mp4"
         # video_path = "/home/martin/Downloads/VID_20250808_080717.mp4"
@@ -530,7 +637,7 @@ def get_file_streamer(video_path: str | None):
         if not os.path.isfile(video_path):
             raise ValueError("File not found: ", video_path)
 
-        print("Starting videostream in 3s...")
+        logger.info("Starting videostream in 3s...")
         # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
         time.sleep(3)
 
@@ -540,20 +647,20 @@ def get_file_streamer(video_path: str | None):
 
         fps = round(cap.get(cv2.CAP_PROP_FPS))
         sleep_time = round(1 / fps, 4)
-        print("FPS: ", fps, sleep_time)
+        logger.info("FPS: %s (=%s s)", fps, sleep_time)
 
         @atexit.register
         def close_video():
-            print("Releasing filestream.....")
+            logger.info("Releasing filestream.....")
             cap.release()
-            print("Filestream released!")
+            logger.info("Filestream released!")
 
         last_time = time.perf_counter()
 
         cnt = 0
         while True:
             parent_pid = os.getppid()
-            # print(f"[ppid-{parent_pid}] [pid-{os.getpid()}] streaming file :  ", cnt)
+            # logger.info(f"[ppid-{parent_pid}] [pid-{os.getpid()}] streaming file :  ", cnt)
             cnt += 1
             now = time.perf_counter()
             time_passed = now - last_time
@@ -566,7 +673,7 @@ def get_file_streamer(video_path: str | None):
 
                 if not ret:
                     # If it ended, rewind to the first frame (frame 0)
-                    print("Video stream ended. Rewinding.")
+                    logger.info("Video stream ended. Rewinding.")
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue  # Skip the rest of this iteration and try reading the new first frame
                 else:
@@ -575,12 +682,12 @@ def get_file_streamer(video_path: str | None):
                     # stream_output.write(frame_bytes_hires)
                     process_frame(frame_hires=frame)
             except KeyboardInterrupt:
-                print("shutting down here!!!")
+                logger.info("shutting down here!!!")
                 break
             except Exception:
                 traceback.print_exc()
                 raise
-        print("Stopping filestream...")
+        logger.info("Stopping filestream...")
         cap.release()
 
     if not os.path.isfile(video_path):
@@ -593,7 +700,7 @@ def get_file_streamer(video_path: str | None):
 
 @atexit.register
 def cleanup():
-    print("[DJANGO SHUTDOWN] Stopping processes.....", flush=True)
+    logger.info("[DJANGO SHUTDOWN] Stopping processes.....")
 
     # with input_buffer.condition:
     input_buffer.close()
@@ -602,4 +709,4 @@ def cleanup():
     process_pool.shutdown(wait=True, cancel_futures=True)
     cleanup_shared_memory()
 
-    print("[DJANGO SHUTDOWN] Processes stopped..")
+    logger.info("[DJANGO SHUTDOWN] Processes stopped..")

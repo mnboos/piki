@@ -1,13 +1,11 @@
 import atexit
 import dataclasses
 import multiprocessing as mp
-import os
+import logging
 import random
 from ctypes import c_float, c_int
 from multiprocessing import Event, Queue, Condition, Manager
-from multiprocessing import Semaphore
 from typing import TypeVar, Generic
-from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor
 import inspect
 
 import cv2
@@ -20,6 +18,9 @@ from .func import (
     apply_non_max_suppression,
 )
 
+logger = logging.getLogger(__name__)
+
+logger.info("Setup module shared {here}")
 
 T = TypeVar("T")
 
