@@ -44,6 +44,10 @@ apt install --no-install-recommends -y
 
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Download and install rknn2
+wget https://github.com/radxa-pkg/rknn2/releases/download/2.3.0-1/rknpu2-rk356x_2.3.0-1_arm64.deb
+apt install ./rknpu2-rk356x_2.3.0-1_arm64.deb
 ```
 
 ## Install `Picamera2`
@@ -101,6 +105,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
