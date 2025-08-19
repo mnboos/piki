@@ -45,6 +45,9 @@ while True:
 2. `sudo rsetup` and run update. *DO NOT* just `apt upgrade`
 3. reboot
 4. `sudo rsetup -> Overlays -> Yes -> Manage overlays -> Enable NPU` -> reboot
+5. install cmake
+6. install python 3.11
+7. `pip install rknn-toolkit2`
 
 **Setup**
 ```bash
@@ -138,6 +141,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
