@@ -36,6 +36,8 @@ while True:
 
 **Links**
 - https://radxa-repo.github.io/bullseye/
+- RKNN installation: https://docs.radxa.com/en/zero/zero3/app-development/rknn_install
+- RKNN examples: https://github.com/airockchip/rknn_model_zoo/tree/main/examples/yolov5#2-current-support-platform
 
 **Setup**
 ```bash
@@ -128,6 +130,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
