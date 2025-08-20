@@ -48,6 +48,8 @@ sudo ln -s libOpenCL.so.1 libOpenCL.so
 
 sudo usermod -a -G render dietpi
 
+echo 'export RUSTICL_ENABLE=panfrost' >> ~/.bashrc
+
 # there should be no permission errors here now
 clinfo
 
@@ -167,6 +169,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
