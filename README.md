@@ -33,6 +33,27 @@ while True:
 
 ```
 ## Setup Orange Pi 3B
+
+- check: https://wiki.friendlyelec.com/wiki/index.php/NPU#Installing_RKNN_Runtime
+```bash
+# install
+git clone https://github.com/airockchip/rknn-toolkit2.git
+cd rknn-toolkit2/rknpu2
+sudo cp ./runtime/Linux/librknn_api/aarch64/* /usr/lib
+sudo cp ./runtime/Linux/rknn_server/aarch64/usr/bin/* /usr/bin/
+sudo cp ./runtime/Linux/librknn_api/include/* /usr/include/
+
+# check for v2
+strings /usr/bin/rknn_server |grep 'build@'
+
+# is this necessary ???
+# fix broken link
+cd ~/rknn-toolkit2/rknpu2/examples/3rdparty/mpp/Linux/aarch64
+rm -f librockchip_mpp.so librockchip_mpp.so.1
+ln -s librockchip_mpp.so.0 librockchip_mpp.so
+ln -s librockchip_mpp.so.0 librockchip_mpp.so.1
+```
+
 Download the [armnndelegate](https://github.com/ARM-software/armnn/releases) for tflite (litert)
 
 ```bash
@@ -169,6 +190,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
