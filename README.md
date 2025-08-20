@@ -33,6 +33,7 @@ while True:
 
 ```
 ## Setup Orange Pi 3B
+Download the [armnndelegate](https://github.com/ARM-software/armnn/releases) for tflite (litert)
 
 ```bash
 sudo apt install --no-install-recommends \
@@ -150,6 +151,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
