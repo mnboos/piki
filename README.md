@@ -52,6 +52,10 @@ sudo usermod -a -G render dietpi
 clinfo
 
 sudo reboot
+
+cd src/piki
+export MOCK_CAMERA_VIDEO_PATH=/home/dietpi/src/data/16701023-hd_1920_1080_60fps.mp4
+LD_LIBRARY_PATH=/home/dietpi/src/data/arm ./run.sh
 ```
 
 ## Setup Radxa Zero 3W
@@ -163,6 +167,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
