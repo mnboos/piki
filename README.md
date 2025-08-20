@@ -32,6 +32,15 @@ while True:
     sleep(1)
 
 ```
+## Setup Orange Pi 3B
+
+```bash
+sudo apt install --no-install-recommends \
+    git \
+    build-essential \
+    libcap-dev
+```
+
 ## Setup Radxa Zero 3W
 
 **Links**
@@ -141,6 +150,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
