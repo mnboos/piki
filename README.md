@@ -119,6 +119,7 @@ uv sync
 
 cp librknnrt.so /usr/lib/
 
+# Download this: https://github.com/radxa-pkg/radxa-overlays/blob/main/arch/arm64/boot/dts/rockchip/overlays/rk3568-npu-enable.dts
 wget https://raw.githubusercontent.com/radxa-pkg/radxa-overlays/refs/heads/main/arch/arm64/boot/dts/rockchip/overlays/rk3568-npu-enable.dts
 
 sudo armbian-add-overlay rk3568-npu-enable.dts
@@ -247,6 +248,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
