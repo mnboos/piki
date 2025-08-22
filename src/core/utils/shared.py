@@ -44,7 +44,7 @@ live_stream_enabled = Event()
 worker_ready = Event()
 
 NUM_AI_WORKERS: int = 1
-preview_downscale_factor = 2
+preview_downscale_factor = 1
 ai_input_size = 640
 
 settings = TuningSettings()

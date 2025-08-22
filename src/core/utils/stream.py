@@ -189,25 +189,19 @@ def run_object_detection(
                 # --- START: Correct Transformation Logic ---
 
                 # 1. Unpack the LOCAL PIXEL coordinates (x, y, w, h) from ai.py
-                local_px_x, local_px_y, local_px_w, local_px_h = local_pixel_bbox
-
-                # 2. Convert to (xmin, ymin, xmax, ymax) format
-                local_px_xmin = local_px_x
-                local_px_ymin = local_px_y
-                local_px_xmax = local_px_x + local_px_w
-                local_px_ymax = local_px_y + local_px_h
+                local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
 
                 # 3. Apply the 'scale' factor from the resizing step
-                scaled_px_xmin = local_px_xmin * scale
-                scaled_px_ymin = local_px_ymin * scale
-                scaled_px_xmax = local_px_xmax * scale
-                scaled_px_ymax = local_px_ymax * scale
+                #scaled_px_xmin = local_px_xmin * scale
+                #scaled_px_ymin = local_px_ymin * scale
+                #scaled_px_xmax = local_px_xmax * scale
+                #scaled_px_ymax = local_px_ymax * scale
 
                 # 4. Translate by the 'effective_origin' to get GLOBAL PIXEL coordinates
-                global_px_xmin = scaled_px_xmin + eff_orig_x
-                global_px_ymin = scaled_px_ymin + eff_orig_y
-                global_px_xmax = scaled_px_xmax + eff_orig_x
-                global_px_ymax = scaled_px_ymax + eff_orig_y
+                global_px_xmin = local_px_xmin + eff_orig_x
+                global_px_ymin = local_px_ymin + eff_orig_y
+                global_px_xmax = local_px_xmax + eff_orig_x
+                global_px_ymax = local_px_ymax + eff_orig_y
 
                 # 5. Re-normalize the FINAL GLOBAL pixel coordinates for views.py
                 final_norm_coords = [

@@ -233,19 +233,7 @@ try:
         results = []
         for box, cls, score in zip(boxes, classes, scores):
             label = CLASSES[cls]
-
-            ymin, xmin, ymax, xmax = box
-            ymin = max(0.0, ymin)
-            xmin = max(0.0, xmin)
-            ymax = min(1.0, ymax)
-            xmax = min(1.0, xmax)
-
-            x = int(xmin * IMG_SIZE)
-            y = int(ymin * IMG_SIZE)
-            w = int((xmax - xmin) * IMG_SIZE)
-            h = int((ymax - ymin) * IMG_SIZE)
-
-            results.append((label, score, (x, y, w, h)))
+            results.append((label, score, box))  # this box is already locally normalized
 
         return tt, results
 except:
