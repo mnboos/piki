@@ -100,7 +100,8 @@ sudo apt install --no-install-recommends -y \
     build-essential \
     python3-dev \
     ffmpeg \
-    v4l-utils
+    v4l-utils \
+    cmake
 
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -236,6 +237,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
