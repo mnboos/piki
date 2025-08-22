@@ -89,6 +89,20 @@ LD_LIBRARY_PATH=/home/dietpi/src/data/arm ./run.sh
 - RKNN examples: https://github.com/airockchip/rknn_model_zoo/tree/main/examples/yolov5#2-current-support-platform
 - Radxa headless setup: https://docs.radxa.com/en/template/sbc/radxa-os/headless#wireless
 
+**Setup steps for Armbian**
+1. flash image
+
+```bash
+sudo apt update -y
+
+sudo apt install --no-install-recommends -y \
+    git \
+    build-essential
+
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
 **Setup steps for Radxa OS**
 1. flash image
 2. `sudo rsetup` and run update. *DO NOT* just `apt upgrade`
@@ -190,6 +204,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
