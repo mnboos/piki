@@ -220,8 +220,8 @@ def run_object_detection(
                 all_detections.append((label, confidence, final_norm_coords))
                 # --- END: Correct Transformation Logic ---
 
-        result = total_duration, all_detections
-
+        avg_duration = total_duration // len(padded_images_and_details)
+        result = avg_duration, all_detections
         frame_lores = cv2.resize(
             frame_hires,
             None,
@@ -556,7 +556,7 @@ def stream_nonblocking():
         picamera2 = None
         controls = None
 
-    mock_video_path = os.environ.get("MOCK_CAMERA_VIDEO_PATH")
+    mock_video_path = os.environ.get("MOCK_CAMERA_FILE")
     if not picamera_available or mock_video_path or os.environ.get("MOCK_CAMERA"):
         streamer_func = get_file_streamer(video_path=mock_video_path)
     else:
