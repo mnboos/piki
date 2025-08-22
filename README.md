@@ -101,6 +101,20 @@ sudo apt install --no-install-recommends -y \
 
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+bash
+
+cd ~
+mkdir src
+git clone https://github.com/mnboos/rknn-test.git
+cd rknn-test
+uv venv --system-site-packages
+. .venv/bin/activate
+uv sync
+
+cp librknnrt.so /usr/lib/
+
+python run_resnet.py
 ```
 
 **Setup steps for Radxa OS**
@@ -204,6 +218,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
