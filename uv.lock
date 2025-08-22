@@ -630,7 +630,6 @@ dependencies = [
     { name = "opencv-contrib-python-headless" },
     { name = "picamera2" },
     { name = "pigpio" },
-    { name = "pillow" },
     { name = "rich" },
     { name = "rknn-toolkit-lite2", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-5-pi-ki-rknn-sdk' and extra == 'extra-5-pi-ki-rknn-toolkit') or (sys_platform != 'linux' and extra == 'extra-5-pi-ki-rknn-sdk' and extra == 'extra-5-pi-ki-rknn-toolkit')" },
 ]
@@ -651,7 +650,6 @@ requires-dist = [
     { name = "opencv-contrib-python-headless", specifier = "==4.11.0.86" },
     { name = "picamera2", specifier = "==0.3.30" },
     { name = "pigpio", specifier = "==1.78" },
-    { name = "pillow", specifier = "==11.3.0" },
     { name = "rich", specifier = "==14.1.0" },
     { name = "rknn-toolkit-lite2", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = "==2.3.2" },
 ]

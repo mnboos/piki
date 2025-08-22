@@ -11,7 +11,6 @@ dependencies = [
     "opencv-contrib-python-headless==4.11.0.86",
     "picamera2==0.3.30",
     "pigpio==1.78",
-    "pillow==11.3.0",
     "rich==14.1.0",
     "rknn-toolkit-lite2==2.3.2; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
