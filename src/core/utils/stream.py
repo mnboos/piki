@@ -220,7 +220,7 @@ def run_object_detection(
                 all_detections.append((label, confidence, final_norm_coords))
                 # --- END: Correct Transformation Logic ---
 
-        avg_duration = total_duration // len(padded_images_and_details)
+        avg_duration = 0 if not len(padded_images_and_details) else  total_duration // len(padded_images_and_details)
         result = avg_duration, all_detections
         frame_lores = cv2.resize(
             frame_hires,
@@ -294,6 +294,9 @@ def on_done(future: Future):
                 frame_height, frame_width, _ = frame_lores.shape
                 for label, confidence, bbox_normalized in detections:
                     x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
+                    if (x<0 or y<0 or w<0 or h<0):
+                        print("something has been denormalized abnormally: ", frame_lores.shape, bbox_normalized, (x,y,w,h))
+                        continue
 
                     detections_denormalized.append((label, confidence, (x, y, w, h)))
 

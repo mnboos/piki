@@ -43,9 +43,9 @@ class TuningSettings:
 live_stream_enabled = Event()
 worker_ready = Event()
 
-NUM_AI_WORKERS: int = 2
+NUM_AI_WORKERS: int = 1
 preview_downscale_factor = 2
-ai_input_size = 320
+ai_input_size = 640
 
 settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)

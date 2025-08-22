@@ -174,7 +174,7 @@ def yolov5_post_process(input_data):
 
 try:
     print("Loading model...")
-    rknn = RKNNLite(verbose=True)
+    rknn = RKNNLite(verbose=False)
 
     # pre-process config
     print('--> Config model')
