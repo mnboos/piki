@@ -231,9 +231,11 @@ try:
         boxes, classes, scores = yolov5_post_process(input_data)
 
         results = []
-        for box, cls, score in zip(boxes, classes, scores):
-            label = CLASSES[cls]
-            results.append((label, score, box))  # this box is already locally normalized
+
+        if boxes is not None and classes is not None and scores is not None:
+            for box, cls, score in zip(boxes, classes, scores):
+                label = CLASSES[cls]
+                results.append((label, score, box))  # this box is already locally normalized
 
         return tt, results
 except:
