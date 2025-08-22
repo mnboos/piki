@@ -132,7 +132,6 @@ cd ~
 git clone https://github.com/rockchip-linux/mpp -b develop
 mpp/build/linux/aarch64
 ./make-Makefiles.bash
-make -j$(nproc)
 ```
 
 **Set fixed NPU frequency**
@@ -246,6 +245,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
