@@ -74,7 +74,7 @@ tracker_lock = Lock()
 tracking = mp.Event()
 coasting = mp.Event()
 tracker: Optional[cv2.Tracker] = None
-process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
+# process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 
 
@@ -266,15 +266,15 @@ def denormalize_detections(detections, frame_shape):
     return detections_denormalized
 
 
-def on_done(future: Future):
+def on_done(*, worker_pid, timestamp, frame_lores, detected_objects):
     global max_output_timestamp
     global tracker
-    active_futures.remove(future)
+    # active_futures.remove(future)
 
     # logger.info(f"HANDLE DONE: {os.getpid()}")
 
     try:
-        worker_pid, timestamp, frame_lores, detected_objects = future.result()
+        # worker_pid, timestamp, frame_lores, detected_objects = future.result()
         if timestamp < max_output_timestamp:
             logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
@@ -506,15 +506,24 @@ def process_frame(frame_hires: np.ndarray):
                     timestamp = time.monotonic_ns()
 
                     rois = motion_detector.create_rois(mask=mask)
-                    future: Future = process_pool.submit(
-                        run_object_detection,
+                    # future: Future = process_pool.submit(
+                    #     run_object_detection,
+                    #     shape=frame_hires.shape,
+                    #     dtype=frame_hires.dtype,
+                    #     rois=rois,
+                    #     timestamp=timestamp,
+                    # )
+                    # active_futures.append(future)
+                    # future.add_done_callback(on_done)
+
+                    worker_pid, timestamp, frame_lores, detected_objects = run_object_detection(
                         shape=frame_hires.shape,
                         dtype=frame_hires.dtype,
                         rois=rois,
                         timestamp=timestamp,
                     )
-                    active_futures.append(future)
-                    future.add_done_callback(on_done)
+                    on_done(worker_pid=worker_pid, timestamp=timestamp, frame_lores=frame_lores, detected_objects=detected_objects)
+
                 except:
                     traceback.print_exc()
                     raise
@@ -703,7 +712,7 @@ def cleanup():
     input_buffer.close()
 
     thread_pool.shutdown(wait=True, cancel_futures=True)
-    process_pool.shutdown(wait=True, cancel_futures=True)
+    # process_pool.shutdown(wait=True, cancel_futures=True)
     cleanup_shared_memory()
 
     logger.info("[DJANGO SHUTDOWN] Processes stopped..")
