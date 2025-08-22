@@ -556,7 +556,7 @@ def stream_nonblocking():
         picamera2 = None
         controls = None
 
-    mock_video_path = os.environ.get("MOCK_CAMERA_FILE")
+    mock_video_path = os.environ.get("MOCK_CAMERA_PATH")
     if not picamera_available or mock_video_path or os.environ.get("MOCK_CAMERA"):
         streamer_func = get_file_streamer(video_path=mock_video_path)
     else:
