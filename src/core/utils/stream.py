@@ -8,7 +8,7 @@ import multiprocessing as mp
 import io
 import time
 import atexit
-from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional
 
@@ -48,6 +48,7 @@ last_known_velocity = None
 untracked_frames_count = 0
 total_untracked_frames_count = 0
 velocity_buffer = deque(maxlen=15)
+
 
 def init_worker():
     pid = os.getpid()
@@ -189,7 +190,9 @@ def run_object_detection(
                 # --- START: Correct Transformation Logic ---
 
                 # 1. Unpack the LOCAL PIXEL coordinates (x, y, w, h) from ai.py
-                local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
+                local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = (
+                    local_pixel_bbox
+                )
 
                 # 3. Apply the 'scale' factor from the resizing step
                 scaled_px_xmin = local_px_xmin * scale
@@ -214,7 +217,11 @@ def run_object_detection(
                 all_detections.append((label, confidence, final_norm_coords))
                 # --- END: Correct Transformation Logic ---
 
-        avg_duration = 0 if not len(padded_images_and_details) else  total_duration // len(padded_images_and_details)
+        avg_duration = (
+            0
+            if not len(padded_images_and_details)
+            else total_duration // len(padded_images_and_details)
+        )
         result = avg_duration, all_detections
         frame_lores = cv2.resize(
             frame_hires,
@@ -288,8 +295,13 @@ def on_done(*, worker_pid, timestamp, frame_lores, detected_objects):
                 frame_height, frame_width, _ = frame_lores.shape
                 for label, confidence, bbox_normalized in detections:
                     x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
-                    if (x<0 or y<0 or w<0 or h<0):
-                        print("something has been denormalized abnormally: ", frame_lores.shape, bbox_normalized, (x,y,w,h))
+                    if x < 0 or y < 0 or w < 0 or h < 0:
+                        print(
+                            "something has been denormalized abnormally: ",
+                            frame_lores.shape,
+                            bbox_normalized,
+                            (x, y, w, h),
+                        )
                         continue
 
                     detections_denormalized.append((label, confidence, (x, y, w, h)))
@@ -300,7 +312,14 @@ def on_done(*, worker_pid, timestamp, frame_lores, detected_objects):
                                 tracker_class = cv2.TrackerKCF
                                 # tracker_class = cv2.TrackerCSRT
                                 params = tracker_class.Params()
-                                logger.info("TrackerKCF params: %s", {k: getattr(params, k) for k in dir(params) if not k.startswith("_")})
+                                logger.info(
+                                    "TrackerKCF params: %s",
+                                    {
+                                        k: getattr(params, k)
+                                        for k in dir(params)
+                                        if not k.startswith("_")
+                                    },
+                                )
                                 logger.info("orig params: %s", dir(params))
 
                                 # params.max_patch_size = 1024**2
@@ -372,27 +391,24 @@ def process_frame(frame_hires: np.ndarray):
                     tracking_duration = measure_tracking(log=False)
                     # logger.info(f"Tracked in {tracking_duration} ms: ", found, bbox)
 
-
                     if found:
                         if not last_known_bbox:
-                            last_known_bbox = current_time, (0,0,0,0)
+                            last_known_bbox = current_time, (0, 0, 0, 0)
 
                         last_time, last_bbox = last_known_bbox
                         last_known_bbox = current_time, bbox
 
                         x, y, w, h = bbox
-                        current_pos = np.array(
-                            [x + w / 2, y + h/2], dtype=np.float32
-                        )
+                        current_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
                         x, y, w, h = last_bbox
-                        last_pos = np.array(
-                            [x + w / 2, y + h/2], dtype=np.float32
-                        )
+                        last_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
 
                         dt = current_time - last_time
 
                         if dt:
-                            instantaneous_velocity_vector =  (current_pos - last_pos) / dt
+                            instantaneous_velocity_vector = (
+                                current_pos - last_pos
+                            ) / dt
                             velocity_buffer.append(instantaneous_velocity_vector)
 
                         if len(velocity_buffer) > 0:
@@ -411,7 +427,10 @@ def process_frame(frame_hires: np.ndarray):
                                 smoothed_pixels_per_second
                                 < STATIONARY_THRESHOLD_PIXELS_PER_SEC
                             ):
-                                logger.info("SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d", smoothed_pixels_per_second)
+                                logger.info(
+                                    "SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d",
+                                    smoothed_pixels_per_second,
+                                )
                                 final_speed_pixels_per_sec = (
                                     0.0  # Snap to zero if it's just jitter
                                 )
@@ -439,12 +458,16 @@ def process_frame(frame_hires: np.ndarray):
                         #     pixels_per_second = pixel_distance / dt
                         #     logger.info(f"Speed: {pixels_per_second:.2f} px/s")
 
-
-                            # logger.info("velocity: ", last_known_velocity)
+                        # logger.info("velocity: ", last_known_velocity)
 
                         last_known_bbox = (current_time, bbox)
                         output_buffer.append(
-                            (0, time.monotonic_ns(), frame_lores, [("tracker", 1, bbox)])
+                            (
+                                0,
+                                time.monotonic_ns(),
+                                frame_lores,
+                                [("tracker", 1, bbox)],
+                            )
                         )
                     else:
                         untracked_frames_count = 1
@@ -516,13 +539,20 @@ def process_frame(frame_hires: np.ndarray):
                     # active_futures.append(future)
                     # future.add_done_callback(on_done)
 
-                    worker_pid, timestamp, frame_lores, detected_objects = run_object_detection(
-                        shape=frame_hires.shape,
-                        dtype=frame_hires.dtype,
-                        rois=rois,
-                        timestamp=timestamp,
+                    worker_pid, timestamp, frame_lores, detected_objects = (
+                        run_object_detection(
+                            shape=frame_hires.shape,
+                            dtype=frame_hires.dtype,
+                            rois=rois,
+                            timestamp=timestamp,
+                        )
                     )
-                    on_done(worker_pid=worker_pid, timestamp=timestamp, frame_lores=frame_lores, detected_objects=detected_objects)
+                    on_done(
+                        worker_pid=worker_pid,
+                        timestamp=timestamp,
+                        frame_lores=frame_lores,
+                        detected_objects=detected_objects,
+                    )
 
                 except:
                     traceback.print_exc()
@@ -647,7 +677,14 @@ def get_file_streamer(video_path: str | None):
         # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
         time.sleep(3)
 
-        cap = cv2.VideoCapture(video_path)
+        os.environ["OPENCV_FFMPEG_DEBUG"] = 1
+        os.environ["OPENCV_LOG_LEVEL"] = "DEBUG"
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hw_decoders_any;vaapi,vdpau"
+        cap = cv2.VideoCapture(
+            video_path,
+            cv2.CAP_FFMPEG,
+            (cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY),
+        )
         if not cap.isOpened():
             raise RuntimeError(f"Error: Could not open video at {video_path}")
 
@@ -664,8 +701,8 @@ def get_file_streamer(video_path: str | None):
         last_time = time.perf_counter()
 
         cnt = 0
+        # parent_pid = os.getppid()
         while True:
-            parent_pid = os.getppid()
             # logger.info(f"[ppid-{parent_pid}] [pid-{os.getpid()}] streaming file :  ", cnt)
             cnt += 1
             now = time.perf_counter()

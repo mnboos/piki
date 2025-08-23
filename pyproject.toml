@@ -8,29 +8,17 @@ dependencies = [
     "django==5.2.4",
     "flask==3.1.1",
     "gpiozero==2.0.1",
+    "numpy==2.3.2",
     "opencv-contrib-python-headless==4.11.0.86",
     "picamera2==0.3.30",
     "pigpio==1.78",
     "rich==14.1.0",
-    "rknn-toolkit-lite2==2.3.2; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
 [dependency-groups]
 dev = [
     "ruff==0.12.10",
 ]
-model-conversion = [
-    "rknn-toolkit2==2.3.2 ; platform_machine == 'x86_64'",
-]
+model-conversion = []
 
-[tool.uv]
-conflicts = [
-    [
-        {extra="rknn-sdk"},
-        {extra="rknn-toolkit"}
-    ]
-]
-required-environments = [
-    "sys_platform == 'linux' and platform_machine == 'x86_64' and extra == 'rknn-sdk'",
-    "sys_platform == 'linux' and platform_machine == 'aarch64' and extra == 'rknn-runtime'",
-]
+
