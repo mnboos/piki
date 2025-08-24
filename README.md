@@ -34,6 +34,21 @@ while True:
 ```
 ## Setup Orange Pi 3B
 
+**Monitor VPU load**
+Source: https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/rockchip/
+```bash
+sudo sh -c "echo 1000 > /proc/mpp_service/load_interval" && sudo watch -n 1 cat /proc/mpp_service/load
+```
+**Monitor RGA load**
+```bash
+sudo watch -n 1 cat /sys/kernel/debug/rkrga/load
+```
+
+**Monitor NPU load**
+```bash
+sudo watch -n 1 cat /sys/kernel/debug/rknpu/load
+```
+
 - check: https://wiki.friendlyelec.com/wiki/index.php/NPU#Installing_RKNN_Runtime
 ```bash
 # install
@@ -248,6 +263,7 @@ picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 76
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
 ```
+
 
 
 
