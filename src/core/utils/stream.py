@@ -4,6 +4,7 @@ import threading
 from collections import deque, namedtuple
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import shared_memory, Lock
+import subprocess
 import multiprocessing as mp
 import io
 import time
@@ -307,7 +308,7 @@ def on_done(*, worker_pid, timestamp, frame_lores, detected_objects):
                     detections_denormalized.append((label, confidence, (x, y, w, h)))
 
                     with tracker_lock:
-                        disable_tracking = False
+                        disable_tracking = True
                         if (
                             not disable_tracking
                             and label in ["person"]
@@ -674,6 +675,144 @@ def get_file_streamer(video_path: str | None):
         # video_path = "/home/martin/Downloads/output_file.mov"
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
 
+    def stream_file_hw():
+        if not os.path.isfile(video_path):
+            raise ValueError("File not found: ", video_path)
+
+        logger.info("Starting videostream in 3s...")
+        # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
+        time.sleep(3)
+    
+        print("------------!!!!!!!!!!!!! STREAM")
+        # --- Configuration ---
+        # You MUST know the video's width and height beforehand for this method to work.
+        VIDEO_PATH = video_path
+        WIDTH = 1280
+        HEIGHT = 720
+        CHANNELS = 3 # We'll ask for BGR, which has 3 channels
+        
+        print("start ffmpeg")
+        # --- 1. Construct the FFmpeg Command ---
+        # This command is crafted to do the following:
+        # - Use the Rockchip MPP hardware decoder.
+        # - Output raw video frames (-f rawvideo).
+        # - Use the BGR pixel format (-pix_fmt bgr24), which is native to OpenCV.
+        # - Write the output to stdout (-).
+        ffmpeg_command = [
+            '/usr/bin/ffmpeg',
+            "-stream_loop", "-1",
+            '-hwaccel', 'rkmpp',              # Use Rockchip hardware acceleration
+            '-hwaccel_output_format', 'drm_prime', # Use zero-copy format for decoding
+            '-i', VIDEO_PATH,                 # Input video file
+            "-an", "-sn", "-dn",
+            '-f', 'rawvideo',                 # Output format: raw video frames
+            '-c:v', 'h264_rkmpp',              # Pixel format: BGR for direct OpenCV compatibility
+            "-pixel_format", "rgb24",
+            '-'                               # Output destination: stdout
+        ]
+        
+        ffmpeg_command = [
+            '/usr/bin/ffmpeg',
+            '-i', '/home/martin/src/data/853889-hd_1280_720_25fps.mp4',
+            '-f', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-'
+        ]
+        
+        ffmpeg_command = [
+            '/usr/bin/ffmpeg',
+            "-stream_loop", "-1",
+            '-hwaccel', 'rkmpp',              # Use Rockchip hardware acceleration
+            '-hwaccel_output_format', 'drm_prime', # Use zero-copy format for decoding
+            '-i', VIDEO_PATH,
+            "-an", "-sn", "-dn",
+            '-f', 'rawvideo',
+            #"-f","lavfi",
+            #'-c:v', 'h264_rkmpp',              # Pixel format: BGR for direct OpenCV compatibility
+            '-pix_fmt', 'rgb24',
+            "-vf", f"hwupload,scale_rkrga=w={WIDTH}:h={HEIGHT}:format=rgb24,hwdownload",
+            '-'
+        ]
+        
+        ffmpeg_command = [
+            "ffmpeg",
+            "-stream_loop", "-1",
+            "-hwaccel", "rkmpp",
+            "-hwaccel_output_format", "drm_prime",
+            "-i", VIDEO_PATH,
+            "-f", "rawvideo",
+            "-vf", "hwupload,scale_rkrga=format=rgb24,hwdownload",
+            "-an", "-sn", "-dn",
+            "-pix_fmt", "rgb24",
+            "-"
+        ]
+        
+        print("cmd: ", " ".join(ffmpeg_command))
+        
+        try:
+            # --- 2. Start the FFmpeg Subprocess ---
+            # We create a pipe to capture the stdout of the ffmpeg process.
+            process = subprocess.Popen(
+                ffmpeg_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, # Capture stderr to check for errors
+                #shell=True,
+            )
+            print("proc: ", process)
+            # --- Check for Immediate Failure ---
+            # .poll() returns None if the process is running, or the exit code if it has stopped.
+            if process.poll() is not None:
+                print("ERROR: FFmpeg process failed to start or exited immediately!")
+                # Read and print the error message from stderr
+                stderr_output = process.stderr.read().decode('utf-8')
+                print("--- FFmpeg Error Output ---")
+                print(stderr_output)
+                print("--------------------------")
+                exit()
+
+            # --- 3. Read and Process Frames in a Loop ---
+            # Calculate the size of a single frame in bytes
+            frame_size = WIDTH * HEIGHT * CHANNELS
+            while True:
+                #time.sleep(0.01)
+                #print("proc: ", process)
+                
+                
+                # Read a single frame's worth of bytes from the stdout pipe
+                in_bytes = process.stdout.read(frame_size)
+
+                # If we receive an empty byte string, the stream has ended
+                if not in_bytes:
+                    print("stream has ended!!!")
+                    break
+
+                # Check if we got a full frame
+                if len(in_bytes) != frame_size:
+                    print("Warning: Incomplete frame received. Exiting.")
+                    break
+                
+                #print("got frame")
+                # Convert the raw byte buffer to a NumPy array
+                # np.uint8 is the data type for an 8-bit BGR image
+                frame = np.frombuffer(in_bytes, dtype=np.uint8)
+
+                # Reshape the 1D array into a 3D image array (height, width, channels)
+                frame = frame.reshape((HEIGHT, WIDTH, CHANNELS))
+                
+                process_frame(frame_hires=frame)
+        except:
+            traceback.print_exc()
+            raise
+        print("Closing stream...")
+        process.terminate() # A slightly cleaner way to stop the process
+        # Use communicate() to get any remaining output and prevent deadlocks
+        stdout_final, stderr_final = process.communicate() 
+        if stderr_final:
+            print("--- FFmpeg Final Error Output ---")
+            print(stderr_final.decode('utf-8'))
+            print("-------------------------------")
+
+
     def stream_file():
         if not os.path.isfile(video_path):
             raise ValueError("File not found: ", video_path)
@@ -737,7 +876,8 @@ def get_file_streamer(video_path: str | None):
 
     if not os.path.isfile(video_path):
         raise RuntimeError(f"File not found: {video_path}")
-    return stream_file
+    #return stream_file
+    return stream_file_hw
 
 
 # This single instance will be imported by other parts of the app

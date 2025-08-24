@@ -13,7 +13,7 @@ import os
 # https://docs.opencv.org/4.x/d6/dea/tutorial_env_reference.html#autotoc_md974
 os.environ["OPENCV_FFMPEG_DEBUG"] = "1"
 os.environ["OPENCV_LOG_LEVEL"] = "DEBUG"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hw_decoders_any;vaapi,vdpau"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hwaccel;rkmpp"
 
 import cv2
 import numpy as np
