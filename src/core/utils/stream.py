@@ -307,7 +307,12 @@ def on_done(*, worker_pid, timestamp, frame_lores, detected_objects):
                     detections_denormalized.append((label, confidence, (x, y, w, h)))
 
                     with tracker_lock:
-                        if label in ["suitcase", "bicycle"] and not tracking.is_set():
+                        disable_tracking = False
+                        if (
+                            not disable_tracking
+                            and label in ["person"]
+                            and not tracking.is_set()
+                        ):
                             if tracker is None:
                                 tracker_class = cv2.TrackerKCF
                                 # tracker_class = cv2.TrackerCSRT
