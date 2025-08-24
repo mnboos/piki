@@ -7,6 +7,13 @@ from ctypes import c_float, c_int
 from multiprocessing import Event, Queue, Condition, Manager
 from typing import TypeVar, Generic
 import inspect
+import os
+
+# Those most be set BEFORE importing cv2
+# https://docs.opencv.org/4.x/d6/dea/tutorial_env_reference.html#autotoc_md974
+os.environ["OPENCV_FFMPEG_DEBUG"] = "1"
+os.environ["OPENCV_LOG_LEVEL"] = "DEBUG"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hw_decoders_any;vaapi,vdpau"
 
 import cv2
 import numpy as np
@@ -20,9 +27,14 @@ from .func import (
 
 logger = logging.getLogger(__name__)
 
-logger.info("Setup module shared {here}")
+logger.info("Setup shared module...")
 
 T = TypeVar("T")
+
+has_opencl = cv2.ocl.haveOpenCL()
+logger.info(f"OpenCV has OpenCL: {has_opencl}")
+if has_opencl:
+    cv2.ocl.setUseOpenCL(True)
 
 
 @dataclasses.dataclass

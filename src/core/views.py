@@ -1,6 +1,5 @@
 import time
 
-import cv2
 from django.http.response import StreamingHttpResponse
 from django.shortcuts import render, redirect
 
@@ -10,6 +9,7 @@ from .utils.shared import (
     live_stream_enabled,
     setup_motion_detector,
     app_settings,
+    cv2,
 )
 from .utils import shared
 

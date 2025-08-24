@@ -12,7 +12,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional
 
-import cv2
 import numpy as np
 import traceback
 import logging
@@ -32,6 +31,7 @@ from .shared import (
     preview_downscale_factor,
     ai_input_size,
     is_object_detection_disabled,
+    cv2,
 )
 
 logger = logging.getLogger(__name__)
@@ -677,9 +677,6 @@ def get_file_streamer(video_path: str | None):
         # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
         time.sleep(3)
 
-        os.environ["OPENCV_FFMPEG_DEBUG"] = 1
-        os.environ["OPENCV_LOG_LEVEL"] = "DEBUG"
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hw_decoders_any;vaapi,vdpau"
         cap = cv2.VideoCapture(
             video_path,
             cv2.CAP_FFMPEG,

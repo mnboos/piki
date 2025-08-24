@@ -385,6 +385,7 @@ dependencies = [
     { name = "picamera2" },
     { name = "pigpio" },
     { name = "rich" },
+    { name = "rknn-toolkit-lite2", marker = "platform_machine == 'aarch64'" },
 ]
 
 [package.dev-dependencies]
@@ -402,6 +403,7 @@ requires-dist = [
     { name = "picamera2", specifier = "==0.3.30" },
     { name = "pigpio", specifier = "==1.78" },
     { name = "rich", specifier = "==14.1.0" },
+    { name = "rknn-toolkit-lite2", marker = "platform_machine == 'aarch64'", specifier = "==2.3.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -542,6 +544,16 @@ wheels = [
 ]
 
 [[package]]
+name = "psutil"
+version = "7.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/80/336820c1ad9286a4ded7e845b2eccfcb27851ab8ac6abece774a6ff4d3de/psutil-7.0.0.tar.gz", hash = "sha256:7be9c3eba38beccb6495ea33afd982a44074b78f28c434a1f51cc07fd315c456", size = 497003, upload-time = "2025-02-13T21:54:07.946Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/8b/30f930733afe425e3cbfc0e1468a30a18942350c1a8816acfade80c005c4/psutil-7.0.0-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:39db632f6bb862eeccf56660871433e111b6ea58f2caea825571951d4b6aa3da", size = 239535, upload-time = "2025-02-13T21:54:16.07Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/a2/709e0fe2f093556c17fbafda93ac032257242cabcc7ff3369e2cb76a97aa/psutil-7.0.0-cp36-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a5f098451abc2828f7dc6b58d44b532b22f2088f4999a937557b603ce72b1993", size = 279544, upload-time = "2025-02-13T21:54:24.68Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -581,6 +593,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fe/75/af448d8e52bf1d8fa6a9d089ca6c07ff4453d86c65c145d0a300bb073b9b/rich-14.1.0.tar.gz", hash = "sha256:e497a48b844b0320d45007cdebfeaeed8db2a4f4bcf49f15e455cfc4af11eaa8", size = 224441, upload-time = "2025-07-25T07:32:58.125Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e3/30/3c4d035596d3cf444529e0b2953ad0466f6049528a879d27534700580395/rich-14.1.0-py3-none-any.whl", hash = "sha256:536f5f1785986d6dbdea3c75205c473f970777b4a0d6c6dd1b696aa05a3fa04f", size = 243368, upload-time = "2025-07-25T07:32:56.73Z" },
+]
+
+[[package]]
+name = "rknn-toolkit-lite2"
+version = "2.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "psutil" },
+    { name = "ruamel-yaml" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/3d/e80e1742420f62cb628d40a8bf547d6f7c9dbe4e13dcb7b7e7c0b5620e74/rknn_toolkit_lite2-2.3.2-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bda74f1179e15fccb8726054a24898982522784b65bb340b20146955d254e800", size = 569160, upload-time = "2025-04-09T09:39:56.149Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/db/64c756f3f06b219e92ff4f0fd4e000870ee49f214d505ff01c8b0275e26d/rknn_toolkit_lite2-2.3.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e1e4ec691fed900c0e6fde5e7d8eeba17f806aa45092b63b361ee775e2c1b50e", size = 527458, upload-time = "2025-04-09T09:39:58.881Z" },
 ]
 
 [[package]]
@@ -682,6 +708,35 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d5/a6/33b1fc0c9f7dcfcfc4a4353daa6308b3ece22496ceece348b3e7a7559a09/rpds_py-0.26.0-pp311-pypy311_pp73-musllinux_1_2_aarch64.whl", hash = "sha256:2abe21d8ba64cded53a2a677e149ceb76dcf44284202d737178afe7ba540c1eb", size = 559439, upload-time = "2025-07-01T15:56:48.549Z" },
     { url = "https://files.pythonhosted.org/packages/71/2d/ceb3f9c12f8cfa56d34995097f6cd99da1325642c60d1b6680dd9df03ed8/rpds_py-0.26.0-pp311-pypy311_pp73-musllinux_1_2_i686.whl", hash = "sha256:4feb7511c29f8442cbbc28149a92093d32e815a28aa2c50d333826ad2a20fdf0", size = 588380, upload-time = "2025-07-01T15:56:50.086Z" },
     { url = "https://files.pythonhosted.org/packages/c8/ed/9de62c2150ca8e2e5858acf3f4f4d0d180a38feef9fdab4078bea63d8dba/rpds_py-0.26.0-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:e99685fc95d386da368013e7fb4269dd39c30d99f812a8372d62f244f662709c", size = 555334, upload-time = "2025-07-01T15:56:51.703Z" },
+]
+
+[[package]]
+name = "ruamel-yaml"
+version = "0.18.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ruamel-yaml-clib", marker = "python_full_version < '3.14' and platform_python_implementation == 'CPython'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/db/f3950f5e5031b618aae9f423a39bf81a55c148aecd15a34527898e752cf4/ruamel.yaml-0.18.15.tar.gz", hash = "sha256:dbfca74b018c4c3fba0b9cc9ee33e53c371194a9000e694995e620490fd40700", size = 146865, upload-time = "2025-08-19T11:15:10.694Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/e5/f2a0621f1781b76a38194acae72f01e37b1941470407345b6e8653ad7640/ruamel.yaml-0.18.15-py3-none-any.whl", hash = "sha256:148f6488d698b7a5eded5ea793a025308b25eca97208181b6a026037f391f701", size = 119702, upload-time = "2025-08-19T11:15:07.696Z" },
+]
+
+[[package]]
+name = "ruamel-yaml-clib"
+version = "0.2.12"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/84/80203abff8ea4993a87d823a5f632e4d92831ef75d404c9fc78d0176d2b5/ruamel.yaml.clib-0.2.12.tar.gz", hash = "sha256:6c8fbb13ec503f99a91901ab46e0b07ae7941cd527393187039aec586fdfd36f", size = 225315, upload-time = "2024-10-20T10:10:56.22Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/8f/683c6ad562f558cbc4f7c029abcd9599148c51c54b5ef0f24f2638da9fbb/ruamel.yaml.clib-0.2.12-cp311-cp311-macosx_13_0_arm64.whl", hash = "sha256:4a6679521a58256a90b0d89e03992c15144c5f3858f40d7c18886023d7943db6", size = 132224, upload-time = "2024-10-20T10:12:45.162Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/d2/b79b7d695e2f21da020bd44c782490578f300dd44f0a4c57a92575758a76/ruamel.yaml.clib-0.2.12-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:d84318609196d6bd6da0edfa25cedfbabd8dbde5140a0a23af29ad4b8f91fb1e", size = 641480, upload-time = "2024-10-20T10:12:46.758Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/ca/e4106ac7e80efbabdf4bf91d3d32fc424e41418458251712f5672eada9ce/ruamel.yaml.clib-0.2.12-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:1492a6051dab8d912fc2adeef0e8c72216b24d57bd896ea607cb90bb0c4981d3", size = 714498, upload-time = "2024-12-11T19:58:15.592Z" },
+    { url = "https://files.pythonhosted.org/packages/48/41/e7a405afbdc26af961678474a55373e1b323605a4f5e2ddd4a80ea80f628/ruamel.yaml.clib-0.2.12-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:20b0f8dc160ba83b6dcc0e256846e1a02d044e13f7ea74a3d1d56ede4e48c632", size = 133433, upload-time = "2024-10-20T10:12:55.657Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/b0/b850385604334c2ce90e3ee1013bd911aedf058a934905863a6ea95e9eb4/ruamel.yaml.clib-0.2.12-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:943f32bc9dedb3abff9879edc134901df92cfce2c3d5c9348f172f62eb2d771d", size = 647362, upload-time = "2024-10-20T10:12:57.155Z" },
+    { url = "https://files.pythonhosted.org/packages/db/5d/36619b61ffa2429eeaefaab4f3374666adf36ad8ac6330d855848d7d36fd/ruamel.yaml.clib-0.2.12-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:b82a7c94a498853aa0b272fd5bc67f29008da798d4f93a2f9f289feb8426a58d", size = 715692, upload-time = "2024-12-11T19:58:17.252Z" },
+    { url = "https://files.pythonhosted.org/packages/29/00/4864119668d71a5fa45678f380b5923ff410701565821925c69780356ffa/ruamel.yaml.clib-0.2.12-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:4c8c5d82f50bb53986a5e02d1b3092b03622c02c2eb78e29bec33fd9593bae1a", size = 132011, upload-time = "2024-10-20T10:13:04.377Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/5e/212f473a93ae78c669ffa0cb051e3fee1139cb2d385d2ae1653d64281507/ruamel.yaml.clib-0.2.12-cp313-cp313-manylinux2014_aarch64.whl", hash = "sha256:e7e3736715fbf53e9be2a79eb4db68e4ed857017344d697e8b9749444ae57475", size = 642488, upload-time = "2024-10-20T10:13:05.906Z" },
+    { url = "https://files.pythonhosted.org/packages/87/b8/01c29b924dcbbed75cc45b30c30d565d763b9c4d540545a0eeecffb8f09c/ruamel.yaml.clib-0.2.12-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:4f6f3eac23941b32afccc23081e1f50612bdbe4e982012ef4f5797986828cd01", size = 709059, upload-time = "2024-12-11T19:58:18.846Z" },
 ]
 
 [[package]]
