@@ -9,7 +9,7 @@ import multiprocessing as mp
 import io
 import time
 import atexit
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional
 
@@ -76,7 +76,7 @@ tracker_lock = Lock()
 tracking = mp.Event()
 coasting = mp.Event()
 tracker: Optional[cv2.Tracker] = None
-# process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
+process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 
 
@@ -173,6 +173,7 @@ def run_object_detection(
             target_size=ai_input_size,
             preview_downscale_factor=preview_downscale_factor,
         )
+        print("images to detect: ", len(padded_images_and_details))
 
         total_duration = 0
         all_detections = []
@@ -274,15 +275,15 @@ def denormalize_detections(detections, frame_shape):
     return detections_denormalized
 
 
-def on_done(*, worker_pid, timestamp, frame_lores, detected_objects):
+def on_done(future: Future):
     global max_output_timestamp
     global tracker
-    # active_futures.remove(future)
+    active_futures.remove(future)
 
     # logger.info(f"HANDLE DONE: {os.getpid()}")
 
     try:
-        # worker_pid, timestamp, frame_lores, detected_objects = future.result()
+        worker_pid, timestamp, frame_lores, detected_objects = future.result()
         if timestamp < max_output_timestamp:
             logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
@@ -535,30 +536,30 @@ def process_frame(frame_hires: np.ndarray):
                     timestamp = time.monotonic_ns()
 
                     rois = motion_detector.create_rois(mask=mask)
-                    # future: Future = process_pool.submit(
-                    #     run_object_detection,
-                    #     shape=frame_hires.shape,
-                    #     dtype=frame_hires.dtype,
-                    #     rois=rois,
-                    #     timestamp=timestamp,
-                    # )
-                    # active_futures.append(future)
-                    # future.add_done_callback(on_done)
-
-                    worker_pid, timestamp, frame_lores, detected_objects = (
-                        run_object_detection(
-                            shape=frame_hires.shape,
-                            dtype=frame_hires.dtype,
-                            rois=rois,
-                            timestamp=timestamp,
-                        )
-                    )
-                    on_done(
-                        worker_pid=worker_pid,
+                    future: Future = process_pool.submit(
+                        run_object_detection,
+                        shape=frame_hires.shape,
+                        dtype=frame_hires.dtype,
+                        rois=rois,
                         timestamp=timestamp,
-                        frame_lores=frame_lores,
-                        detected_objects=detected_objects,
                     )
+                    active_futures.append(future)
+                    future.add_done_callback(on_done)
+
+    #                worker_pid, timestamp, frame_lores, detected_objects = (
+    #                    run_object_detection(
+    #                        shape=frame_hires.shape,
+    #                        dtype=frame_hires.dtype,
+    #                        rois=rois,
+    #                        timestamp=timestamp,
+    #                    )
+    #                )
+                    #on_done(
+                    #    worker_pid=worker_pid,
+                    #    timestamp=timestamp,
+                    #    frame_lores=frame_lores,
+                    #    detected_objects=detected_objects,
+                    #)
 
                 except:
                     traceback.print_exc()
@@ -687,8 +688,8 @@ def get_file_streamer(video_path: str | None):
         # --- Configuration ---
         # You MUST know the video's width and height beforehand for this method to work.
         VIDEO_PATH = video_path
-        WIDTH = 1280
-        HEIGHT = 720
+        WIDTH = 1920
+        HEIGHT = 1080
         CHANNELS = 3 # We'll ask for BGR, which has 3 channels
         
         print("start ffmpeg")
@@ -774,12 +775,16 @@ def get_file_streamer(video_path: str | None):
             # Calculate the size of a single frame in bytes
             frame_size = WIDTH * HEIGHT * CHANNELS
             while True:
-                #time.sleep(0.01)
+                in_bytes = process.stdout.read(frame_size)
+
+                time.sleep(0.01)
+                if len(active_futures) >= NUM_AI_WORKERS:
+                    continue
                 #print("proc: ", process)
                 
                 
                 # Read a single frame's worth of bytes from the stdout pipe
-                in_bytes = process.stdout.read(frame_size)
+                
 
                 # If we receive an empty byte string, the stream has ended
                 if not in_bytes:
@@ -891,7 +896,7 @@ def cleanup():
     input_buffer.close()
 
     thread_pool.shutdown(wait=True, cancel_futures=True)
-    # process_pool.shutdown(wait=True, cancel_futures=True)
+    process_pool.shutdown(wait=True, cancel_futures=True)
     cleanup_shared_memory()
 
     logger.info("[DJANGO SHUTDOWN] Processes stopped..")
