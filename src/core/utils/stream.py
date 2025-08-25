@@ -3,7 +3,7 @@ import signal
 import threading
 from collections import deque, namedtuple
 from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import shared_memory, Lock
+from multiprocessing import shared_memory, Lock, Semaphore
 import subprocess
 import multiprocessing as mp
 import io
@@ -78,6 +78,7 @@ coasting = mp.Event()
 tracker: Optional[cv2.Tracker] = None
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
+worker_slot_semaphore = Semaphore(NUM_AI_WORKERS)
 
 
 def setup_shared_memory(frame_shape, frame_dtype):
@@ -348,6 +349,8 @@ def on_done(future: Future):
     except:
         traceback.print_exc()
         raise
+    finally:
+        worker_slot_semaphore.release() # <-- ADD THIS LINE
 
 
 def process_frame(frame_hires: np.ndarray):
@@ -384,6 +387,7 @@ def process_frame(frame_hires: np.ndarray):
         fy=1 / preview_downscale_factor,
     )
 
+    future = None
     if frame_lores is not None and frame_lores.size:
         has_movement, mask = motion_detector.is_moving(frame_lores)
 
@@ -536,15 +540,16 @@ def process_frame(frame_hires: np.ndarray):
                     timestamp = time.monotonic_ns()
 
                     rois = motion_detector.create_rois(mask=mask)
-                    future: Future = process_pool.submit(
-                        run_object_detection,
-                        shape=frame_hires.shape,
-                        dtype=frame_hires.dtype,
-                        rois=rois,
-                        timestamp=timestamp,
-                    )
-                    active_futures.append(future)
-                    future.add_done_callback(on_done)
+                    if rois:      
+                        future: Future = process_pool.submit(
+                            run_object_detection,
+                            shape=frame_hires.shape,
+                            dtype=frame_hires.dtype,
+                            rois=rois,
+                            timestamp=timestamp,
+                        )
+                        active_futures.append(future)
+                        future.add_done_callback(on_done)
 
     #                worker_pid, timestamp, frame_lores, detected_objects = (
     #                    run_object_detection(
@@ -566,6 +571,7 @@ def process_frame(frame_hires: np.ndarray):
                     raise
             elif not has_movement and not active_futures:
                 output_buffer.append((0, 0, frame_lores, []))
+    return future
 
 
 # This class instance will hold the camera frames
@@ -581,7 +587,9 @@ class StreamingOutput(io.BufferedIOBase):
             np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
         )
 
-        process_frame(frame_hires=buf_hires)
+        future = process_frame(frame_hires=buf_hires)
+        if not future:
+            worker_slot_semaphore.release()
 
 
 input_buffer = StreamingOutput()
@@ -775,6 +783,8 @@ def get_file_streamer(video_path: str | None):
             # Calculate the size of a single frame in bytes
             frame_size = WIDTH * HEIGHT * CHANNELS
             while True:
+                worker_slot_semaphore.acquire()
+
                 in_bytes = process.stdout.read(frame_size)
 
                 time.sleep(0.01)
@@ -804,7 +814,9 @@ def get_file_streamer(video_path: str | None):
                 # Reshape the 1D array into a 3D image array (height, width, channels)
                 frame = frame.reshape((HEIGHT, WIDTH, CHANNELS))
                 
-                process_frame(frame_hires=frame)
+                future = process_frame(frame_hires=frame)
+                if not future:
+                    worker_slot_semaphore.release()
         except:
             traceback.print_exc()
             raise
