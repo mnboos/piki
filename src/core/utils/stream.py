@@ -3,9 +3,10 @@ import signal
 import threading
 from collections import deque, namedtuple
 from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import shared_memory, Lock, Semaphore
+from multiprocessing import shared_memory, Lock, Queue
 import subprocess
 import multiprocessing as mp
+import platform
 import io
 import time
 import atexit
@@ -22,6 +23,7 @@ from .func import (
 )
 from .metrics import LiveMetricsDashboard
 from .shared import (
+    DoubleBuffer,
     mask_transparency,
     app_settings,
     output_buffer,
@@ -51,6 +53,12 @@ total_untracked_frames_count = 0
 velocity_buffer = deque(maxlen=15)
 
 
+double_buffer: DoubleBuffer | None = None
+work_token_queue = Queue(maxsize=NUM_AI_WORKERS)
+ffmpeg_process: subprocess.Popen | None = None
+
+
+
 def init_worker():
     pid = os.getpid()
     ppid = os.getppid()
@@ -78,7 +86,29 @@ coasting = mp.Event()
 tracker: Optional[cv2.Tracker] = None
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
-worker_slot_semaphore = Semaphore(NUM_AI_WORKERS)
+# worker_slot_semaphore = Semaphore(NUM_AI_WORKERS)
+
+def frame_producer(ffmpeg_stdout, buffer_instance: DoubleBuffer):
+    """
+    Reads raw frames from FFmpeg's stdout pipe and writes them into a DoubleBuffer.
+    """
+    shape = buffer_instance.shape
+    dtype = buffer_instance.dtype
+    frame_size = int(np.prod(shape) * np.dtype(dtype).itemsize)
+    logger.info("Producer started. Waiting for data from FFmpeg stdout...")
+    try:
+        while True:
+            in_bytes = ffmpeg_stdout.read(frame_size)
+            if not in_bytes or len(in_bytes) != frame_size:
+                logger.warning("Producer received incomplete frame from FFmpeg. Shutting down.")
+                break
+            frame = np.frombuffer(in_bytes, dtype=dtype).reshape(shape)
+            buffer_instance.write(frame)
+    except:
+        logger.error("Exception in producer thread:")
+        traceback.print_exc()
+        raise
+    logger.info("Producer finished.")
 
 
 def setup_shared_memory(frame_shape, frame_dtype):
@@ -350,7 +380,7 @@ def on_done(future: Future):
         traceback.print_exc()
         raise
     finally:
-        worker_slot_semaphore.release() # <-- ADD THIS LINE
+        work_token_queue.put(None)
 
 
 def process_frame(frame_hires: np.ndarray):
@@ -363,15 +393,6 @@ def process_frame(frame_hires: np.ndarray):
 
     current_time = time.monotonic()
 
-    # if DJANGO_RELOAD_ISSUED.is_set():
-    #     logger.info("skipping frame due to reload")
-    #     return
-
-    # --- Shared Memory Logic ---
-    # On the first run, create the shared memory block
-
-    # Lock the shared memory, copy the new frame data into it, and then unlock.
-    # This ensures a worker process doesn't read a partially updated frame.
     with shm_lock:
         if shared_array is None:
             shared_array = setup_shared_memory(frame_hires.shape, frame_hires.dtype)
@@ -387,135 +408,107 @@ def process_frame(frame_hires: np.ndarray):
         fy=1 / preview_downscale_factor,
     )
 
-    future = None
+    future: Future | None = None
     if frame_lores is not None and frame_lores.size:
         has_movement, mask = motion_detector.is_moving(frame_lores)
 
-        # is_tracking = tracking.is_set()
         with tracker_lock:
-            if tracking.is_set():
-                # logger.info("tracker update shape: ", frame_lores.shape)
+            is_tracking = tracking.is_set()
 
-                if not untracked_frames_count:
-                    measure_tracking = get_measure("tracking")
-                    found, bbox = tracker.update(frame_lores)
-                    tracking_duration = measure_tracking(log=False)
-                    # logger.info(f"Tracked in {tracking_duration} ms: ", found, bbox)
+        if is_tracking:
+            is_coasting = untracked_frames_count
+            if not is_coasting:
+                # measure_tracking = get_measure("tracking")
+                found, bbox = tracker.update(frame_lores)
+                # tracking_duration = measure_tracking(log=False)
+                # logger.info(f"Tracked in {tracking_duration} ms: ", found, bbox)
 
-                    if found:
-                        if not last_known_bbox:
-                            last_known_bbox = current_time, (0, 0, 0, 0)
+                if found:
+                    if not last_known_bbox:
+                        last_known_bbox = current_time, (0, 0, 0, 0)
 
-                        last_time, last_bbox = last_known_bbox
-                        last_known_bbox = current_time, bbox
+                    last_time, last_bbox = last_known_bbox
+                    last_known_bbox = current_time, bbox
 
-                        x, y, w, h = bbox
-                        current_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
-                        x, y, w, h = last_bbox
-                        last_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
+                    x, y, w, h = bbox
+                    current_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
+                    x, y, w, h = last_bbox
+                    last_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
 
-                        dt = current_time - last_time
+                    dt = current_time - last_time
 
-                        if dt:
-                            instantaneous_velocity_vector = (
-                                current_pos - last_pos
-                            ) / dt
-                            velocity_buffer.append(instantaneous_velocity_vector)
+                    if dt:
+                        instantaneous_velocity_vector = (
+                            current_pos - last_pos
+                        ) / dt
+                        velocity_buffer.append(instantaneous_velocity_vector)
 
-                        if len(velocity_buffer) > 0:
-                            average_velocity_vector = np.mean(
-                                list(velocity_buffer), axis=0
-                            )
-
-                            # 4. Calculate speed (magnitude) from the AVERAGE vector
-                            smoothed_pixels_per_second = np.linalg.norm(
-                                average_velocity_vector
-                            )
-
-                            STATIONARY_THRESHOLD_PIXELS_PER_SEC = 5
-                            # 5. Apply the stationary threshold
-                            if (
-                                smoothed_pixels_per_second
-                                < STATIONARY_THRESHOLD_PIXELS_PER_SEC
-                            ):
-                                logger.info(
-                                    "SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d",
-                                    smoothed_pixels_per_second,
-                                )
-                                final_speed_pixels_per_sec = (
-                                    0.0  # Snap to zero if it's just jitter
-                                )
-                            else:
-                                final_speed_pixels_per_sec = smoothed_pixels_per_second
-
-                            # Now use 'final_speed_pixels_per_sec' for all your calculations and display
-                            # (e.g., converting to m/s, km/h)
-
-                            # --- Example of converting to km/h ---
-                            # pixels_per_meter = 150.0
-                            # speed_mps = final_speed_pixels_per_sec / pixels_per_meter
-                            # speed_kph = speed_mps * 3.6
-
-                            logger.info(
-                                f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s"
-                            )
-
-                        # # Avoid division by zero if frames are too fast
-                        # if dt > 0:
-                        #     # Calculate distance in pixels
-                        #     pixel_distance = np.linalg.norm(current_pos - last_pos)
-                        #
-                        #     # Calculate speed in pixels per second
-                        #     pixels_per_second = pixel_distance / dt
-                        #     logger.info(f"Speed: {pixels_per_second:.2f} px/s")
-
-                        # logger.info("velocity: ", last_known_velocity)
-
-                        last_known_bbox = (current_time, bbox)
-                        output_buffer.append(
-                            (
-                                0,
-                                time.monotonic_ns(),
-                                frame_lores,
-                                [("tracker", 1, bbox)],
-                            )
+                    if len(velocity_buffer) > 0:
+                        average_velocity_vector = np.mean(
+                            list(velocity_buffer), axis=0
                         )
-                    else:
-                        untracked_frames_count = 1
-                        total_untracked_frames_count += 1
-                else:
-                    total_untracked_frames_count += 1
-                    untracked_frames_count += 1
 
-                    # predicted_x = last_known_bbox[0] + last_known_velocity[0]
-                    # predicted_y = last_known_bbox[1] + last_known_velocity[1]
-                    # predicted_bbox = (
-                    #     predicted_x,
-                    #     predicted_y,
-                    #     last_known_bbox[2],
-                    #     last_known_bbox[3],
-                    # )
+                        # 4. Calculate speed (magnitude) from the AVERAGE vector
+                        smoothed_pixels_per_second = np.linalg.norm(
+                            average_velocity_vector
+                        )
 
-                    if total_untracked_frames_count >= 90:
-                        total_untracked_frames_count = 0
-                        untracked_frames_count = 0
-                        tracker = None
-                        tracking.clear()
+                        stationary_threshold_pixels_per_sec = 5
+                        # 5. Apply the stationary threshold
+                        if (
+                            smoothed_pixels_per_second
+                            < stationary_threshold_pixels_per_sec
+                        ):
+                            logger.info(
+                                "SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d",
+                                smoothed_pixels_per_second,
+                            )
+                            final_speed_pixels_per_sec = (
+                                0.0  # Snap to zero if it's just jitter
+                            )
+                        else:
+                            final_speed_pixels_per_sec = smoothed_pixels_per_second
 
-                    if untracked_frames_count > 30:
-                        untracked_frames_count = 0
+                        logger.info(
+                            f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s"
+                        )
 
+                    last_known_bbox = (current_time, bbox)
                     output_buffer.append(
                         (
                             0,
                             time.monotonic_ns(),
                             frame_lores,
-                            [],
+                            [("tracker", 1, bbox)],
                         )
                     )
+                else:
+                    untracked_frames_count = 1
+                    total_untracked_frames_count += 1
+            else:
+                total_untracked_frames_count += 1
+                untracked_frames_count += 1
 
-        if not tracking.is_set():
-            if app_settings.debug_settings.debug_enabled:
+                if total_untracked_frames_count >= 90:
+                    total_untracked_frames_count = 0
+                    untracked_frames_count = 0
+                    tracker = None
+                    tracking.clear()
+
+                if untracked_frames_count > 30:
+                    untracked_frames_count = 0
+
+                output_buffer.append(
+                    (
+                        0,
+                        time.monotonic_ns(),
+                        frame_lores,
+                        [],
+                    )
+                )
+
+        else:
+            if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
                 grayscale_output = True
                 if grayscale_output:
                     gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
@@ -540,8 +533,8 @@ def process_frame(frame_hires: np.ndarray):
                     timestamp = time.monotonic_ns()
 
                     rois = motion_detector.create_rois(mask=mask)
-                    if rois:      
-                        future: Future = process_pool.submit(
+                    if rois:
+                        future: Future | None = process_pool.submit(
                             run_object_detection,
                             shape=frame_hires.shape,
                             dtype=frame_hires.dtype,
@@ -550,22 +543,6 @@ def process_frame(frame_hires: np.ndarray):
                         )
                         active_futures.append(future)
                         future.add_done_callback(on_done)
-
-    #                worker_pid, timestamp, frame_lores, detected_objects = (
-    #                    run_object_detection(
-    #                        shape=frame_hires.shape,
-    #                        dtype=frame_hires.dtype,
-    #                        rois=rois,
-    #                        timestamp=timestamp,
-    #                    )
-    #                )
-                    #on_done(
-                    #    worker_pid=worker_pid,
-                    #    timestamp=timestamp,
-                    #    frame_lores=frame_lores,
-                    #    detected_objects=detected_objects,
-                    #)
-
                 except:
                     traceback.print_exc()
                     raise
@@ -587,9 +564,7 @@ class StreamingOutput(io.BufferedIOBase):
             np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
         )
 
-        future = process_frame(frame_hires=buf_hires)
-        if not future:
-            worker_slot_semaphore.release()
+        process_frame(frame_hires=buf_hires)
 
 
 input_buffer = StreamingOutput()
@@ -669,6 +644,59 @@ def stream_nonblocking():
         streamer_func = stream_camera
     thread_pool.submit(streamer_func)
 
+def start_ffmpeg(*, video_path, output_width, output_height):
+    """Launches the FFmpeg process to output a single high-res stream to stdout."""
+    global ffmpeg_process
+
+    command = [
+        "ffmpeg",
+        "-hwaccel",
+        "rkmpp",
+        "-hwaccel_output_format",
+        "drm_prime",
+        "-stream_loop",
+        "-1",
+        "-i",
+        video_path,
+        "-f",
+        "rawvideo",
+        "-vf",
+        f"hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
+        "-pix_fmt",
+        "rgb24",
+        "-an",
+        "-sn",
+        "-dn",
+        "-",  # Output to stdout
+    ]
+    if not platform.machine().lower() == "aarch64":
+        command = [
+            "ffmpeg",
+            "-stream_loop",
+            "-1",
+            "-i",
+            video_path,
+            "-f",
+            "rawvideo",
+            "-an",
+            "-sn",
+            "-dn",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ]
+    logger.info("Starting FFmpeg with command: %s", " ".join(command))
+    ffmpeg_process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+
+    def log_stderr():
+        if ffmpeg_process.stderr:
+            for line in iter(ffmpeg_process.stderr.readline, b""):
+                logger.error("FFMPEG: %s", line.decode("utf-8").strip())
+
+    threading.Thread(target=log_stderr, daemon=True).start()
+    return ffmpeg_process
 
 def get_file_streamer(video_path: str | None):
     if not video_path:
@@ -685,6 +713,8 @@ def get_file_streamer(video_path: str | None):
         # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
 
     def stream_file_hw():
+        global double_buffer
+
         if not os.path.isfile(video_path):
             raise ValueError("File not found: ", video_path)
 
@@ -693,207 +723,40 @@ def get_file_streamer(video_path: str | None):
         time.sleep(3)
     
         print("------------!!!!!!!!!!!!! STREAM")
-        # --- Configuration ---
-        # You MUST know the video's width and height beforehand for this method to work.
-        VIDEO_PATH = video_path
-        WIDTH = 1920
-        HEIGHT = 1080
-        CHANNELS = 3 # We'll ask for BGR, which has 3 channels
-        
-        print("start ffmpeg")
-        # --- 1. Construct the FFmpeg Command ---
-        # This command is crafted to do the following:
-        # - Use the Rockchip MPP hardware decoder.
-        # - Output raw video frames (-f rawvideo).
-        # - Use the BGR pixel format (-pix_fmt bgr24), which is native to OpenCV.
-        # - Write the output to stdout (-).
-        ffmpeg_command = [
-            '/usr/bin/ffmpeg',
-            "-stream_loop", "-1",
-            '-hwaccel', 'rkmpp',              # Use Rockchip hardware acceleration
-            '-hwaccel_output_format', 'drm_prime', # Use zero-copy format for decoding
-            '-i', VIDEO_PATH,                 # Input video file
-            "-an", "-sn", "-dn",
-            '-f', 'rawvideo',                 # Output format: raw video frames
-            '-c:v', 'h264_rkmpp',              # Pixel format: BGR for direct OpenCV compatibility
-            "-pixel_format", "rgb24",
-            '-'                               # Output destination: stdout
-        ]
-        
-        ffmpeg_command = [
-            '/usr/bin/ffmpeg',
-            '-i', '/home/martin/src/data/853889-hd_1280_720_25fps.mp4',
-            '-f', 'rawvideo',
-            '-pix_fmt', 'bgr24',
-            '-'
-        ]
-        
-        ffmpeg_command = [
-            '/usr/bin/ffmpeg',
-            "-stream_loop", "-1",
-            '-hwaccel', 'rkmpp',              # Use Rockchip hardware acceleration
-            '-hwaccel_output_format', 'drm_prime', # Use zero-copy format for decoding
-            '-i', VIDEO_PATH,
-            "-an", "-sn", "-dn",
-            '-f', 'rawvideo',
-            #"-f","lavfi",
-            #'-c:v', 'h264_rkmpp',              # Pixel format: BGR for direct OpenCV compatibility
-            '-pix_fmt', 'rgb24',
-            "-vf", f"hwupload,scale_rkrga=w={WIDTH}:h={HEIGHT}:format=rgb24,hwdownload",
-            '-'
-        ]
-        
-        ffmpeg_command = [
-            "ffmpeg",
-            "-stream_loop", "-1",
-            "-hwaccel", "rkmpp",
-            "-hwaccel_output_format", "drm_prime",
-            "-i", VIDEO_PATH,
-            "-f", "rawvideo",
-            "-vf", "hwupload,scale_rkrga=format=rgb24,hwdownload",
-            "-an", "-sn", "-dn",
-            "-pix_fmt", "rgb24",
-            "-"
-        ]
-        
-        print("cmd: ", " ".join(ffmpeg_command))
-        
-        try:
-            # --- 2. Start the FFmpeg Subprocess ---
-            # We create a pipe to capture the stdout of the ffmpeg process.
-            process = subprocess.Popen(
-                ffmpeg_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, # Capture stderr to check for errors
-                #shell=True,
-            )
-            print("proc: ", process)
-            # --- Check for Immediate Failure ---
-            # .poll() returns None if the process is running, or the exit code if it has stopped.
-            if process.poll() is not None:
-                print("ERROR: FFmpeg process failed to start or exited immediately!")
-                # Read and print the error message from stderr
-                stderr_output = process.stderr.read().decode('utf-8')
-                print("--- FFmpeg Error Output ---")
-                print(stderr_output)
-                print("--------------------------")
-                exit()
+        high_res_w, high_res_h = 1920, 1080
+        channels = 3
 
-            # --- 3. Read and Process Frames in a Loop ---
-            # Calculate the size of a single frame in bytes
-            frame_size = WIDTH * HEIGHT * CHANNELS
-            while True:
-                worker_slot_semaphore.acquire()
+        # Pre-fill the work token queue
+        for _ in range(NUM_AI_WORKERS):
+            if not work_token_queue.full():
+                work_token_queue.put(None)
 
-                in_bytes = process.stdout.read(frame_size)
-
-                time.sleep(0.01)
-                if len(active_futures) >= NUM_AI_WORKERS:
-                    continue
-                #print("proc: ", process)
-                
-                
-                # Read a single frame's worth of bytes from the stdout pipe
-                
-
-                # If we receive an empty byte string, the stream has ended
-                if not in_bytes:
-                    print("stream has ended!!!")
-                    break
-
-                # Check if we got a full frame
-                if len(in_bytes) != frame_size:
-                    print("Warning: Incomplete frame received. Exiting.")
-                    break
-                
-                #print("got frame")
-                # Convert the raw byte buffer to a NumPy array
-                # np.uint8 is the data type for an 8-bit BGR image
-                frame = np.frombuffer(in_bytes, dtype=np.uint8)
-
-                # Reshape the 1D array into a 3D image array (height, width, channels)
-                frame = frame.reshape((HEIGHT, WIDTH, CHANNELS))
-                
-                future = process_frame(frame_hires=frame)
-                if not future:
-                    worker_slot_semaphore.release()
-        except:
-            traceback.print_exc()
-            raise
-        print("Closing stream...")
-        process.terminate() # A slightly cleaner way to stop the process
-        # Use communicate() to get any remaining output and prevent deadlocks
-        stdout_final, stderr_final = process.communicate() 
-        if stderr_final:
-            print("--- FFmpeg Final Error Output ---")
-            print(stderr_final.decode('utf-8'))
-            print("-------------------------------")
-
-
-    def stream_file():
-        if not os.path.isfile(video_path):
-            raise ValueError("File not found: ", video_path)
-
-        logger.info("Starting videostream in 3s...")
-        # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
-        time.sleep(3)
-
-        cap = cv2.VideoCapture(
-            video_path,
-            cv2.CAP_FFMPEG,
-            (cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY),
+        double_buffer = DoubleBuffer(
+            name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8
         )
-        if not cap.isOpened():
-            raise RuntimeError(f"Error: Could not open video at {video_path}")
 
-        fps = round(cap.get(cv2.CAP_PROP_FPS))
-        sleep_time = round(1 / fps, 4)
-        logger.info("FPS: %s (=%s s)", fps, sleep_time)
+        process = start_ffmpeg(video_path=video_path, output_width=high_res_w, output_height=high_res_h)
 
-        @atexit.register
-        def close_video():
-            logger.info("Releasing filestream.....")
-            cap.release()
-            logger.info("Filestream released!")
+        producer_thread = threading.Thread(
+            target=frame_producer, args=(process.stdout, double_buffer), daemon=True
+        )
+        producer_thread.start()
 
-        last_time = time.perf_counter()
+        logger.info("Waiting for producer to fill first buffer...")
+        time.sleep(2)
+        logger.info("Consumer loop starting.")
 
-        cnt = 0
-        # parent_pid = os.getppid()
         while True:
-            # logger.info(f"[ppid-{parent_pid}] [pid-{os.getpid()}] streaming file :  ", cnt)
-            cnt += 1
-            now = time.perf_counter()
-            time_passed = now - last_time
-            last_time = now
+            # 1. Wait efficiently for a free worker. Consumes zero CPU.
+            work_token_queue.get()
 
-            remaining_sleep_time = max(sleep_time - time_passed, sleep_time)
-            time.sleep(remaining_sleep_time)
-            try:
-                ret, frame = cap.read()
+            # 2. Get the latest HIGH-RES frame.
+            high_res_frame = double_buffer.read_and_swap()
 
-                if not ret:
-                    # If it ended, rewind to the first frame (frame 0)
-                    logger.info("Video stream ended. Rewinding.")
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    continue  # Skip the rest of this iteration and try reading the new first frame
-                else:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    # frame_bytes_hires = cv2.imencode(".jpeg", frame)[1].tobytes()
-                    # stream_output.write(frame_bytes_hires)
-                    process_frame(frame_hires=frame)
-            except KeyboardInterrupt:
-                logger.info("shutting down here!!!")
-                break
-            except Exception:
-                traceback.print_exc()
-                raise
-        logger.info("Stopping filestream...")
-        cap.release()
+            f = process_frame(high_res_frame)
+            if not f:
+                work_token_queue.put(None)
 
-    if not os.path.isfile(video_path):
-        raise RuntimeError(f"File not found: {video_path}")
-    #return stream_file
     return stream_file_hw
 
 
