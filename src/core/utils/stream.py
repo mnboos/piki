@@ -56,7 +56,8 @@ velocity_buffer = deque(maxlen=15)
 double_buffer: DoubleBuffer | None = None
 work_token_queue = Queue(maxsize=NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
-
+lowres_frame_cache = {}
+cache_lock = Lock()
 
 
 def init_worker():
@@ -211,7 +212,7 @@ def run_object_detection(
 
         from .ai import detect_objects
 
-        for img, scale, effective_origin in padded_images_and_details:
+        for img, scale, effective_origin in padded_images_and_details[:1]:
             eff_orig_x, eff_orig_y = effective_origin
 
             duration, detections = detect_objects(img)
@@ -264,7 +265,8 @@ def run_object_detection(
             interpolation=cv2.INTER_NEAREST,
         )
 
-        return worker_pid, timestamp, frame_lores, result
+        #return worker_pid, timestamp, frame_lores, result
+        return worker_pid, timestamp, result
 
     except Exception as e:
         logger.info(
@@ -315,13 +317,19 @@ def on_done(future: Future):
     # logger.info(f"HANDLE DONE: {os.getpid()}")
 
     try:
-        worker_pid, timestamp, frame_lores, detected_objects = future.result()
+        #worker_pid, timestamp, frame_lores, detected_objects = future.result()
+        worker_pid, timestamp, detected_objects = future.result()
+
+        with cache_lock:
+            # .pop() is atomic and perfect for this, returns None if key is missing
+            frame_lores = lowres_frame_cache.pop(timestamp, None)
+
         if timestamp < max_output_timestamp:
             logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
-            max_output_timestamp = timestamp
+             max_output_timestamp = timestamp
 
-            if detected_objects:
+             if detected_objects:
                 inference_time, detections = detected_objects
 
                 detections_denormalized = []
@@ -536,6 +544,9 @@ def process_frame(frame_hires: np.ndarray):
 
                     rois = motion_detector.create_rois(mask=mask)
                     if rois:
+                        with cache_lock:
+                            lowres_frame_cache[timestamp] = frame_lores
+
                         future: Future | None = process_pool.submit(
                             run_object_detection,
                             shape=frame_hires.shape,
@@ -651,7 +662,9 @@ def start_ffmpeg(*, video_path, output_width, output_height):
     global ffmpeg_process
 
     command = [
+#        "taskset", "-c", "0",
         "ffmpeg",
+        "-r", "1",
         "-hwaccel",
         "rkmpp",
         "-hwaccel_output_format",
@@ -660,10 +673,12 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-1",
         "-i",
         video_path,
+        #"-c:v", "copy",
         "-f",
         "rawvideo",
         "-vf",
-        f"fps=fps=1,hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
+        f"hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
+        #"-threads:v", "2",
         "-pix_fmt",
         "rgb24",
         "-an",
