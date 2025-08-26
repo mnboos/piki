@@ -261,6 +261,7 @@ def run_object_detection(
             None,
             fx=1 / preview_downscale_factor,
             fy=1 / preview_downscale_factor,
+            interpolation=cv2.INTER_NEAREST,
         )
 
         return worker_pid, timestamp, frame_lores, result
@@ -406,6 +407,7 @@ def process_frame(frame_hires: np.ndarray):
         None,
         fx=1 / preview_downscale_factor,
         fy=1 / preview_downscale_factor,
+        interpolation=cv2.INTER_NEAREST,
     )
 
     future: Future | None = None
@@ -661,7 +663,7 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-f",
         "rawvideo",
         "-vf",
-        f"hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
+        f"fps=fps=1,hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
         "-pix_fmt",
         "rgb24",
         "-an",
@@ -692,8 +694,10 @@ def start_ffmpeg(*, video_path, output_width, output_height):
 
     def log_stderr():
         if ffmpeg_process.stderr:
+            full_error = ""
             for line in iter(ffmpeg_process.stderr.readline, b""):
-                logger.error("FFMPEG: %s", line.decode("utf-8").strip())
+                full_error += line.decode("utf-8").strip()
+            logger.error("FFMPEG: %s", full_error)
 
     threading.Thread(target=log_stderr, daemon=True).start()
     return ffmpeg_process
