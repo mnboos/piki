@@ -4,7 +4,7 @@ import multiprocessing as mp
 import logging
 import random
 from ctypes import c_float, c_int
-from multiprocessing import Event, Queue, Condition, Manager
+from multiprocessing import Event, Queue, Condition, Manager, shared_memory, Lock
 from typing import TypeVar, Generic
 import inspect
 import os
@@ -36,6 +36,58 @@ logger.info(f"OpenCV has OpenCL: {has_opencl}")
 if has_opencl:
     cv2.ocl.setUseOpenCL(True)
 
+class DoubleBuffer:
+    """
+    A synchronized, shared-memory double buffer for efficient, non-blocking
+    frame passing between a high-speed producer and a slower consumer.
+    """
+    def __init__(self, name: str, shape: tuple, dtype: np.dtype):
+        """
+        Initializes the two shared memory buffers.
+        Args:
+            name: A unique name prefix for the shared memory blocks.
+            shape: The numpy shape of the data (e.g., (1080, 1920, 3)).
+            dtype: The numpy data type (e.g., np.uint8).
+        """
+        self.name = name
+        self.shape = shape
+        self.dtype = dtype
+        size_in_bytes = int(np.prod(shape) * np.dtype(dtype).itemsize)
+
+        try:
+            self._shm_a = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_a")
+            self._shm_b = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_b")
+        except FileExistsError:
+            logger.warning(f"Shared memory for '{name}' already exists. Unlinking and recreating.")
+            shared_memory.SharedMemory(name=f"shm_{name}_a").unlink()
+            shared_memory.SharedMemory(name=f"shm_{name}_b").unlink()
+            self._shm_a = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_a")
+            self._shm_b = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_b")
+
+        self._buffer_a = np.ndarray(shape, dtype=dtype, buffer=self._shm_a.buf)
+        self._buffer_b = np.ndarray(shape, dtype=dtype, buffer=self._shm_b.buf)
+        self._buffers = [self._buffer_a, self._buffer_b]
+        self._lock = Lock()
+        self._write_index = 0
+
+    def write(self, frame: np.ndarray):
+        """Writes a new frame to the current back buffer."""
+        self._buffers[self._write_index][:] = frame
+
+    def read_and_swap(self) -> np.ndarray:
+        """Atomically swaps buffers and returns a copy of the new front buffer."""
+        with self._lock:
+            read_idx = self._write_index
+            self._write_index = 1 - read_idx
+        return self._buffers[read_idx].copy()
+
+    def close(self):
+        """Closes and unlinks the shared memory blocks."""
+        logger.info(f"Closing and unlinking double buffer '{self.name}'...")
+        self._shm_a.close()
+        self._shm_a.unlink()
+        self._shm_b.close()
+        self._shm_b.unlink()
 
 @dataclasses.dataclass
 class ForegroundMaskOptions:
@@ -283,10 +335,12 @@ class SharedMemoryObject:
     dictionary for its state, supporting nested instances.
     """
 
+    SHARED_DICT_ATTRNAME = "_shared_dict"
+
     def __init__(self, _dict_proxy=None, **kwargs):
         # Initialize the shared dictionary for this instance
         shared_dict = _dict_proxy if _dict_proxy is not None else manager.dict()
-        super().__setattr__("_shared_dict", shared_dict)
+        super().__setattr__(self.SHARED_DICT_ARGNAME, shared_dict)
 
         all_fields = self.__class__.__annotations__
 
@@ -313,7 +367,7 @@ class SharedMemoryObject:
             if isinstance(value, SharedMemoryObject):
                 nested_obj = value
                 # Adopt the existing object's shared dictionary
-                self._shared_dict[name] = nested_obj._shared_dict
+                self._shared_dict[name] = getattr(nested_obj, self.SHARED_DICT_ATTRNAME)
                 super().__setattr__(name, nested_obj)
 
             # Case 2: A dictionary was passed (e.g., debug_settings={'render_bboxes': True})
@@ -400,3 +454,4 @@ class AppSettings(SharedMemoryObject):
 
 
 app_settings = AppSettings(debug_settings=DebugSettings(render_bboxes=True))
+
