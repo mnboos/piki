@@ -10,7 +10,6 @@ dependencies = [
     "gpiozero==2.0.1",
     "numpy==2.3.2",
     "opencv-contrib-python-headless==4.11.0.86",
-    "picamera2==0.3.30",
     "pigpio==1.78",
     "rich==14.1.0",
     "rknn-toolkit-lite2==2.3.2 ; platform_machine == 'aarch64'",
