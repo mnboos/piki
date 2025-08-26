@@ -21,6 +21,52 @@ CLASSES = ("person", "bicycle", "car", "motorbike ", "aeroplane ", "bus ", "trai
            "pottedplant", "bed", "diningtable", "toilet ", "tvmonitor", "laptop	", "mouse	", "remote ", "keyboard ", "cell phone", "microwave ",
            "oven ", "toaster", "sink", "refrigerator ", "book", "clock", "vase", "scissors ", "teddy bear ", "hair drier", "toothbrush ")
 
+# You still need your list of class names from the COCO dataset
+CLASSES = ("person", "bicycle", "car", "motorbike ", "aeroplane ", "bus ", "train", "truck ", "boat", "traffic light",
+           "fire hydrant", "stop sign ", "parking meter", "bench", "bird", "cat", "dog ", "horse ", "sheep", "cow", "elephant",
+           "bear", "zebra ", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite",
+           "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife ",
+           "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza ", "donut", "cake", "chair", "sofa",
+           "pottedplant", "bed", "diningtable", "toilet ", "tvmonitor", "laptop	", "mouse	", "remote ", "keyboard ", "cell phone", "microwave ",
+           "oven ", "toaster", "sink", "refrigerator ", "book", "clock", "vase", "scissors ", "teddy bear ", "hair drier", "toothbrush ")
+
+
+def yolov10_post_process(outputs: list, confidence_threshold: float = 0.5):
+    """
+    Parses the output of a YOLOv10 model.
+
+    Args:
+        outputs: The list of NumPy arrays from rknn.inference().
+                 Assumes a single output tensor of shape (1, 300, 6).
+        confidence_threshold: The minimum score for a detection to be kept.
+
+    Returns:
+        A list of tuples, where each tuple is (label, confidence, box).
+        The box is in [x1, y1, x2, y2] format.
+    """
+    # The output from rknn.inference() is a list of arrays. YOLOv10 typically has one output.
+    detections = outputs[0]
+
+    # The shape is (1, 300, 6). We remove the first dimension (batch size).
+    detections = detections[0]  # Shape is now (300, 6)
+
+    final_results = []
+    for detection in detections:
+        # detection is a row: [x1, y1, x2, y2, score, label_index]
+        score = detection[4]
+
+        # Apply the confidence threshold
+        if score >= confidence_threshold:
+            label_index = int(detection[5])
+            box = detection[0:4]  # The box is already in [x1, y1, x2, y2] format
+
+            # Get the class name
+            label = CLASSES[label_index]
+
+            final_results.append((label, score, box))
+
+    return final_results
+
 
 def xywh2xyxy(x):
     # Convert [x, y, w, h] to [x1, y1, x2, y2]
@@ -181,7 +227,7 @@ try:
     #rknn.config(mean_values=[[0, 0, 0]], std_values=[[255, 255, 255]], target_platform='rk3566')
     print('done')
 
-    model_file = Path(__file__).parent / "models" / "yolov5s_relu.rknn"
+    model_file = Path(__file__).parent / "models" / "yolov10n.rknn"
     assert model_file.is_file()
 
     # Load ONNX model
@@ -212,30 +258,16 @@ try:
 
         t0 = time.perf_counter()
         outputs = rknn.inference(inputs=[input_data], data_format=['nhwc'])
+        results = yolov10_post_process(outputs, confidence_threshold=0.5)
+        #print("outputs: ", outputs)
         tt = round((time.perf_counter() - t0) * 1000)
 
-        # post process
-        input0_data = outputs[0]
-        input1_data = outputs[1]
-        input2_data = outputs[2]
-
-        input0_data = input0_data.reshape([3, -1] + list(input0_data.shape[-2:]))
-        input1_data = input1_data.reshape([3, -1] + list(input1_data.shape[-2:]))
-        input2_data = input2_data.reshape([3, -1] + list(input2_data.shape[-2:]))
-
-        input_data = list()
-        input_data.append(np.transpose(input0_data, (2, 3, 0, 1)))
-        input_data.append(np.transpose(input1_data, (2, 3, 0, 1)))
-        input_data.append(np.transpose(input2_data, (2, 3, 0, 1)))
-
-        boxes, classes, scores = yolov5_post_process(input_data)
-
-        results = []
-
-        if boxes is not None and classes is not None and scores is not None:
-            for box, cls, score in zip(boxes, classes, scores):
-                label = CLASSES[cls]
-                results.append((label, score, box))  # this box is already locally normalized
+        
+        #results = []
+        #if boxes is not None and classes is not None and scores is not None:
+        #    for box, cls, score in zip(boxes, classes, scores):
+        #        label = CLASSES[cls]
+        #        results.append((label, score, box))  # this box is already locally normalized
 
         return tt, results
 except:

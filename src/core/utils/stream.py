@@ -212,7 +212,7 @@ def run_object_detection(
 
         from .ai import detect_objects
 
-        for img, scale, effective_origin in padded_images_and_details[:1]:
+        for img, scale, effective_origin in padded_images_and_details:
             eff_orig_x, eff_orig_y = effective_origin
 
             duration, detections = detect_objects(img)
@@ -268,12 +268,12 @@ def run_object_detection(
         #return worker_pid, timestamp, frame_lores, result
         return worker_pid, timestamp, result
 
-    except Exception as e:
+    except:
         logger.info(
             f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!"
         )
         traceback.print_exc()
-        raise e
+        raise
     finally:
         if existing_shm is not None:
             existing_shm.close()
@@ -556,6 +556,8 @@ def process_frame(frame_hires: np.ndarray):
                         )
                         active_futures.append(future)
                         future.add_done_callback(on_done)
+
+                        #res = run_object_detection(shape=frame_hires.shape,dtype=frame_hires.dtype, rois=rois,timestamp=timestamp)
                 except:
                     traceback.print_exc()
                     raise
