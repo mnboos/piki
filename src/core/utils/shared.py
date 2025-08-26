@@ -335,12 +335,10 @@ class SharedMemoryObject:
     dictionary for its state, supporting nested instances.
     """
 
-    SHARED_DICT_ATTRNAME = "_shared_dict"
-
     def __init__(self, _dict_proxy=None, **kwargs):
         # Initialize the shared dictionary for this instance
         shared_dict = _dict_proxy if _dict_proxy is not None else manager.dict()
-        super().__setattr__(self.SHARED_DICT_ARGNAME, shared_dict)
+        super().__setattr__("_shared_dict", shared_dict)
 
         all_fields = self.__class__.__annotations__
 
@@ -367,7 +365,7 @@ class SharedMemoryObject:
             if isinstance(value, SharedMemoryObject):
                 nested_obj = value
                 # Adopt the existing object's shared dictionary
-                self._shared_dict[name] = getattr(nested_obj, self.SHARED_DICT_ATTRNAME)
+                self._shared_dict[name] = nested_obj._shared_dict
                 super().__setattr__(name, nested_obj)
 
             # Case 2: A dictionary was passed (e.g., debug_settings={'render_bboxes': True})
