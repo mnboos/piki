@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
+
 import logging
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ class RelativePathFilter(logging.Filter):
         # You might need to adjust this if your app runs from a different directory.
         record.relativePath = os.path.relpath(record.pathname)
         return True
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -77,6 +79,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "piki.wsgi.application"
+ASGI_APPLICATION = "piki.asgi.application"
 
 
 # Database
@@ -139,7 +142,11 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "verbose", "filters": ["add_relative_path"],},
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+            "filters": ["add_relative_path"],
+        },
     },
     "filters": {
         "add_relative_path": {

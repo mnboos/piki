@@ -36,11 +36,13 @@ logger.info(f"OpenCV has OpenCL: {has_opencl}")
 if has_opencl:
     cv2.ocl.setUseOpenCL(True)
 
+
 class DoubleBuffer:
     """
     A synchronized, shared-memory double buffer for efficient, non-blocking
     frame passing between a high-speed producer and a slower consumer.
     """
+
     def __init__(self, name: str, shape: tuple, dtype: np.dtype):
         """
         Initializes the two shared memory buffers.
@@ -55,14 +57,24 @@ class DoubleBuffer:
         size_in_bytes = int(np.prod(shape) * np.dtype(dtype).itemsize)
 
         try:
-            self._shm_a = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_a")
-            self._shm_b = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_b")
+            self._shm_a = shared_memory.SharedMemory(
+                create=True, size=size_in_bytes, name=f"shm_{name}_a"
+            )
+            self._shm_b = shared_memory.SharedMemory(
+                create=True, size=size_in_bytes, name=f"shm_{name}_b"
+            )
         except FileExistsError:
-            logger.warning(f"Shared memory for '{name}' already exists. Unlinking and recreating.")
+            logger.warning(
+                f"Shared memory for '{name}' already exists. Unlinking and recreating."
+            )
             shared_memory.SharedMemory(name=f"shm_{name}_a").unlink()
             shared_memory.SharedMemory(name=f"shm_{name}_b").unlink()
-            self._shm_a = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_a")
-            self._shm_b = shared_memory.SharedMemory(create=True, size=size_in_bytes, name=f"shm_{name}_b")
+            self._shm_a = shared_memory.SharedMemory(
+                create=True, size=size_in_bytes, name=f"shm_{name}_a"
+            )
+            self._shm_b = shared_memory.SharedMemory(
+                create=True, size=size_in_bytes, name=f"shm_{name}_b"
+            )
 
         self._buffer_a = np.ndarray(shape, dtype=dtype, buffer=self._shm_a.buf)
         self._buffer_b = np.ndarray(shape, dtype=dtype, buffer=self._shm_b.buf)
@@ -88,6 +100,7 @@ class DoubleBuffer:
         self._shm_a.unlink()
         self._shm_b.close()
         self._shm_b.unlink()
+
 
 @dataclasses.dataclass
 class ForegroundMaskOptions:
@@ -150,7 +163,7 @@ class MultiprocessingDequeue(Generic[T]):
             return self.queue.get()
 
 
-output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))
+output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))  # todo: make typed
 mask_output_buffer = MultiprocessingDequeue[np.ndarray](queue=Queue(maxsize=10))
 prob_threshold = mp.Value(c_float, 0.4)
 
@@ -452,4 +465,3 @@ class AppSettings(SharedMemoryObject):
 
 
 app_settings = AppSettings(debug_settings=DebugSettings(render_bboxes=True))
-

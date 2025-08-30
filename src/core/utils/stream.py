@@ -89,6 +89,7 @@ process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 # worker_slot_semaphore = Semaphore(NUM_AI_WORKERS)
 
+
 def frame_producer(ffmpeg_stdout, buffer_instance: DoubleBuffer):
     """
     Reads raw frames from FFmpeg's stdout pipe and writes them into a DoubleBuffer.
@@ -101,7 +102,9 @@ def frame_producer(ffmpeg_stdout, buffer_instance: DoubleBuffer):
         while True:
             in_bytes = ffmpeg_stdout.read(frame_size)
             if not in_bytes or len(in_bytes) != frame_size:
-                logger.warning("Producer received incomplete frame from FFmpeg. Shutting down.")
+                logger.warning(
+                    "Producer received incomplete frame from FFmpeg. Shutting down."
+                )
                 break
             frame = np.frombuffer(in_bytes, dtype=dtype).reshape(shape)
             buffer_instance.write(frame)
@@ -265,7 +268,7 @@ def run_object_detection(
             interpolation=cv2.INTER_NEAREST,
         )
 
-        #return worker_pid, timestamp, frame_lores, result
+        # return worker_pid, timestamp, frame_lores, result
         return worker_pid, timestamp, result
 
     except:
@@ -317,7 +320,7 @@ def on_done(future: Future):
     # logger.info(f"HANDLE DONE: {os.getpid()}")
 
     try:
-        #worker_pid, timestamp, frame_lores, detected_objects = future.result()
+        # worker_pid, timestamp, frame_lores, detected_objects = future.result()
         worker_pid, timestamp, detected_objects = future.result()
 
         with cache_lock:
@@ -327,9 +330,9 @@ def on_done(future: Future):
         if timestamp < max_output_timestamp:
             logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
-             max_output_timestamp = timestamp
+            max_output_timestamp = timestamp
 
-             if detected_objects:
+            if detected_objects:
                 inference_time, detections = detected_objects
 
                 detections_denormalized = []
@@ -448,15 +451,11 @@ def process_frame(frame_hires: np.ndarray):
                     dt = current_time - last_time
 
                     if dt:
-                        instantaneous_velocity_vector = (
-                            current_pos - last_pos
-                        ) / dt
+                        instantaneous_velocity_vector = (current_pos - last_pos) / dt
                         velocity_buffer.append(instantaneous_velocity_vector)
 
                     if len(velocity_buffer) > 0:
-                        average_velocity_vector = np.mean(
-                            list(velocity_buffer), axis=0
-                        )
+                        average_velocity_vector = np.mean(list(velocity_buffer), axis=0)
 
                         # 4. Calculate speed (magnitude) from the AVERAGE vector
                         smoothed_pixels_per_second = np.linalg.norm(
@@ -518,7 +517,9 @@ def process_frame(frame_hires: np.ndarray):
                 )
 
         else:
-            if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
+            if app_settings.debug_settings.debug_enabled or os.environ.get(
+                "DISABLE_AI"
+            ):
                 grayscale_output = True
                 if grayscale_output:
                     gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
@@ -538,6 +539,8 @@ def process_frame(frame_hires: np.ndarray):
                     draw_boxes=True,
                 )
                 mask_output_buffer.append(buf_highlighted)
+
+                output_buffer.append((0, current_time, frame_lores, []))
             elif has_movement and len(active_futures) < NUM_AI_WORKERS:
                 try:
                     timestamp = time.monotonic_ns()
@@ -557,7 +560,7 @@ def process_frame(frame_hires: np.ndarray):
                         active_futures.append(future)
                         future.add_done_callback(on_done)
 
-                        #res = run_object_detection(shape=frame_hires.shape,dtype=frame_hires.dtype, rois=rois,timestamp=timestamp)
+                        # res = run_object_detection(shape=frame_hires.shape,dtype=frame_hires.dtype, rois=rois,timestamp=timestamp)
                 except:
                     traceback.print_exc()
                     raise
@@ -659,14 +662,16 @@ def stream_nonblocking():
         streamer_func = stream_camera
     thread_pool.submit(streamer_func)
 
+
 def start_ffmpeg(*, video_path, output_width, output_height):
     """Launches the FFmpeg process to output a single high-res stream to stdout."""
     global ffmpeg_process
 
     command = [
-#        "taskset", "-c", "0",
+        #        "taskset", "-c", "0",
         "ffmpeg",
-        "-r", "1",
+        "-r",
+        "1",
         "-hwaccel",
         "rkmpp",
         "-hwaccel_output_format",
@@ -675,12 +680,12 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-1",
         "-i",
         video_path,
-        #"-c:v", "copy",
+        # "-c:v", "copy",
         "-f",
         "rawvideo",
         "-vf",
         f"hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
-        #"-threads:v", "2",
+        # "-threads:v", "2",
         "-pix_fmt",
         "rgb24",
         "-an",
@@ -693,6 +698,8 @@ def start_ffmpeg(*, video_path, output_width, output_height):
             "ffmpeg",
             "-stream_loop",
             "-1",
+            "-r",
+            "1",
             "-i",
             video_path,
             "-f",
@@ -702,6 +709,8 @@ def start_ffmpeg(*, video_path, output_width, output_height):
             "-dn",
             "-pix_fmt",
             "rgb24",
+            "-r",
+            "1",
             "-",
         ]
     logger.info("Starting FFmpeg with command: %s", " ".join(command))
@@ -718,6 +727,7 @@ def start_ffmpeg(*, video_path, output_width, output_height):
 
     threading.Thread(target=log_stderr, daemon=True).start()
     return ffmpeg_process
+
 
 def get_file_streamer(video_path: str | None):
     if not video_path:
@@ -742,7 +752,7 @@ def get_file_streamer(video_path: str | None):
         logger.info("Starting videostream in 3s...")
         # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
         time.sleep(3)
-    
+
         print("------------!!!!!!!!!!!!! STREAM")
         high_res_w, high_res_h = 1920, 1080
         channels = 3
@@ -756,7 +766,9 @@ def get_file_streamer(video_path: str | None):
             name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8
         )
 
-        process = start_ffmpeg(video_path=video_path, output_width=high_res_w, output_height=high_res_h)
+        process = start_ffmpeg(
+            video_path=video_path, output_width=high_res_w, output_height=high_res_h
+        )
 
         producer_thread = threading.Thread(
             target=frame_producer, args=(process.stdout, double_buffer), daemon=True

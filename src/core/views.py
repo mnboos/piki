@@ -80,7 +80,8 @@ def stream_camera():
                 continue
 
             latest_result = shared.output_buffer.popleft()
-            if not latest_result:
+            if latest_result is None:
+                time.sleep(0.01)
                 continue
 
             # The 'frame' here is the low-resolution preview frame
