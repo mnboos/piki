@@ -69,20 +69,46 @@ class DoubleBuffer:
 
         self._buffer_a = np.ndarray(shape, dtype=dtype, buffer=self._shm_a.buf)
         self._buffer_b = np.ndarray(shape, dtype=dtype, buffer=self._shm_b.buf)
-        self._buffers = [self._buffer_a, self._buffer_b]
+        self._read_buf = self._buffer_a
+        self._write_buf = self._buffer_b
         self._lock = Lock()
-        self._write_index = 0
+        self._condition = Condition(self._lock)
+        self._new_frame_available = False
 
     def write(self, frame: np.ndarray):
-        """Writes a new frame to the current back buffer."""
-        self._buffers[self._write_index][:] = frame
-
-    def read_and_swap(self) -> np.ndarray:
-        """Atomically swaps buffers and returns a copy of the new front buffer."""
+        """
+        Producer writes a frame to the current write buffer and marks it as available.
+        """
         with self._lock:
-            read_idx = self._write_index
-            self._write_index = 1 - read_idx
-        return self._buffers[read_idx].copy()
+            # Copy frame data into the buffer reserved for writing.
+            self._write_buf[:] = frame
+
+            # Set the flag to signal that this buffer is now ready for consumption.
+            self._new_frame_available = True
+
+            # Wake up the consumer.
+            self._condition.notify()
+
+    def wait_and_read(self) -> np.ndarray:
+        """
+        Consumer waits for a new frame, swaps buffers, and returns the new frame.
+        """
+        with self._lock:
+            # This is the key: the consumer will sleep here until the producer
+            # has set the _new_frame_available flag.
+            while not self._new_frame_available:
+                self._condition.wait()
+
+            # A new frame is ready. Swap the roles of the buffers.
+            # The buffer we just wrote to becomes the new reading buffer.
+            # The old reading buffer becomes the new writing buffer.
+            self._read_buf, self._write_buf = self._write_buf, self._read_buf
+
+            # Reset the flag so we will wait for the *next* frame.
+            self._new_frame_available = False
+
+        # Return a copy of the data from the (now updated) read buffer.
+        return self._read_buf.copy()
 
     def close(self):
         """Closes and unlinks the shared memory blocks."""

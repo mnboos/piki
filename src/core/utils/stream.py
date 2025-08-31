@@ -502,7 +502,6 @@ def process_frame(frame_hires: np.ndarray):
                 output_buffer.append((0, 0, frame_lores, []))
 
 
-# This class instance will hold the camera frames
 class StreamingOutput(io.BufferedIOBase):
     def write(self, buf_hires: bytes) -> None:
         if self.closed:
@@ -512,7 +511,6 @@ class StreamingOutput(io.BufferedIOBase):
             return
 
         buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
-
         process_frame(frame_hires=buf_hires)
 
 
@@ -561,20 +559,6 @@ def stream_nonblocking():
                 picam2.configure(camera_config)
                 picam2.start_preview(picamera2.Preview.NULL)
 
-                # class MeasuringJpegEncoder(JpegEncoder):
-                #     def encode_func(self, request, name):
-                #         measure_encode = get_measure("JpegEncoder")
-                #         res = super().encode_func(request, name)
-                #         measure_encode()
-                #         return res
-                #
-                # class MeasuringMJPEGEncoder(MJPEGEncoder):
-                #     def encode(self, request, name):
-                #         measure_encode = get_measure("MJPEGEncoder")
-                #         res = super().encode(request, name)
-                #         measure_encode()
-                #         return res
-
                 encoder = MJPEGEncoder()
 
                 picam2.start_recording(encoder, FileOutput(input_buffer))
@@ -599,7 +583,6 @@ def start_ffmpeg(*, video_path, output_width, output_height):
     global ffmpeg_process
 
     command = [
-        #        "taskset", "-c", "0",
         "ffmpeg",
         "-r",
         "1",
@@ -611,12 +594,10 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-1",
         "-i",
         video_path,
-        # "-c:v", "copy",
         "-f",
         "rawvideo",
         "-vf",
         f"hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
-        # "-threads:v", "2",
         "-pix_fmt",
         "rgb24",
         "-an",
@@ -625,7 +606,7 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-",  # Output to stdout
     ]
     if platform.machine().lower() != "aarch64":
-        fps = 5
+        fps = 2
         command = [
             "ffmpeg",
             "-re",
@@ -644,8 +625,6 @@ def start_ffmpeg(*, video_path, output_width, output_height):
             "-dn",
             "-pix_fmt",
             "rgb24",
-            # "-r",
-            # f"{fps}",
             "-",
         ]
     logger.info("Starting FFmpeg with command: %s", " ".join(command))
@@ -702,28 +681,16 @@ def get_file_streamer(video_path: str | None):
         logger.info("Consumer loop starting.")
 
         while True:
-            time.sleep(0.1)
-            # 1. Wait efficiently for a free worker. Consumes zero CPU.
-            # work_token_queue.get()
-
-            # 2. Get the latest HIGH-RES frame.
-            high_res_frame = double_buffer.read_and_swap()
-
-            future = process_frame(high_res_frame)
-            # if not future:
-            #     work_token_queue.put(None)
+            high_res_frame = double_buffer.wait_and_read()
+            process_frame(high_res_frame)
 
     return stream_file_hw
-
-
-# This single instance will be imported by other parts of the app
 
 
 @atexit.register
 def cleanup():
     logger.info("[DJANGO SHUTDOWN] Stopping processes.....")
 
-    # with input_buffer.condition:
     input_buffer.close()
 
     thread_pool.shutdown(wait=True, cancel_futures=True)
