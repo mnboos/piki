@@ -1,17 +1,15 @@
 import errno
+import time
+from multiprocessing import Queue
+from multiprocessing.managers import BaseManager
 
 from rich.console import group
 from rich.layout import Layout
-from rich.panel import Panel
-
-from .shared import MultiprocessingDequeue
 from rich.live import Live
+from rich.panel import Panel
 from rich.table import Table
-import atexit
-import time
 
-from multiprocessing import Queue, Manager
-from multiprocessing.managers import BaseManager
+from .interfaces import MultiprocessingDequeue
 
 
 class QueueManager(BaseManager):
@@ -51,9 +49,7 @@ def retrieve_queue(max_retries=10):
             return getattr(queue_manager, _manager_getter_name)()
         except OSError as e:
             if e.errno == errno.EADDRINUSE:
-                raise RuntimeError(
-                    "Address is already in use, starting queue manager is not possible."
-                ) from e
+                raise RuntimeError("Address is already in use, starting queue manager is not possible.") from e
         except (EOFError, ConnectionRefusedError) as e:
             retries += 1
             if retries > max_retries:
@@ -62,9 +58,7 @@ def retrieve_queue(max_retries=10):
                 ) from e
 
             backoff = min(30, (2**retries) * 0.1)
-            print(
-                f"Queue manager not yet started, trying again in {str(backoff).rjust(5)}s (retry {retries})"
-            )
+            print(f"Queue manager not yet started, trying again in {str(backoff).rjust(5)}s (retry {retries})")
 
             time.sleep(backoff)
             continue
@@ -103,17 +97,17 @@ class LiveMetricsDashboard:
         yield Panel("World")
 
     def create_layout(self):
-        l = Layout()
+        layout = Layout()
         # l.split_column(Layout(name="upper"), Layout(name="lower"))
         # l["lower"].split_row(
         #     Layout(name="left"),
         #     Layout(name="right"),
         # )
-        l.split_row(
+        layout.split_row(
             Layout(Panel(self._workers_table(), title="Workers"), name="left"),
             Layout(name="right"),
         )
-        return l
+        return layout
 
     def run(self):
         # m.start()

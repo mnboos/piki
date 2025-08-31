@@ -18,7 +18,14 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff==0.12.10",
+    "ty==0.0.1a19",
 ]
 model-conversion = []
 
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py311"
 
+[tool.ruff.lint]
+select = ["I"]

@@ -1,17 +1,16 @@
 import time
 
 from django.http.response import StreamingHttpResponse
-from django.shortcuts import render, redirect
+from django.shortcuts import redirect, render
 
-from .utils import clamp
+from .utils import clamp, shared
 from .utils.shared import (
-    settings,
-    live_stream_enabled,
-    setup_motion_detector,
+    MotionDetector,
     app_settings,
     cv2,
+    live_stream_enabled,
+    settings,
 )
-from .utils import shared
 
 
 def index(request):
@@ -20,12 +19,8 @@ def index(request):
 
 
 def config(request):
-    request.session.setdefault(
-        "mask_transparency", shared.mask_transparency.value * 100
-    )
-    request.session.setdefault(
-        "mog2_history", settings.foreground_mask_options.mog2_history.value
-    )
+    request.session.setdefault("mask_transparency", shared.mask_transparency.value * 100)
+    request.session.setdefault("mog2_history", settings.foreground_mask_options.mog2_history.value)
     request.session.setdefault(
         "mog2_var_threshold",
         settings.foreground_mask_options.mog2_var_threshold.value,
@@ -55,7 +50,7 @@ def config(request):
         settings.foreground_mask_options.denoise_kernelsize.value = denoise_strength
         request.session["denoise_strength"] = denoise_strength
 
-        setup_motion_detector()
+        shared.motion_detector = MotionDetector()
 
     return render(request, "core/config.html", {})
 
@@ -65,7 +60,7 @@ def stream_camera():
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.5
-    text_color = (255, 255, 255)  # White in BGR
+    # text_color = (255, 255, 255)  # White in BGR
     box_color = (0, 255, 128)  # A nice green for the boxes
     thickness = 2
 
@@ -118,9 +113,7 @@ def stream_camera():
                 text_to_draw = f"{label} ({confidence:.1%})"
 
                 # Create a solid background for the text for better readability
-                (text_w, text_h), _ = cv2.getTextSize(
-                    text_to_draw, font, font_scale, thickness
-                )
+                (text_w, text_h), _ = cv2.getTextSize(text_to_draw, font, font_scale, thickness)
                 text_bg_rect_start = (left, top - text_h - 7)
                 text_bg_rect_end = (left + text_w, top)
                 cv2.rectangle(
@@ -169,11 +162,7 @@ def stream_mask():
             success, buffer = cv2.imencode(".jpg", frame, encode_param)
             if success:
                 frame_bytes = buffer.tobytes()
-                yield (
-                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                    + frame_bytes
-                    + b"\r\n"
-                )
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
     finally:
         # shared.is_mask_streaming_enabled.clear()
         shared.is_object_detection_disabled.clear()
@@ -182,16 +171,12 @@ def stream_mask():
 
 def video_feed(request):
     """Video streaming route."""
-    return StreamingHttpResponse(
-        stream_camera(), content_type="multipart/x-mixed-replace; boundary=frame"
-    )
+    return StreamingHttpResponse(stream_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
 
 
 def mask_feed(request):
     """Video streaming route."""
-    return StreamingHttpResponse(
-        stream_mask(), content_type="multipart/x-mixed-replace; boundary=frame"
-    )
+    return StreamingHttpResponse(stream_mask(), content_type="multipart/x-mixed-replace; boundary=frame")
 
 
 def config_ai(request):

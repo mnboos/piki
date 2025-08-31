@@ -1,40 +1,40 @@
-import os
-import signal
-import threading
-from collections import deque, namedtuple
-from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import shared_memory, Lock, Queue
-import subprocess
-import multiprocessing as mp
-import platform
-import io
-import time
 import atexit
-from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
+import io
+import logging
+import multiprocessing as mp
+import os
+import platform
+import signal
+import subprocess
+import threading
+import time
+import traceback
+from collections import deque, namedtuple
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
+from multiprocessing import Lock, Semaphore, shared_memory
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional
 
 import numpy as np
-import traceback
-import logging
 
 from .func import (
     get_padded_roi_images,
 )
+from .interfaces import DoubleBuffer
 from .metrics import LiveMetricsDashboard
 from .shared import (
-    DoubleBuffer,
-    mask_transparency,
-    app_settings,
-    output_buffer,
-    mask_output_buffer,
-    live_stream_enabled,
-    motion_detector,
     NUM_AI_WORKERS,
-    preview_downscale_factor,
     ai_input_size,
-    is_object_detection_disabled,
+    app_settings,
     cv2,
+    is_object_detection_disabled,
+    live_stream_enabled,
+    mask_output_buffer,
+    mask_transparency,
+    motion_detector,
+    output_buffer,
+    preview_downscale_factor,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,7 @@ logger = logging.getLogger(__name__)
 SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
 shm_lock = Lock()  # To synchronize access to the shared memory
 shared_mem: SharedMemory | None = None  # Will hold the SharedMemory instance
-shared_array: Optional[np.typing.NDArray] = (
-    None  # The numpy array view of the shared memory
-)
+shared_array: Optional[np.typing.NDArray] = None  # The numpy array view of the shared memory
 
 last_known_bbox = None
 last_known_velocity = None
@@ -54,7 +52,7 @@ velocity_buffer = deque(maxlen=15)
 
 
 double_buffer: DoubleBuffer | None = None
-work_token_queue = Queue(maxsize=NUM_AI_WORKERS)
+worker_semaphore = Semaphore(NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
 lowres_frame_cache = {}
 cache_lock = Lock()
@@ -102,9 +100,7 @@ def frame_producer(ffmpeg_stdout, buffer_instance: DoubleBuffer):
         while True:
             in_bytes = ffmpeg_stdout.read(frame_size)
             if not in_bytes or len(in_bytes) != frame_size:
-                logger.warning(
-                    "Producer received incomplete frame from FFmpeg. Shutting down."
-                )
+                logger.warning("Producer received incomplete frame from FFmpeg. Shutting down.")
                 break
             frame = np.frombuffer(in_bytes, dtype=dtype).reshape(shape)
             buffer_instance.write(frame)
@@ -124,9 +120,7 @@ def setup_shared_memory(frame_shape, frame_dtype):
         # Create a new shared memory block
         size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
-        logger.info(
-            f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB"
-        )
+        logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB")
     except FileExistsError:
         # If it already exists from a previous crashed run, unlink it and retry
         logger.info("Shared memory block already exists, unlinking and recreating.")
@@ -221,29 +215,19 @@ def run_object_detection(
             duration, detections = detect_objects(img)
             total_duration += duration
 
-            # 'detections' is a list of (label, confidence, local_pixel_bbox)
-            # where local_pixel_bbox is (x, y, w, h)
             for label, confidence, local_pixel_bbox in detections:
-                # --- START: Correct Transformation Logic ---
+                local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
 
-                # 1. Unpack the LOCAL PIXEL coordinates (x, y, w, h) from ai.py
-                local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = (
-                    local_pixel_bbox
-                )
-
-                # 3. Apply the 'scale' factor from the resizing step
                 scaled_px_xmin = local_px_xmin * scale
                 scaled_px_ymin = local_px_ymin * scale
                 scaled_px_xmax = local_px_xmax * scale
                 scaled_px_ymax = local_px_ymax * scale
 
-                # 4. Translate by the 'effective_origin' to get GLOBAL PIXEL coordinates
                 global_px_xmin = scaled_px_xmin + eff_orig_x
                 global_px_ymin = scaled_px_ymin + eff_orig_y
                 global_px_xmax = scaled_px_xmax + eff_orig_x
                 global_px_ymax = scaled_px_ymax + eff_orig_y
 
-                # 5. Re-normalize the FINAL GLOBAL pixel coordinates for views.py
                 final_norm_coords = [
                     global_px_ymin / frame_h,
                     global_px_xmin / frame_w,
@@ -252,29 +236,13 @@ def run_object_detection(
                 ]
 
                 all_detections.append((label, confidence, final_norm_coords))
-                # --- END: Correct Transformation Logic ---
 
-        avg_duration = (
-            0
-            if not len(padded_images_and_details)
-            else total_duration // len(padded_images_and_details)
-        )
+        avg_duration = 0 if not len(padded_images_and_details) else total_duration // len(padded_images_and_details)
         result = avg_duration, all_detections
-        frame_lores = cv2.resize(
-            frame_hires,
-            None,
-            fx=1 / preview_downscale_factor,
-            fy=1 / preview_downscale_factor,
-            interpolation=cv2.INTER_NEAREST,
-        )
-
-        # return worker_pid, timestamp, frame_lores, result
         return worker_pid, timestamp, result
 
     except:
-        logger.info(
-            f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!"
-        )
+        logger.info(f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!")
         traceback.print_exc()
         raise
     finally:
@@ -286,13 +254,11 @@ def denormalize(bbox_normalized, frame_shape):
     frame_height, frame_width, _ = frame_shape
     ymin, xmin, ymax, xmax = bbox_normalized
 
-    # 2. Clamp values to the [0.0, 1.0] range to prevent errors
     ymin = max(0.0, ymin)
     xmin = max(0.0, xmin)
     ymax = min(1.0, ymax)
     xmax = min(1.0, xmax)
 
-    # 3. Denormalize to get PIXEL coordinates for the CURRENT frame
     left = int(xmin * frame_width)
     top = int(ymin * frame_height)
     right = int(xmax * frame_width)
@@ -316,15 +282,10 @@ def on_done(future: Future):
     global max_output_timestamp
     global tracker
     active_futures.remove(future)
-
-    # logger.info(f"HANDLE DONE: {os.getpid()}")
-
     try:
-        # worker_pid, timestamp, frame_lores, detected_objects = future.result()
         worker_pid, timestamp, detected_objects = future.result()
 
         with cache_lock:
-            # .pop() is atomic and perfect for this, returns None if key is missing
             frame_lores = lowres_frame_cache.pop(timestamp, None)
 
         if timestamp < max_output_timestamp:
@@ -353,26 +314,15 @@ def on_done(future: Future):
 
                     with tracker_lock:
                         disable_tracking = True
-                        if (
-                            not disable_tracking
-                            and label in ["person"]
-                            and not tracking.is_set()
-                        ):
+                        if not disable_tracking and label in ["person"] and not tracking.is_set():
                             if tracker is None:
                                 tracker_class = cv2.TrackerKCF
-                                # tracker_class = cv2.TrackerCSRT
                                 params = tracker_class.Params()
                                 logger.info(
                                     "TrackerKCF params: %s",
-                                    {
-                                        k: getattr(params, k)
-                                        for k in dir(params)
-                                        if not k.startswith("_")
-                                    },
+                                    {k: getattr(params, k) for k in dir(params) if not k.startswith("_")},
                                 )
                                 logger.info("orig params: %s", dir(params))
-
-                                # params.max_patch_size = 1024**2
 
                                 tracker = tracker_class.create(params)
                             logger.info("Tracker init shape: %s", frame_lores.shape)
@@ -380,9 +330,7 @@ def on_done(future: Future):
                             tracker.init(frame_lores, (x, y, w, h))
                 dashboard.update(worker_id=worker_pid, inference_time=inference_time)
                 if live_stream_enabled.is_set():
-                    output_buffer.append(
-                        (worker_pid, timestamp, frame_lores, detections_denormalized)
-                    )
+                    output_buffer.append((worker_pid, timestamp, frame_lores, detections_denormalized))
     except BrokenProcessPool:
         logger.info("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
@@ -392,7 +340,7 @@ def on_done(future: Future):
         traceback.print_exc()
         raise
     finally:
-        work_token_queue.put(None)
+        worker_semaphore.release()
 
 
 def process_frame(frame_hires: np.ndarray):
@@ -411,8 +359,6 @@ def process_frame(frame_hires: np.ndarray):
 
         shared_array[:] = frame_hires
 
-    # logger.info("frame hires shape: ", frame_hires.shape)
-
     frame_lores = cv2.resize(
         frame_hires,
         None,
@@ -421,7 +367,6 @@ def process_frame(frame_hires: np.ndarray):
         interpolation=cv2.INTER_NEAREST,
     )
 
-    future: Future | None = None
     if frame_lores is not None and frame_lores.size:
         has_movement, mask = motion_detector.is_moving(frame_lores)
 
@@ -431,6 +376,7 @@ def process_frame(frame_hires: np.ndarray):
         if is_tracking:
             is_coasting = untracked_frames_count
             if not is_coasting:
+                assert tracker
                 # measure_tracking = get_measure("tracking")
                 found, bbox = tracker.update(frame_lores)
                 # tracking_duration = measure_tracking(log=False)
@@ -458,29 +404,20 @@ def process_frame(frame_hires: np.ndarray):
                         average_velocity_vector = np.mean(list(velocity_buffer), axis=0)
 
                         # 4. Calculate speed (magnitude) from the AVERAGE vector
-                        smoothed_pixels_per_second = np.linalg.norm(
-                            average_velocity_vector
-                        )
+                        smoothed_pixels_per_second = np.linalg.norm(average_velocity_vector)
 
                         stationary_threshold_pixels_per_sec = 5
                         # 5. Apply the stationary threshold
-                        if (
-                            smoothed_pixels_per_second
-                            < stationary_threshold_pixels_per_sec
-                        ):
+                        if smoothed_pixels_per_second < stationary_threshold_pixels_per_sec:
                             logger.info(
                                 "SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d",
                                 smoothed_pixels_per_second,
                             )
-                            final_speed_pixels_per_sec = (
-                                0.0  # Snap to zero if it's just jitter
-                            )
+                            final_speed_pixels_per_sec = 0.0  # Snap to zero if it's just jitter
                         else:
                             final_speed_pixels_per_sec = smoothed_pixels_per_second
 
-                        logger.info(
-                            f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s"
-                        )
+                        logger.info(f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s")
 
                     last_known_bbox = (current_time, bbox)
                     output_buffer.append(
@@ -517,9 +454,7 @@ def process_frame(frame_hires: np.ndarray):
                 )
 
         else:
-            if app_settings.debug_settings.debug_enabled or os.environ.get(
-                "DISABLE_AI"
-            ):
+            if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
                 grayscale_output = True
                 if grayscale_output:
                     gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
@@ -541,7 +476,7 @@ def process_frame(frame_hires: np.ndarray):
                 mask_output_buffer.append(buf_highlighted)
 
                 output_buffer.append((0, current_time, frame_lores, []))
-            elif has_movement and len(active_futures) < NUM_AI_WORKERS:
+            elif has_movement:
                 try:
                     timestamp = time.monotonic_ns()
 
@@ -550,6 +485,7 @@ def process_frame(frame_hires: np.ndarray):
                         with cache_lock:
                             lowres_frame_cache[timestamp] = frame_lores
 
+                        worker_semaphore.acquire()
                         future: Future | None = process_pool.submit(
                             run_object_detection,
                             shape=frame_hires.shape,
@@ -559,14 +495,11 @@ def process_frame(frame_hires: np.ndarray):
                         )
                         active_futures.append(future)
                         future.add_done_callback(on_done)
-
-                        # res = run_object_detection(shape=frame_hires.shape,dtype=frame_hires.dtype, rois=rois,timestamp=timestamp)
                 except:
                     traceback.print_exc()
                     raise
             elif not has_movement and not active_futures:
                 output_buffer.append((0, 0, frame_lores, []))
-    return future
 
 
 # This class instance will hold the camera frames
@@ -578,9 +511,7 @@ class StreamingOutput(io.BufferedIOBase):
         if len(active_futures) == NUM_AI_WORKERS:
             return
 
-        buf_hires = cv2.imdecode(
-            np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR
-        )
+        buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
 
         process_frame(frame_hires=buf_hires)
 
@@ -693,30 +624,32 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-dn",
         "-",  # Output to stdout
     ]
-    if not platform.machine().lower() == "aarch64":
+    if platform.machine().lower() != "aarch64":
+        fps = 5
         command = [
             "ffmpeg",
+            "-re",
             "-stream_loop",
             "-1",
-            "-r",
-            "1",
+            # "-r",
+            # f"{fps}",
             "-i",
             video_path,
             "-f",
             "rawvideo",
+            "-vf",
+            f"fps=fps={fps}",
             "-an",
             "-sn",
             "-dn",
             "-pix_fmt",
             "rgb24",
-            "-r",
-            "1",
+            # "-r",
+            # f"{fps}",
             "-",
         ]
     logger.info("Starting FFmpeg with command: %s", " ".join(command))
-    ffmpeg_process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    ffmpeg_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def log_stderr():
         if ffmpeg_process.stderr:
@@ -754,25 +687,14 @@ def get_file_streamer(video_path: str | None):
         time.sleep(3)
 
         print("------------!!!!!!!!!!!!! STREAM")
-        high_res_w, high_res_h = 1920, 1080
+        high_res_w, high_res_h = 1280, 720
         channels = 3
 
-        # Pre-fill the work token queue
-        for _ in range(NUM_AI_WORKERS):
-            if not work_token_queue.full():
-                work_token_queue.put(None)
+        double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
 
-        double_buffer = DoubleBuffer(
-            name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8
-        )
+        process = start_ffmpeg(video_path=video_path, output_width=high_res_w, output_height=high_res_h)
 
-        process = start_ffmpeg(
-            video_path=video_path, output_width=high_res_w, output_height=high_res_h
-        )
-
-        producer_thread = threading.Thread(
-            target=frame_producer, args=(process.stdout, double_buffer), daemon=True
-        )
+        producer_thread = threading.Thread(target=frame_producer, args=(process.stdout, double_buffer), daemon=True)
         producer_thread.start()
 
         logger.info("Waiting for producer to fill first buffer...")
@@ -780,15 +702,16 @@ def get_file_streamer(video_path: str | None):
         logger.info("Consumer loop starting.")
 
         while True:
+            time.sleep(0.1)
             # 1. Wait efficiently for a free worker. Consumes zero CPU.
-            work_token_queue.get()
+            # work_token_queue.get()
 
             # 2. Get the latest HIGH-RES frame.
             high_res_frame = double_buffer.read_and_swap()
 
-            f = process_frame(high_res_frame)
-            if not f:
-                work_token_queue.put(None)
+            future = process_frame(high_res_frame)
+            # if not future:
+            #     work_token_queue.put(None)
 
     return stream_file_hw
 
