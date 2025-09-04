@@ -1,4 +1,4 @@
-from src.core.utils.interfaces import SharedMemoryObject
+from .interfaces import SharedMemoryObject
 
 
 class DebugSettings(SharedMemoryObject):

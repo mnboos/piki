@@ -14,6 +14,7 @@ from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Lock, Semaphore, shared_memory
 from multiprocessing.shared_memory import SharedMemory
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -518,86 +519,19 @@ input_buffer = StreamingOutput()
 
 
 def stream_nonblocking():
-    try:
-        import picamera2
-        from libcamera import controls
-
-        picamera_available = True
-    except ImportError:
-        logger.info("Picamera2 not available: %s", traceback.format_exc())
-        picamera_available = False
-        picamera2 = None
-        controls = None
-
-    mock_video_path = os.environ.get("MOCK_CAMERA_PATH")
-    if not picamera_available or mock_video_path or os.environ.get("MOCK_CAMERA"):
-        streamer_func = get_file_streamer(video_path=mock_video_path)
-    else:
-
-        def stream_camera():
-            from picamera2.encoders import MJPEGEncoder
-            from picamera2.outputs import FileOutput
-
-            try:
-                logger.info("Starting stream in 5 seconds...")
-                time.sleep(5)
-                picam2 = picamera2.Picamera2()
-
-                # noinspection PyUnresolvedReferences
-                noise_reduction_mode = controls.draft.NoiseReductionModeEnum.Fast
-
-                camera_config = picam2.create_video_configuration(
-                    # main={"size": (1296, 972)},
-                    # main={"size": resolution},
-                    # queue=False,
-                    controls={
-                        "FrameRate": 20,
-                        "ColourGains": (1, 1),
-                        "NoiseReductionMode": noise_reduction_mode,
-                    },
-                )
-                picam2.configure(camera_config)
-                picam2.start_preview(picamera2.Preview.NULL)
-
-                encoder = MJPEGEncoder()
-
-                picam2.start_recording(encoder, FileOutput(input_buffer))
-            except:
-                traceback.print_exc()
-                raise
-
-            @atexit.register
-            def cleanup_camera():
-                logger.info("Cleaning up picam2")
-                picam2.stop_encoder()
-                picam2.stop_recording()
-                encoder.stop()
-                picam2.close()
-
-        streamer_func = stream_camera
-    thread_pool.submit(streamer_func)
+    thread_pool.submit(stream_with_ffmpeg)
 
 
-def start_ffmpeg(*, video_path, output_width, output_height):
-    """Launches the FFmpeg process to output a single high-res stream to stdout."""
-    global ffmpeg_process
-
-    command = [
+def _run_ffmpeg(*, input_src: str, input_args: list[str], vf: str):
+    cmd = [
         "ffmpeg",
-        "-r",
-        "1",
-        "-hwaccel",
-        "rkmpp",
-        "-hwaccel_output_format",
-        "drm_prime",
-        "-stream_loop",
-        "-1",
+        *input_args,
         "-i",
-        video_path,
+        input_src,
         "-f",
         "rawvideo",
         "-vf",
-        f"hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
+        vf,
         "-pix_fmt",
         "rgb24",
         "-an",
@@ -605,86 +539,96 @@ def start_ffmpeg(*, video_path, output_width, output_height):
         "-dn",
         "-",  # Output to stdout
     ]
-    if platform.machine().lower() != "aarch64":
-        fps = 2
-        command = [
-            "ffmpeg",
-            "-re",
-            "-stream_loop",
-            "-1",
-            # "-r",
-            # f"{fps}",
-            "-i",
-            video_path,
-            "-f",
-            "rawvideo",
-            "-vf",
-            f"fps=fps={fps}",
-            "-an",
-            "-sn",
-            "-dn",
-            "-pix_fmt",
-            "rgb24",
-            "-",
-        ]
-    logger.info("Starting FFmpeg with command: %s", " ".join(command))
-    ffmpeg_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    logger.info("Starting FFmpeg with command: %s", " ".join(cmd))
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def log_stderr():
-        if ffmpeg_process.stderr:
+        if process.stderr:
             full_error = ""
-            for line in iter(ffmpeg_process.stderr.readline, b""):
+            for line in iter(process.stderr.readline, b""):
                 full_error += line.decode("utf-8").strip()
             logger.error("FFMPEG: %s", full_error)
 
     threading.Thread(target=log_stderr, daemon=True).start()
-    return ffmpeg_process
+    return process
 
 
-def get_file_streamer(video_path: str | None):
+def start_ffmpeg(*, output_width, output_height):
+    """Launches the FFmpeg process to output a single high-res stream to stdout."""
+    global ffmpeg_process
+
+    video_path = os.environ.get("MOCK_CAMERA_PATH")
     if not video_path:
-        video_path = "/home/martin/Downloads/853889-hd_1280_720_25fps.mp4"
-        # video_path = "/home/martin/Downloads/4039116-uhd_3840_2160_30fps.mp4"
-        # video_path = "/home/martin/Downloads/cat.mov"
-        video_path = "/home/martin/Downloads/VID_20250731_093415.mp4"
-        video_path = "/mnt/c/Users/mbo20/Downloads/16701023-hd_1920_1080_60fps.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/20522838-hd_1080_1920_30fps.mp4"
-        # video_path = "/mnt/c/Users/mbo20/Downloads/13867923-uhd_3840_2160_30fps.mp4"
-        # video_path = "/home/martin/Downloads/VID_20250808_080717.mp4"
-        # video_path = "/home/martin/Downloads/output_converted.mov"
-        # video_path = "/home/martin/Downloads/output_file.mov"
-        # video_path = "/home/martin/Downloads/gettyimages-1382583689-640_adpp.mp4"
+        video_path = "/dev/video0"
 
-    def stream_file_hw():
-        global double_buffer
+    assert Path(video_path).exists(), f"File or device does not exist: {video_path}"
 
-        if not os.path.isfile(video_path):
-            raise ValueError("File not found: ", video_path)
+    fps = 5
+    if os.path.isfile(video_path):
+        input_args = [
+            "-re",
+            "-stream_loop",
+            "-1",
+        ]
+    else:
+        input_args = [
+            "-f",
+            "v4l2",
+            "-framerate",
+            str(fps),
+            "-video_size",
+            f"{output_width}x{output_height}",
+        ]
+        print("Streaming from device")
 
-        logger.info("Starting videostream in 3s...")
-        # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
-        time.sleep(3)
+    if platform.machine().lower() == "aarch64":
+        return _run_ffmpeg(
+            input_src=video_path,
+            input_args=[
+                *input_args,
+                "-hwaccel",
+                "rkmpp",
+                "-hwaccel_output_format",
+                "drm_prime",
+                "-stream_loop",
+            ],
+            vf=f"fps=fps={fps},hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
+        )
+    else:
+        return _run_ffmpeg(
+            input_src=video_path,
+            input_args=input_args,
+            vf=f"fps=fps={fps}",
+        )
 
-        print("------------!!!!!!!!!!!!! STREAM")
-        high_res_w, high_res_h = 1280, 720
-        channels = 3
 
-        double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
+def stream_with_ffmpeg():
+    global double_buffer
+    global ffmpeg_process
 
-        process = start_ffmpeg(video_path=video_path, output_width=high_res_w, output_height=high_res_h)
+    delay_seconds = 5
+    logger.info(f"Starting videostream in {delay_seconds}s...")
+    # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
+    time.sleep(delay_seconds)
 
-        producer_thread = threading.Thread(target=frame_producer, args=(process.stdout, double_buffer), daemon=True)
-        producer_thread.start()
+    print("------------!!!!!!!!!!!!! STREAM")
+    high_res_w, high_res_h = 1280, 720
+    channels = 3
 
-        logger.info("Waiting for producer to fill first buffer...")
-        time.sleep(2)
-        logger.info("Consumer loop starting.")
+    double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
 
-        while True:
-            high_res_frame = double_buffer.wait_and_read()
-            process_frame(high_res_frame)
+    ffmpeg_process = start_ffmpeg(output_width=high_res_w, output_height=high_res_h)
 
-    return stream_file_hw
+    producer_thread = threading.Thread(target=frame_producer, args=(ffmpeg_process.stdout, double_buffer), daemon=True)
+    producer_thread.start()
+
+    logger.info("Waiting for producer to fill first buffer...")
+    time.sleep(2)
+    logger.info("Consumer loop starting.")
+
+    while True:
+        high_res_frame = double_buffer.wait_and_read()
+        process_frame(high_res_frame)
 
 
 @atexit.register
@@ -695,6 +639,8 @@ def cleanup():
 
     thread_pool.shutdown(wait=True, cancel_futures=True)
     process_pool.shutdown(wait=True, cancel_futures=True)
+    if ffmpeg_process:
+        ffmpeg_process.kill()
     cleanup_shared_memory()
 
     logger.info("[DJANGO SHUTDOWN] Processes stopped..")

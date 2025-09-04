@@ -1,13 +1,13 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="runserver" type="Python.DjangoServer" factoryName="Django server">
+  <configuration default="false" name="runserver MOCK" type="Python.DjangoServer" factoryName="Django server">
     <module name="piki" />
     <option name="ENV_FILES" value="" />
     <option name="INTERPRETER_OPTIONS" value="" />
     <option name="PARENT_ENVS" value="true" />
     <envs>
+      <env name="PYTHONUNBUFFERED" value="1" />
       <env name="DJANGO_SETTINGS_MODULE" value="piki.settings" />
       <env name="MOCK_CAMERA_PATH" value="$USER_HOME$/Downloads/853889-hd_1280_720_25fps.mp4" />
-      <env name="PYTHONUNBUFFERED" value="1" />
       <env name="DISABLE_AI" value="1" />
     </envs>
     <option name="SDK_HOME" value="" />
