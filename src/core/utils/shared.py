@@ -107,7 +107,7 @@ class TuningSettings:
 live_stream_enabled = Event()
 worker_ready = Event()
 
-NUM_AI_WORKERS: int = 1
+NUM_AI_WORKERS: int = 4
 preview_downscale_factor = 1
 ai_input_size = 640
 
