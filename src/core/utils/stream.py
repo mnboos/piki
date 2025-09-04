@@ -594,7 +594,6 @@ def start_ffmpeg(*, output_width, output_height):
                 "rkmpp",
                 "-hwaccel_output_format",
                 "drm_prime",
-                "-stream_loop",
             ],
             vf=f"fps=fps={fps},hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
         )
