@@ -1,11 +1,11 @@
 import time
+import traceback
 from pathlib import Path
 
-import traceback
 import numpy as np
 from rknnlite.api import RKNNLite
 
-from .shared import prob_threshold, worker_ready
+from .shared import worker_ready
 
 QUANTIZE_ON = True
 
