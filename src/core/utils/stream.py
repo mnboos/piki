@@ -563,7 +563,7 @@ def start_ffmpeg(*, output_width, output_height):
 
     assert Path(video_path).exists(), f"File or device does not exist: {video_path}"
 
-    fps = 5
+    fps = 20
     if os.path.isfile(video_path):
         input_args = [
             "-re",
@@ -574,6 +574,10 @@ def start_ffmpeg(*, output_width, output_height):
         input_args = [
             "-f",
             "v4l2",
+            # "-init_hw_device",
+            # "vaapi",
+            "-r",
+            str(fps),
             "-framerate",
             str(fps),
             "-video_size",
@@ -597,7 +601,7 @@ def start_ffmpeg(*, output_width, output_height):
     else:
         return _run_ffmpeg(
             input_src=video_path,
-            input_args=input_args,
+            input_args=["-init_hw_device", "vaapi", *input_args],
             vf=f"fps=fps={fps}",
         )
 
@@ -612,7 +616,7 @@ def stream_with_ffmpeg():
     time.sleep(delay_seconds)
 
     print("------------!!!!!!!!!!!!! STREAM")
-    high_res_w, high_res_h = 1280, 720
+    high_res_w, high_res_h = 640, 480
     channels = 3
 
     double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
