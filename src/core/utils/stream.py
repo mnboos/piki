@@ -563,7 +563,7 @@ def start_ffmpeg(*, output_width, output_height):
 
     assert Path(video_path).exists(), f"File or device does not exist: {video_path}"
 
-    fps = 20
+    fps = 5
     if os.path.isfile(video_path):
         input_args = [
             "-re",
@@ -600,7 +600,11 @@ def start_ffmpeg(*, output_width, output_height):
     else:
         return _run_ffmpeg(
             input_src=video_path,
-            input_args=["-init_hw_device", "vaapi", *input_args],
+            input_args=[
+                *input_args,
+                "-hwaccel",
+                "vaapi",
+            ],
             vf=f"fps=fps={fps}",
         )
 

@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from django.http.response import StreamingHttpResponse
@@ -55,8 +56,10 @@ def config(request):
     return render(request, "core/config.html", {})
 
 
-def stream_camera():
+async def stream_camera():
     """Video streaming generator function with corrected drawing logic."""
+
+    print("streaming njow!!!")
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.5
@@ -70,13 +73,15 @@ def stream_camera():
         shared.is_object_detection_disabled.clear()
         while True:
             # This is an efficient way to wait for new frames without burning CPU
-            shared.output_buffer.wait_for_data()
+            # shared.output_buffer.wait_for_data()
             if shared.output_buffer.queue.empty():
+                await asyncio.sleep(0.01)  # Non-blocking sleep
                 continue
 
             latest_result = shared.output_buffer.popleft()
             if latest_result is None:
-                time.sleep(0.01)
+                # time.sleep(0.01)
+                await asyncio.sleep(0.01)  # Non-blocking sleep
                 continue
 
             # The 'frame' here is the low-resolution preview frame
@@ -143,7 +148,7 @@ def stream_camera():
         live_stream_enabled.clear()
 
 
-def stream_mask():
+async def stream_mask():
     try:
         # shared.is_mask_streaming_enabled.set()
         shared.is_object_detection_disabled.set()
@@ -169,12 +174,12 @@ def stream_mask():
         app_settings.debug_settings.debug_enabled = False
 
 
-def video_feed(request):
+async def video_feed(request):
     """Video streaming route."""
     return StreamingHttpResponse(stream_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
 
 
-def mask_feed(request):
+async def mask_feed(request):
     """Video streaming route."""
     return StreamingHttpResponse(stream_mask(), content_type="multipart/x-mixed-replace; boundary=frame")
 
