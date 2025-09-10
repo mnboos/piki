@@ -36,6 +36,7 @@ from .shared import (
     motion_detector,
     output_buffer,
     preview_downscale_factor,
+    start_ffmpeg_writer,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,22 +146,6 @@ def cleanup_shared_memory():
 active_futures: list[Future] = []
 max_output_timestamp = 0
 dashboard = LiveMetricsDashboard()
-
-
-# try:
-#     import picamera2
-#     from picamera2.encoders import MJPEGEncoder
-#     from picamera2.outputs import FileOutput
-#     from libcamera import controls
-#
-#     PICAMERA_AVAILABLE = True
-# except ImportError:
-#     logger.info("Picamera2 not available", traceback.format_exc())
-#     PICAMERA_AVAILABLE = False
-#     picamera2 = None
-#     MJPEGEncoder = None
-#     FileOutput = None
-#     controls = None
 
 
 def get_measure(description: str):
@@ -332,6 +317,13 @@ def on_done(future: Future):
                 dashboard.update(worker_id=worker_pid, inference_time=inference_time)
                 if live_stream_enabled.is_set():
                     output_buffer.append((worker_pid, timestamp, frame_lores, detections_denormalized))
+
+                    from .shared import ffmpeg_output
+
+                    print("writing to ffmpeg output: ", ffmpeg_output)
+
+                    if ffmpeg_output and ffmpeg_output.stdin:
+                        ffmpeg_output.stdin.write(frame_lores)
     except BrokenProcessPool:
         logger.info("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
@@ -429,6 +421,11 @@ def process_frame(frame_hires: np.ndarray):
                             [("tracker", 1, bbox)],
                         )
                     )
+
+                    from .shared import ffmpeg_output
+
+                    if ffmpeg_output and ffmpeg_output.stdin:
+                        ffmpeg_output.stdin.write(frame_lores)
                 else:
                     untracked_frames_count = 1
                     total_untracked_frames_count += 1
@@ -454,6 +451,11 @@ def process_frame(frame_hires: np.ndarray):
                     )
                 )
 
+                from .shared import ffmpeg_output
+
+                if ffmpeg_output and ffmpeg_output.stdin:
+                    ffmpeg_output.stdin.write(frame_lores)
+
         else:
             if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
                 grayscale_output = True
@@ -477,6 +479,11 @@ def process_frame(frame_hires: np.ndarray):
                 mask_output_buffer.append(buf_highlighted)
 
                 output_buffer.append((0, current_time, frame_lores, []))
+
+                from .shared import ffmpeg_output
+
+                if ffmpeg_output and ffmpeg_output.stdin:
+                    ffmpeg_output.stdin.write(frame_lores)
             elif has_movement:
                 try:
                     timestamp = time.monotonic_ns()
@@ -502,6 +509,11 @@ def process_frame(frame_hires: np.ndarray):
             elif not has_movement and not active_futures:
                 output_buffer.append((0, 0, frame_lores, []))
 
+                from .shared import ffmpeg_output
+
+                if ffmpeg_output and ffmpeg_output.stdin:
+                    ffmpeg_output.stdin.write(frame_lores)
+
 
 class StreamingOutput(io.BufferedIOBase):
     def write(self, buf_hires: bytes) -> None:
@@ -519,6 +531,11 @@ input_buffer = StreamingOutput()
 
 
 def stream_nonblocking():
+    # start_ffmpeg_writer(width=640, height=480)
+
+    from .shared import ffmpeg_output
+
+    print("ffmpeg output started: ", ffmpeg_output)
     thread_pool.submit(stream_with_ffmpeg)
 
 

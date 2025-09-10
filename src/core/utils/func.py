@@ -1,3 +1,6 @@
+import platform
+import subprocess
+
 import cv2
 import numpy as np
 
@@ -53,18 +56,14 @@ def expand_roi_to_min_size(
     return int(final_x), int(final_y), int(final_w), int(final_h)
 
 
-def edge_distance(
-    *, roi: tuple[int, int, int, int], img_shape: tuple[int, int]
-) -> float:
+def edge_distance(*, roi: tuple[int, int, int, int], img_shape: tuple[int, int]) -> float:
     """Calculate distance to nearest edge for prioritization."""
     x, y, w, h = roi
     img_h, img_w = img_shape
     return min(x, y, img_w - (x + w), img_h - (y + h))
 
 
-def cluster_with_constraints(
-    *, boxes: list, max_dimension: int, merge_threshold: int = 999999
-) -> list:
+def cluster_with_constraints(*, boxes: list, max_dimension: int, merge_threshold: int = 999999) -> list:
     """
     Private helper to greedily cluster boxes, respecting max size and proximity.
     """
@@ -101,10 +100,7 @@ def cluster_with_constraints(
                     continue
 
                 jx, jy, jw, jh = boxes[j]
-                dist = np.sqrt(
-                    (cluster_cx - (jx + jw / 2)) ** 2
-                    + (cluster_cy - (jy + jh / 2)) ** 2
-                )
+                dist = np.sqrt((cluster_cx - (jx + jw / 2)) ** 2 + (cluster_cy - (jy + jh / 2)) ** 2)
 
                 if dist > merge_threshold:
                     continue
@@ -130,12 +126,8 @@ def cluster_with_constraints(
         # Finalize the cluster's bounding box
         final_x = min(boxes[k][0] for k in current_cluster_indices)
         final_y = min(boxes[k][1] for k in current_cluster_indices)
-        final_w = (
-            max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices) - final_x
-        )
-        final_h = (
-            max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices) - final_y
-        )
+        final_w = max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices) - final_x
+        final_h = max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices) - final_y
 
         final_rois.append((final_x, final_y, final_w, final_h))
 
@@ -245,9 +237,7 @@ def get_padded_roi_images(
             start_y = (crop_h - min_dim) // 2
 
             # Perform the square crop from the original ROI
-            square_crop = roi_crop[
-                start_y : start_y + min_dim, start_x : start_x + min_dim
-            ]
+            square_crop = roi_crop[start_y : start_y + min_dim, start_x : start_x + min_dim]
 
             # Update the effective origin to account for the crop
             effective_origin = (x_hires + start_x, y_hires + start_y)
@@ -282,9 +272,7 @@ def get_padded_roi_images(
             # Scale remains 1.0 because we did not resize the original content
 
         # Assert that the final image is the correct size
-        assert final_image.shape[:2] == (target_size, target_size), (
-            "Final image processing failed."
-        )
+        assert final_image.shape[:2] == (target_size, target_size), "Final image processing failed."
 
         final_roi_images.append((final_image, scale, effective_origin))
 

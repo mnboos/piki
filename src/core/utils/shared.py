@@ -1,7 +1,9 @@
 import logging
 import multiprocessing as mp
 import os
+import platform
 import random
+import subprocess
 from ctypes import c_float
 from multiprocessing import Event, Queue
 
@@ -53,6 +55,56 @@ is_object_detection_disabled = Event()
 output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))  # todo: make typed
 mask_output_buffer = MultiprocessingDequeue[np.ndarray](queue=Queue(maxsize=10))
 prob_threshold = mp.Value(c_float, 0.4)
+ffmpeg_output: subprocess.Popen | None = None
+
+
+def start_ffmpeg_writer(width: int, height: int):
+    global ffmpeg_output
+
+    # --- Video Stream Parameters ---
+    FRAMERATE = 20
+    FFMPEG_RTP_URL = "rtp://127.0.0.1:5004"
+
+    codec = "h264_rkmpp" if platform.machine().lower() == "aarch64" else "h264"
+
+    # The full FFmpeg command as a list of arguments
+    # Using a list is safer than a single string
+    command = [
+        "ffmpeg",
+        "-y",  # Overwrite output file if it exists
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",  # Note: OpenCV uses BGR format
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        str(FRAMERATE),
+        "-i",
+        "-",  # The input comes from a pipe
+        "-c:v",
+        codec,  # Your hardware encoder
+        "-preset",
+        "fast",
+        "-b:v",
+        "2M",
+        "-f",
+        "rtp",
+        FFMPEG_RTP_URL,
+    ]
+
+    # --- Starting the FFmpeg Process ---
+    # We open a pipe to stdin and redirect stderr to a pipe to read FFmpeg's logs for debugging
+    try:
+        print("Starting ffmpeg writer...")
+        ffmpeg_output = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        print("FFmpeg process started.")
+    except FileNotFoundError:
+        print("Error: FFmpeg command not found. Make sure it's in your PATH.")
+        # Handle the error appropriately
+        exit()
 
 
 class MotionDetector:

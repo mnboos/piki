@@ -29,21 +29,15 @@ def monkey_patch_reloader():
             reloading.clear()
 
             # 2. Add your custom logic here
-            print(
-                f"[{os.getpid()}]--- CUSTOM RELOADER: Change detected in  {filename} ---"
-            )
-            print(
-                "--- CUSTOM RELOADER: I am the WATCHER process. I will now tell the worker to die. ---"
-            )
+            print(f"[{os.getpid()}]--- CUSTOM RELOADER: Change detected in  {filename} ---")
+            print("--- CUSTOM RELOADER: I am the WATCHER process. I will now tell the worker to die. ---")
             print("--- CUSTOM RELOADER: Waiting 2 seconds before proceeding... ---")
             time.sleep(2)  # You could add a delay or other logic here
 
             # 3. CRUCIAL: Call the original function to actually perform the reload.
             # If you forget this, your app will never reload.
             original_trigger_reload(filename)
-            print(
-                "--- CUSTOM RELOADER: Original reload trigger has !!been called. -ffhh--"
-            )
+            print("--- CUSTOM RELOADER: Original reload trigger has !!been called. -ffhh--")
 
             reloading.set()
             # DJANGO_RELOAD_ISSUED.clear()
@@ -96,16 +90,14 @@ class CoreConfig(AppConfig):
                         print("Queue manager started.")
                     except EOFError:
                         backoff = (2**retries) * 0.1
-                        print(
-                            f"Queue manager not yet started, retrying again in {backoff}..."
-                        )
+                        print(f"Queue manager not yet started, retrying again in {backoff}...")
                         retries += 1
                         time.sleep(backoff)
                         continue
 
                 from .utils.stream import stream_nonblocking
 
-                stream_nonblocking()
+                # stream_nonblocking()
                 print("Start streaming...")
 
             # def cleanup():
