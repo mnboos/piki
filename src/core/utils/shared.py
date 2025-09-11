@@ -4,6 +4,7 @@ import os
 import platform
 import random
 import subprocess
+import traceback
 from ctypes import c_float
 from multiprocessing import Event, Queue
 
@@ -58,20 +59,36 @@ prob_threshold = mp.Value(c_float, 0.4)
 ffmpeg_output: subprocess.Popen | None = None
 
 
+def write_to_ffmpeg(frame: np.ndarray) -> None:
+    if ffmpeg_output and ffmpeg_output.stdin:
+        try:
+            # print("!!!! writing frame now")
+            # frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            ffmpeg_output.stdin.write(frame.tobytes())
+            ffmpeg_output.stdin.flush()
+        except BrokenPipeError:
+            traceback.print_exc()
+            raise
+
+
 def start_ffmpeg_writer(width: int, height: int):
     global ffmpeg_output
 
     # --- Video Stream Parameters ---
-    FRAMERATE = 20
-    FFMPEG_RTP_URL = "rtp://127.0.0.1:5004"
+    FRAMERATE = 25
+    FFMPEG_RTP_URL = "udp://127.0.0.1:5004"
 
-    codec = "h264_rkmpp" if platform.machine().lower() == "aarch64" else "h264"
+    codec = "h264_rkmpp" if platform.machine().lower() == "aarch64" else "libx264"
+
+    sdp_file_path = "/tmp/webrtc_piki.sdp"
+    if os.path.isfile(sdp_file_path):
+        os.remove(sdp_file_path)
 
     # The full FFmpeg command as a list of arguments
     # Using a list is safer than a single string
     command = [
         "ffmpeg",
-        "-y",  # Overwrite output file if it exists
+        # "-y",  # Overwrite output file if it exists
         "-f",
         "rawvideo",
         "-vcodec",
@@ -86,20 +103,47 @@ def start_ffmpeg_writer(width: int, height: int):
         "-",  # The input comes from a pipe
         "-c:v",
         codec,  # Your hardware encoder
+        # "-preset",
+        # "fast",
+        # "-b:v",
+        # "2M",
+        # "-an",
+        # "-sn",
+        "-tune",
+        "zerolatency",
         "-preset",
-        "fast",
+        "ultrafast",
+        "-profile:v",
+        "baseline",  # Better WebRTC compatibility
+        "-g",
+        str(FRAMERATE),  # Keyframe interval
         "-b:v",
+        "1M",  # Lowered bitrate for more resilience
+        "-maxrate",
+        "1.2M",
+        "-bufsize",
         "2M",
+        "-an",  # No audio
+        "-pix_fmt",
+        "yuv420p",
+        # "-f",
+        # "rtp",
         "-f",
-        "rtp",
-        FFMPEG_RTP_URL,
+        "mpegts",  # Use MPEG-TS container
+        "-mpegts_pmt_start_pid",
+        "0x1000",
+        "-mpegts_start_pid",
+        "0x150",
+        FFMPEG_RTP_URL + "?pkt_size=1316",  # Optimal packet size for UDP,
     ]
 
     # --- Starting the FFmpeg Process ---
     # We open a pipe to stdin and redirect stderr to a pipe to read FFmpeg's logs for debugging
     try:
         print("Starting ffmpeg writer...")
-        ffmpeg_output = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        ffmpeg_output = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL
+        )
         print("FFmpeg process started.")
     except FileNotFoundError:
         print("Error: FFmpeg command not found. Make sure it's in your PATH.")

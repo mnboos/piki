@@ -37,6 +37,7 @@ from .shared import (
     output_buffer,
     preview_downscale_factor,
     start_ffmpeg_writer,
+    write_to_ffmpeg,
 )
 
 logger = logging.getLogger(__name__)
@@ -318,12 +319,7 @@ def on_done(future: Future):
                 if live_stream_enabled.is_set():
                     output_buffer.append((worker_pid, timestamp, frame_lores, detections_denormalized))
 
-                    from .shared import ffmpeg_output
-
-                    print("writing to ffmpeg output: ", ffmpeg_output)
-
-                    if ffmpeg_output and ffmpeg_output.stdin:
-                        ffmpeg_output.stdin.write(frame_lores)
+                    write_to_ffmpeg(frame_lores)
     except BrokenProcessPool:
         logger.info("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
@@ -422,10 +418,7 @@ def process_frame(frame_hires: np.ndarray):
                         )
                     )
 
-                    from .shared import ffmpeg_output
-
-                    if ffmpeg_output and ffmpeg_output.stdin:
-                        ffmpeg_output.stdin.write(frame_lores)
+                    write_to_ffmpeg(frame_lores)
                 else:
                     untracked_frames_count = 1
                     total_untracked_frames_count += 1
@@ -451,10 +444,7 @@ def process_frame(frame_hires: np.ndarray):
                     )
                 )
 
-                from .shared import ffmpeg_output
-
-                if ffmpeg_output and ffmpeg_output.stdin:
-                    ffmpeg_output.stdin.write(frame_lores)
+                write_to_ffmpeg(frame_lores)
 
         else:
             if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
@@ -480,10 +470,7 @@ def process_frame(frame_hires: np.ndarray):
 
                 output_buffer.append((0, current_time, frame_lores, []))
 
-                from .shared import ffmpeg_output
-
-                if ffmpeg_output and ffmpeg_output.stdin:
-                    ffmpeg_output.stdin.write(frame_lores)
+                write_to_ffmpeg(frame_lores)
             elif has_movement:
                 try:
                     timestamp = time.monotonic_ns()
@@ -509,10 +496,7 @@ def process_frame(frame_hires: np.ndarray):
             elif not has_movement and not active_futures:
                 output_buffer.append((0, 0, frame_lores, []))
 
-                from .shared import ffmpeg_output
-
-                if ffmpeg_output and ffmpeg_output.stdin:
-                    ffmpeg_output.stdin.write(frame_lores)
+                write_to_ffmpeg(frame_lores)
 
 
 class StreamingOutput(io.BufferedIOBase):
@@ -531,7 +515,12 @@ input_buffer = StreamingOutput()
 
 
 def stream_nonblocking():
-    # start_ffmpeg_writer(width=640, height=480)
+    def runasync():
+        start_ffmpeg_writer(width=640, height=480)
+
+    threading.Thread(target=runasync, daemon=True).start()
+
+    # thread_pool.submit(runasync)
 
     from .shared import ffmpeg_output
 

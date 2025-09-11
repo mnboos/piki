@@ -97,7 +97,7 @@ class CoreConfig(AppConfig):
 
                 from .utils.stream import stream_nonblocking
 
-                # stream_nonblocking()
+                stream_nonblocking()
                 print("Start streaming...")
 
             # def cleanup():
