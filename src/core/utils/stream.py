@@ -36,7 +36,6 @@ from .shared import (
     motion_detector,
     output_buffer,
     preview_downscale_factor,
-    start_ffmpeg_writer,
     write_to_ffmpeg,
 )
 
@@ -515,16 +514,6 @@ input_buffer = StreamingOutput()
 
 
 def stream_nonblocking():
-    def runasync():
-        start_ffmpeg_writer(width=640, height=480)
-
-    threading.Thread(target=runasync, daemon=True).start()
-
-    # thread_pool.submit(runasync)
-
-    from .shared import ffmpeg_output
-
-    print("ffmpeg output started: ", ffmpeg_output)
     thread_pool.submit(stream_with_ffmpeg)
 
 

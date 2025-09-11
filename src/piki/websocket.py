@@ -1,7 +1,6 @@
 import asyncio
 import json
-import os
-import subprocess
+import struct
 import time
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
@@ -9,60 +8,58 @@ from aiortc.contrib.media import MediaPlayer
 from channels.consumer import SyncConsumer
 from channels.generic.websocket import AsyncWebsocketConsumer
 
+from core.utils import shared
+
 
 class VideoStreamConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.pc = RTCPeerConnection()
         await self.accept()
 
     async def receive(self, text_data):
-        print("receive in consumer!!!")
-        params = json.loads(text_data)
-        offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+        data = json.loads(text_data)
 
-        # @self.pc.on("track")
-        # async def on_track(track):
-        #     # This is for receiving streams from the client, which we don't need in this case.
-        #     pass
-
-        # sdp_file_path = "/tmp/webrtc_piki.sdp"
-        #
-        # # Wait for the SDP file to be created by FFmpeg
-        # max_wait_time = 10
-        # start_time = time.time()
-        # while not os.path.exists(sdp_file_path):
-        #     await asyncio.sleep(0.1)
-        #     # Check if the process died
-        #     # if self.ffmpeg_process.poll() is not None:
-        #     #     print("!!! FFmpeg process terminated prematurely. !!!")
-        #     #     stderr_output = self.ffmpeg_process.stderr.read().decode("utf-8", errors="ignore")
-        #     #     print("FFmpeg stderr:\n", stderr_output)
-        #     #     return None
-        #     if time.time() - start_time > max_wait_time:
-        #         print("Error: FFmpeg timed out creating SDP file.")
-        #         return None
-
-        # player = MediaPlayer("/dev/video0", format="v4l2", options={"video_size": "640x480"})
-
-        await asyncio.sleep(2)  # Wait 2 seconds. Adjust as needed.
-
-        # Create a video track from the FFmpeg RTP stream
-        player = MediaPlayer("udp://127.0.0.1:5004", timeout=30000)
-        # player = MediaPlayer(sdp_file_path)
-        video_sender = self.pc.addTrack(player.video)
-
-        await self.pc.setRemoteDescription(offer)
-        answer = await self.pc.createAnswer()
-        await self.pc.setLocalDescription(answer)
-
-        await self.send(
-            text_data=json.dumps(
-                {
-                    "sdp": self.pc.localDescription.sdp,
-                    "type": self.pc.localDescription.type,
-                }
+        if data["type"] == "start_stream":
+            await self.stream_raw_frames(
+                width=data.get("width", 640), height=data.get("height", 480), fps=data.get("fps", 30)
             )
-        )
 
-    async def disconnect(self, close_code):
-        await self.pc.close()
+    async def stream_raw_frames(self, width, height, fps):
+        """Stream raw RGB frames"""
+        frame_size = width * height * 3  # RGB24
+
+        async for frame in self.get_raw_frame():
+            # Get raw frame data (from camera, FFmpeg, etc.)
+            # raw_frame = await self.get_raw_frame(width, height)
+
+            if frame is not None:
+                # Send frame header + raw data
+                header = struct.pack(
+                    "<IHHQ",
+                    0xDEADBEEF,  # Magic number
+                    width,
+                    height,
+                    int(time.time() * 1000),  # timestamp
+                )
+
+                message = header + frame.tobytes()
+                await self.send(bytes_data=message)
+
+            await asyncio.sleep(1 / fps)
+
+    async def get_raw_frame(self):
+        while True:
+            # This is an efficient way to wait for new frames without burning CPU
+            # shared.output_buffer.wait_for_data()
+            if shared.output_buffer.queue.empty():
+                await asyncio.sleep(0.01)  # Non-blocking sleep
+                continue
+
+            latest_result = shared.output_buffer.popleft()
+            if latest_result is None:
+                # time.sleep(0.01)
+                await asyncio.sleep(0.01)  # Non-blocking sleep
+                continue
+
+            # The 'frame' here is the low-resolution preview frame
+            _worker_pid, _timestamp, frame, detected_objects = latest_result
+            yield frame
