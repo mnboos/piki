@@ -1,51 +1,46 @@
-import atexit
-import dataclasses
-import multiprocessing as mp
 import logging
+import multiprocessing as mp
+import os
 import random
-from ctypes import c_float, c_int
-from multiprocessing import Event, Queue, Condition, Manager
-from typing import TypeVar, Generic
-import inspect
+from ctypes import c_float
+from multiprocessing import Event, Queue
+
+from .interfaces import MultiprocessingDequeue, TuningSettings
+from .settings import AppSettings, DebugSettings
+
+# Those most be set BEFORE importing cv2
+# https://docs.opencv.org/4.x/d6/dea/tutorial_env_reference.html#autotoc_md974
+os.environ["OPENCV_FFMPEG_DEBUG"] = "1"
+os.environ["OPENCV_LOG_LEVEL"] = "DEBUG"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hwaccel;rkmpp"
 
 import cv2
 import numpy as np
 
 from .func import (
-    edge_distance,
-    cluster_with_constraints,
-    expand_roi_to_min_size,
     apply_non_max_suppression,
+    cluster_with_constraints,
+    edge_distance,
+    expand_roi_to_min_size,
 )
 
 logger = logging.getLogger(__name__)
+logger.info("Setup shared module...")
 
-logger.info("Setup module shared {here}")
-
-T = TypeVar("T")
-
-
-@dataclasses.dataclass
-class ForegroundMaskOptions:
-    mog2_history = mp.Value(c_int, 500)
-    mog2_var_threshold = mp.Value(c_int, 16)
-    denoise_kernelsize = mp.Value(c_int, 7)
+app_settings = AppSettings(debug_settings=DebugSettings(render_bboxes=True))
 
 
-class TuningSettings:
-    def __init__(self):
-        self.foreground_mask_options = ForegroundMaskOptions()
-
-    def update(self):
-        pass
-
+has_opencl = cv2.ocl.haveOpenCL()
+logger.info(f"OpenCV has OpenCL: {has_opencl}")
+if has_opencl:
+    cv2.ocl.setUseOpenCL(True)
 
 live_stream_enabled = Event()
 worker_ready = Event()
 
-NUM_AI_WORKERS: int = 2
-preview_downscale_factor = 2
-ai_input_size = 320
+NUM_AI_WORKERS: int = 4
+preview_downscale_factor = 1
+ai_input_size = 640
 
 settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
@@ -55,38 +50,7 @@ is_object_detection_disabled = Event()
 # DJANGO_RELOAD_ISSUED = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)
 
-
-class MultiprocessingDequeue(Generic[T]):
-    def __init__(self, queue: "Queue[T]") -> None:
-        self.queue = queue
-        self.condition = Condition()
-        self.event = Event()
-
-    def append(self, item: T):
-        with self.condition:
-            if self.queue.full():
-                self.queue.get()
-            self.queue.put(item)
-            self.condition.notify_all()
-        self.event.set()
-
-    def wait_for_data(self):
-        self.event.wait()
-        self.event.clear()
-
-    def popleft(self) -> T | None:
-        with self.condition:
-            if not self.queue.empty():
-                return self.queue.get()
-        return None
-
-    def popleft_blocking(self) -> T:
-        with self.condition:
-            self.condition.wait(5)
-            return self.queue.get()
-
-
-output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))
+output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))  # todo: make typed
 mask_output_buffer = MultiprocessingDequeue[np.ndarray](queue=Queue(maxsize=10))
 prob_threshold = mp.Value(c_float, 0.4)
 
@@ -147,9 +111,7 @@ class MotionDetector:
             list: A list of the final, fully optimized ROIs.
         """
         # 1. Find all individual blobs in the mask (Fast)
-        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
-            mask, connectivity=8, ltype=cv2.CV_32S
-        )
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8, ltype=cv2.CV_32S)
 
         # 2. Filter small blobs and collect their initial bounding boxes
         initial_boxes = []
@@ -182,9 +144,7 @@ class MotionDetector:
         final_rois = []
         for roi_box in clustered_rois:
             # Assumes self._expand_roi_to_min_size is your boundary-aware finalization function
-            final_roi = expand_roi_to_min_size(
-                min_roi_size=self.min_roi_size, roi=roi_box, img_shape=mask.shape
-            )
+            final_roi = expand_roi_to_min_size(min_roi_size=self.min_roi_size, roi=roi_box, img_shape=mask.shape)
             final_rois.append(final_roi)
 
         # Optional: Sort final ROIs
@@ -227,9 +187,7 @@ class MotionDetector:
                 )
                 cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
 
-        colored_overlay = np.full(
-            frame.shape, overlay_color_rgb, dtype=np.uint8
-        )  # todo: do this only once
+        colored_overlay = np.full(frame.shape, overlay_color_rgb, dtype=np.uint8)  # todo: do this only once
         blended = cv2.addWeighted(
             frame,
             transparency_factor,
@@ -244,147 +202,4 @@ class MotionDetector:
         )
 
 
-motion_detector: MotionDetector
-
-
-def setup_motion_detector():
-    global motion_detector
-    motion_detector = MotionDetector()
-
-
-setup_motion_detector()
-
-
-manager = Manager()
-
-atexit.register(manager.shutdown)
-
-
-def is_shared_memory_subclass(cls):
-    """Helper to safely check if a type is a subclass of SharedMemoryObject."""
-    return inspect.isclass(cls) and issubclass(cls, SharedMemoryObject)
-
-
-class SharedMemoryObject:
-    """
-    A base class that acts like a dataclass but uses a shared
-    dictionary for its state, supporting nested instances.
-    """
-
-    def __init__(self, _dict_proxy=None, **kwargs):
-        # Initialize the shared dictionary for this instance
-        shared_dict = _dict_proxy if _dict_proxy is not None else manager.dict()
-        super().__setattr__("_shared_dict", shared_dict)
-
-        all_fields = self.__class__.__annotations__
-
-        # Handle all provided keyword arguments
-        for field_name, provided_value in kwargs.items():
-            if field_name not in all_fields:
-                raise TypeError(
-                    f"__init__() got an unexpected keyword argument '{field_name}'"
-                )
-
-            self._initialize_field(field_name, all_fields[field_name], provided_value)
-
-        # Handle any fields that were NOT provided and need default initialization
-        for field_name, field_type in all_fields.items():
-            if field_name not in kwargs:
-                self._initialize_field(field_name, field_type)
-
-    def _initialize_field(self, name, type_hint, value=None):
-        """Helper method to initialize a single field."""
-        is_nested_type = is_shared_memory_subclass(type_hint)
-
-        if is_nested_type:
-            # Case 1: An instance was passed (e.g., debug_settings=DebugSettings())
-            if isinstance(value, SharedMemoryObject):
-                nested_obj = value
-                # Adopt the existing object's shared dictionary
-                self._shared_dict[name] = nested_obj._shared_dict
-                super().__setattr__(name, nested_obj)
-
-            # Case 2: A dictionary was passed (e.g., debug_settings={'render_bboxes': True})
-            elif isinstance(value, dict):
-                nested_dict = manager.dict()
-                self._shared_dict[name] = nested_dict
-                nested_obj = type_hint(_dict_proxy=nested_dict, **value)
-                super().__setattr__(name, nested_obj)
-
-            # Case 3: Nothing was passed, so create a default empty instance
-            elif value is None:
-                nested_dict = manager.dict()
-                self._shared_dict[name] = nested_dict
-                nested_obj = type_hint(_dict_proxy=nested_dict)
-                super().__setattr__(name, nested_obj)
-            else:
-                raise TypeError(
-                    f"Argument '{name}' must be a dict or a {type_hint.__name__} instance, not {type(value).__name__}"
-                )
-        else:
-            # It's a primitive type, just assign the value (or None if not provided)
-            self._shared_dict[name] = value
-
-    def __getattr__(self, name):
-        """Called when accessing an attribute that isn't found normally."""
-        # We need to handle the case where we are accessing a nested object instance
-        if name in self.__class__.__annotations__ and is_shared_memory_subclass(
-            self.__class__.__annotations__[name]
-        ):
-            return super().__getattribute__(name)
-
-        if name in self._shared_dict:
-            return self._shared_dict[name]
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
-        )
-
-    def __setattr__(self, name, value):
-        """Called when setting any attribute."""
-        if name not in self.__class__.__annotations__:
-            raise AttributeError(
-                f"Cannot set new attribute '{name}'. Only defined fields can be set."
-            )
-
-        field_type = self.__class__.__annotations__.get(name)
-        if is_shared_memory_subclass(field_type):
-            raise AttributeError(
-                f"Cannot replace nested SharedMemoryObject '{name}'. Modify its attributes instead."
-            )
-
-        self._shared_dict[name] = value
-
-    def to_dict(self):
-        """Recursively converts the shared object to a regular dictionary."""
-        plain_dict = {}
-        for key in self.__class__.__annotations__:
-            value = getattr(self, key)
-            if isinstance(value, SharedMemoryObject):
-                plain_dict[key] = value.to_dict()
-            else:
-                plain_dict[key] = value
-        return plain_dict
-
-    def __repr__(self):
-        """Provides a nice, readable representation of the object's current state."""
-        return f"{self.__class__.__name__}({self.to_dict()})"
-
-
-class DebugSettings(SharedMemoryObject):
-    """The in-memory version of our settings."""
-
-    debug_enabled: bool
-    render_bboxes: bool
-
-    def __init__(self, *, render_bboxes: bool, _dict_proxy=None):
-        super().__init__(render_bboxes=render_bboxes, _dict_proxy=_dict_proxy)
-
-
-class AppSettings(SharedMemoryObject):
-    debug_settings: DebugSettings
-
-    def __init__(self, *, debug_settings: DebugSettings, _dict_proxy=None):
-        super().__init__(debug_settings=debug_settings, _dict_proxy=_dict_proxy)
-
-
-app_settings = AppSettings(debug_settings=DebugSettings(render_bboxes=True))
+motion_detector = MotionDetector()

@@ -1,6 +1,7 @@
-from gpiozero.pins.pigpio import PiGPIOFactory
-from gpiozero import Device, AngularServo
 from time import sleep
+
+from gpiozero import AngularServo, Device
+from gpiozero.pins.pigpio import PiGPIOFactory
 
 #Device.pin_factory = NativeFactory()
 #Device.pin_factory = LGPIOFactory()

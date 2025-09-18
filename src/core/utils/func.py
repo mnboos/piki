@@ -1,5 +1,5 @@
-import numpy as np
 import cv2
+import numpy as np
 
 
 def expand_roi_to_min_size(
@@ -11,6 +11,7 @@ def expand_roi_to_min_size(
     by the image edges.
 
     Args:
+        min_roi_size (int):
         roi (tuple): The initial (x, y, w, h) bounding box.
         img_shape (tuple): The (height, width) of the image frame.
 
@@ -194,7 +195,7 @@ def get_padded_roi_images(
     frame: np.ndarray,
     rois,
     preview_downscale_factor,
-    target_size=320,
+    target_size,
     pad_color=(0, 0, 0),
 ):
     """

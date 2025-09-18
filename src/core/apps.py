@@ -1,9 +1,9 @@
 import atexit
+import os
+import sys
 import time
 
 from django.apps import AppConfig
-import os
-import sys
 
 
 def monkey_patch_reloader():
@@ -24,7 +24,7 @@ def monkey_patch_reloader():
 
             # DJANGO_RELOAD_ISSUED.set()
 
-            from .utils.stream import reloading, stream_nonblocking
+            from .utils.stream import reloading
 
             reloading.clear()
 

@@ -5,18 +5,27 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "ai-edge-litert==1.4.0",
     "django==5.2.4",
     "flask==3.1.1",
     "gpiozero==2.0.1",
-    "opencv-contrib-python-headless==4.12.0.88",
-    "picamera2==0.3.30",
+    "numpy==2.3.2",
+    "opencv-contrib-python-headless==4.11.0.86",
     "pigpio==1.78",
-    "pillow==11.3.0",
     "rich==14.1.0",
+    "rknn-toolkit-lite2==2.3.2 ; platform_machine == 'aarch64'",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff==0.12.7",
+    "ruff==0.12.10",
+    "ty==0.0.1a19",
 ]
+model-conversion = []
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["I"]
