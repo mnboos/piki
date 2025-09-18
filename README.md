@@ -1,303 +1,124 @@
-## Servo setup
+# Piki: An AI-Powered Cat Deterrent System
 
-1. Install the dependencies
-```bash
-apt install pigpio python3-pigpio
+## 1. Management Summary
 
-uv add gpiozero pigpio
+### The Problem
+Neighborhood cats frequently enter our garden, using it as a litter box. This creates an unsanitary environment and poses a significant health risk, especially for babies and small children who play in the garden. Cat feces can transmit harmful parasites and bacteria, making a clean and safe outdoor space a top priority.
+
+### Our Solution
+**Piki** is an autonomous, humane, and cost-effective system designed to solve this problem. Using a low-cost single-board computer and a camera, Piki employs real-time object detection to identify cats as soon as they enter a monitored area. Upon detection, the system is designed to trigger a harmless deterrent, such as a brief spray from a water sprinkler or an ultrasonic sound, effectively training cats to avoid the area without causing them any harm. This "do-it-yourself" project provides a complete blueprint for building an intelligent and reliable cat deterrent, managed through a simple web interface.
+
+---
+
+## 2. Technical Details
+
+### Hardware Setup
+
+The system is built with accessible and affordable components. Please note the specific processor requirement for full performance.
+
+**Core Components:**
+*   **Single-Board Computer (SBC):** The core of the system. For full performance with Neural Processing Unit (NPU) acceleration, a board with a **Rockchip RK3566 or RK3568** processor is required. This is because the provided AI model has been specifically converted to the `.rknn` format for this hardware target.
+    *   *Recommended boards:* Orange Pi 3B, Radxa Zero 3W.
+    *   Other SBCs like the Raspberry Pi can run the system in a CPU-only mode, but without the performance benefits of NPU acceleration.
+*   **Camera Module:** A compatible camera (e.g., Raspberry Pi Camera Module) to provide the video feed for detection.
+*   **Servo Motor:** An angular servo to allow the camera to pan and cover a wider area of the garden.
+*   **Power Supply:** A stable power source for the SBC and connected components.
+*   **(Optional) Deterrent Mechanism:** A relay-controlled water valve, ultrasonic speaker, or other device to be triggered upon detection.
+
+### Software Architecture & Dependencies
+
+The project relies on a lightweight yet powerful software stack, optimized for performance on resource-constrained devices. The system is managed through a built-in web application.
+
+**Key Dependencies:**
+*   **gpiozero & pigpio:** Python libraries for easy and precise control of the servo motor.
+*   **numpy:** A fundamental package for numerical computation, used for handling image data.
+*   **opencv-contrib-python-headless:** Provides computer vision algorithms for image processing.
+*   **rich:** A library for beautiful formatting in the terminal for logging and status updates.
+*   **rknn-toolkit-lite2:** Enables hardware acceleration for the AI model on Rockchip NPUs.
+*   **django / flask:** Web frameworks used to build the web-based graphical user interface (GUI).
+
+### Visual Workflow
+
+The operational flow of the Piki system is straightforward: capture, analyze, and act. The following diagram illustrates the complete operational sequence.
+
+```mermaid
+graph TD
+    subgraph "Piki Operational Flow"
+        A[Start: Capture Video Frame] --> B[Analyze Frame with AI Model];
+        B --> C{Is a Cat Detected?};
+        C -- No --> A;
+        C -- Yes --> D[Aim Servo at Cat];
+        D --> E[Activate Sprinkler: Splash Water];
+        E --> A;
+    end
 ```
 
-2. Start the gpio daemon
-```bash
-gpiod
-```
-
-3. Run the following python script
-
-```python
-from gpiozero.pins.pigpio import PiGPIOFactory
-from gpiozero import Device, AngularServo
-from time import sleep
-
-Device.pin_factory = PiGPIOFactory()
-
-servo = AngularServo(12, min_angle=-170, max_angle=170)
-
-while True:
-    servo.min()
-    sleep(1)
-    servo.mid()
-    sleep(1)
-    servo.max()
-    sleep(1)
-
-```
-## Setup Orange Pi 3B
-
-**Monitor VPU load**
-Source: https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/rockchip/
-```bash
-sudo sh -c "echo 1000 > /proc/mpp_service/load_interval" && sudo watch -n 1 cat /proc/mpp_service/load
-```
-**Monitor RGA load**
-```bash
-sudo watch -n 1 cat /sys/kernel/debug/rkrga/load
-```
-
-**Monitor NPU load**
-```bash
-sudo watch -n 1 cat /sys/kernel/debug/rknpu/load
-```
-
-- check: https://wiki.friendlyelec.com/wiki/index.php/NPU#Installing_RKNN_Runtime
-```bash
-# install
-git clone https://github.com/airockchip/rknn-toolkit2.git
-cd rknn-toolkit2/rknpu2
-sudo cp ./runtime/Linux/librknn_api/aarch64/* /usr/lib
-sudo cp ./runtime/Linux/rknn_server/aarch64/usr/bin/* /usr/bin/
-sudo cp ./runtime/Linux/librknn_api/include/* /usr/include/
-
-# check for v2
-strings /usr/bin/rknn_server |grep 'build@'
-
-# is this necessary ???
-# fix broken link
-cd ~/rknn-toolkit2/rknpu2/examples/3rdparty/mpp/Linux/aarch64
-rm -f librockchip_mpp.so librockchip_mpp.so.1
-ln -s librockchip_mpp.so.0 librockchip_mpp.so
-ln -s librockchip_mpp.so.0 librockchip_mpp.so.1
-```
-
-Download the [armnndelegate](https://github.com/ARM-software/armnn/releases) for tflite (litert)
-
-```bash
-sudo apt install --no-install-recommends \
-    git \
-    build-essential \
-    libcap-dev \
-    clinfo \
-    mesa-opencl-icd
-
-cd /usr/lib/aarch64-linux-gnu/
-sudo ln -s libOpenCL.so.1 libOpenCL.so
-
-sudo usermod -a -G render $USER
-
-echo 'export RUSTICL_ENABLE=panfrost' >> ~/.bashrc
-
-# there should be no permission errors here now
-clinfo
-
-sudo reboot
-
-cd src/piki
-export MOCK_CAMERA_VIDEO_PATH=/home/dietpi/src/data/16701023-hd_1920_1080_60fps.mp4
-LD_LIBRARY_PATH=/home/dietpi/src/data/arm ./run.sh
-```
-
-## Setup Radxa Zero 3W
-
-**Links**
-- https://radxa-repo.github.io/bullseye/
-- RKNN installation: https://docs.radxa.com/en/zero/zero3/app-development/rknn_install
-- RKNN examples: https://github.com/airockchip/rknn_model_zoo/tree/main/examples/yolov5#2-current-support-platform
-- Radxa headless setup: https://docs.radxa.com/en/template/sbc/radxa-os/headless#wireless
-
-**Setup steps for Armbian**
-1. flash image
-
-```bash
-sudo apt update -y
-
-sudo apt install --no-install-recommends -y \
-    git \
-    build-essential \
-    python3-dev \
-    ffmpeg \
-    v4l-utils \
-    cmake \
-    pkg-config
-
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-bash
-
-cd ~
-mkdir src
-git clone https://github.com/mnboos/rknn-test.git
-cd rknn-test
-uv venv --system-site-packages
-. .venv/bin/activate
-uv sync
-
-cp librknnrt.so /usr/lib/
-
-# Download this: https://github.com/radxa-pkg/radxa-overlays/blob/main/arch/arm64/boot/dts/rockchip/overlays/rk3568-npu-enable.dts
-wget https://raw.githubusercontent.com/radxa-pkg/radxa-overlays/refs/heads/main/arch/arm64/boot/dts/rockchip/overlays/rk3568-npu-enable.dts
-
-sudo armbian-add-overlay rk3568-npu-enable.dts
-sudo reboot
-
-python run_resnet.py
-```
-**Compile Rockchip MPP**
-```bash
-cd ~
-git clone https://github.com/rockchip-linux/mpp -b develop
-cd mpp/build/linux/aarch64
-./make-Makefiles.bash
-sudo make install
-sudo ldconfig
-```
-
-**Set fixed NPU frequency**
-do this all with sudo
-```bash
-echo userspace > /sys/class/devfreq/fde40000.npu/governor
-echo 900000000 > /sys/class/devfreq/fde40000.npu/userspace/set_freq
-
-# verify current frequency
-cat /sys/class/devfreq/fde40000.npu/cur_freq
-```
-
-**Setup steps for Radxa OS**
-1. flash image
-2. `sudo rsetup` and run update. *DO NOT* just `apt upgrade`
-3. reboot
-4. `sudo rsetup -> Overlays -> Yes -> Manage overlays -> Enable NPU` -> reboot
-5. install cmake
-6. install python 3.11
-7. `pip install rknn-toolkit2`
-
-**Setup**
-```bash
-apt update -y
-
-apt install --no-install-recommends -y
-    git \
-    rknpu2-rk356x \
-    libcap-dev \
-    build-essential \
-    v4l-utils
-
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Download and install rknn2
-wget https://github.com/radxa-pkg/rknn2/releases/download/2.3.0-1/rknpu2-rk356x_2.3.0-1_arm64.deb
-apt install ./rknpu2-rk356x_2.3.0-1_arm64.deb
-
-
-
-```
-Download and enable overlay
-find the artifact here: 
-    - https://github.com/radxa-pkg/radxa-overlays/actions/runs/16897851208/job/47870978948 (it's named something like: linux-rk356x.zip)
-    or
-    - https://github.com/Qengineering/Radxa-Zero-3-NPU-Ubuntu22
-copy `rk3568-npu-enable.dtbo` to `/boot/dtb/rockchip/overlay/`
-then modify /boot/dietpiEnv.txt: 
-
-```
-overlay_path=rockchip
-# Multiple prefixes are supported separated by space
-overlay_prefix=radxa-zero3 rk3568 rockchip
-overlays=npu-enable
-```
-
-
-## Install `Picamera2`
-
-See: [rpicam-apps(-lite)](https://www.raspberrypi.com/documentation/computers/camera_software.html#install-libcamera-and-rpicam-apps)
-
-**Note:** Make sure to use the system python3 and not a python managed by uv, as there will be problems by uv-managed-python not detecting libcamera.
-
-```bash
-apt update -y
-apt install -y python3-picamera2 --no-install-recommends
-
-apt install -y \
-  build-essential \
-  libcap-dev \
-  rpicam-apps-lite \
-  libcamera-dev \
-  cmake \
-  python3-libcamera
-
-uv venv --system-site-packages
-uv add picamera2
-```
-
-Then [modify `/boot/firmware/config.txt`](https://www.waveshare.com/wiki/RPi_Camera_(H)): 
-```
-camera_auto_detect=0
-dtoverlay=ov5647
-```
-
-Then
-
-> Run `dietpi-config`, go into `Display Options` and activate RPi Camera and then reboot the device and try again.
-Source: https://dietpi.com/forum/t/want-to-connect-camera-module-3-to-raspberry-pi-3/19973
-
-
-## RTSP Streaming
-
-**Start stream**
-```bash
-libcamera-vid --awbgain 1,1 -t 0 --inline --listen -o tcp://0.0.0.0:8888
-```
-
-**View stream**
-Using VLC or simmilar open `tcp/h264://<ip>:8888` 
-
-## Streaming with `ffmpeg`
-
-**Stream**
-```bash
-picam-vid --nopreview --awbgain 1,1 -t 0 --codec yuv420 --width 1024 --height 768 --framerate 30 -o - | ffmpeg -f rawvideo -pix_fmt yuv420p -s 1024x768 -r 30 -i - -c:v h264_v4l2m2m -b:v 2000k -f mpegts -fflags flush_packets -preset ultrafast -tune zerolatency udp://192.168.1.148:8888
-```
-
-**Play**
-```bash
-ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -vf setpts=0 udp://192.168.1.149:8888
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+---
+
+## 3. Installation & Setup
+
+This project supports multiple hardware platforms. Please follow the instructions relevant to your device.
+
+### A. Raspberry Pi Setup (CPU-Only)
+
+#### Servo Control
+1.  **Install Dependencies:**
+    ```bash
+    sudo apt install pigpio python3-pigpio
+    uv add gpiozero pigpio
+    ```
+2.  **Start GPIO Daemon:**
+    ```bash
+    sudo gpiod
+    ```
+
+#### Camera (Picamera2)
+1.  **Install System Packages:**
+    ```bash
+    sudo apt update
+    sudo apt install -y python3-picamera2 rpicam-apps-lite libcamera-dev python3-libcamera --no-install-recommends
+    ```
+2.  **Add to your Python environment:**
+    ```bash
+    # Make sure to use a virtual environment with --system-site-packages
+    uv venv --system-site-packages
+    source .venv/bin/activate
+    uv add picamera2
+    ```
+3.  **Enable Camera:** For specific camera modules (like the OV5647), you may need to edit `/boot/firmware/config.txt`:
+    ```ini
+    camera_auto_detect=0
+    dtoverlay=ov5647
+    ```
+
+### B. Orange Pi / Radxa Zero Setup (with NPU Acceleration)
+
+For leveraging the NPU on boards with a Rockchip RK3566/RK3568 processor, the setup is more involved and requires installing specific drivers and libraries (like RKNN).
+
+*Detailed instructions for **Orange Pi 3B** and **Radxa Zero 3W** are available in the repository's full documentation.*
+
+---
+
+## 4. Usage: The Web Interface
+
+The entire Piki system is designed to be controlled and monitored through a simple web-based Graphical User Interface (GUI).
+
+### Starting the Application
+1.  Navigate to the source directory:
+    ```bash
+    cd src/piki
+    ```
+2.  Execute the run script. This will start the web server and the object detection service.
+    ```bash
+    ./run.sh
+    ```
+
+### Accessing the GUI
+1.  Once the server is running, open a web browser on any device connected to the same network (your computer, phone, or tablet).
+2.  Navigate to the IP address of your board. For example: `http://192.168.1.123`
+
+From the web interface, you can:
+*   **View the live camera feed** to ensure it's aimed correctly.
+*   **Monitor system status** and see logs of recent detections.
+*   **Fine-tune settings** for detection sensitivity and deterrent activation.
+*   **Manually control** the system components for testing.
