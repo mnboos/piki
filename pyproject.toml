@@ -5,10 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "django==5.2.4",
-    "flask==3.1.1",
+    "daphne==4.2.1",
+    "django==5.2.6",
+    "django-ninja==1.4.3",
     "gpiozero==2.0.1",
-    "numpy==2.3.2",
+    "numpy==2.3.3",
     "opencv-contrib-python-headless==4.11.0.86",
     "pigpio==1.78",
     "rich==14.1.0",
@@ -17,7 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.12.10",
+    "ruff==0.13.0",
     "ty==0.0.1a19",
 ]
 model-conversion = []

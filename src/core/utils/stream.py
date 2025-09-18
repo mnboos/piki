@@ -31,7 +31,6 @@ from .shared import (
     cv2,
     is_object_detection_disabled,
     live_stream_enabled,
-    mask_output_buffer,
     mask_transparency,
     motion_detector,
     output_buffer,
@@ -474,9 +473,11 @@ def process_frame(frame_hires: np.ndarray):
                     transparency_factor=mask_transparency.value,
                     draw_boxes=True,
                 )
-                mask_output_buffer.append(buf_highlighted)
-
-                output_buffer.append((0, current_time, frame_lores, []))
+                mode = "stream"
+                if mode == "mask":
+                    output_buffer.append((0, current_time, buf_highlighted, []))
+                else:
+                    output_buffer.append((0, current_time, frame_lores, []))
             elif has_movement:
                 try:
                     timestamp = time.monotonic_ns()

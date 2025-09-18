@@ -51,7 +51,6 @@ is_object_detection_disabled = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)
 
 output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))  # todo: make typed
-mask_output_buffer = MultiprocessingDequeue[np.ndarray](queue=Queue(maxsize=10))
 prob_threshold = mp.Value(c_float, 0.4)
 
 
