@@ -3,22 +3,22 @@ name = "pi-ki"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "daphne==4.2.1",
-    "django==5.2.6",
+    "django==6.0a1",
     "django-ninja==1.4.3",
     "gpiozero==2.0.1",
-    "numpy==2.3.3",
-    "opencv-contrib-python-headless==4.11.0.86",
+    "numpy==2.2.6",
+    "opencv-contrib-python-headless==4.12.0.88",
     "pigpio==1.78",
-    "rich==14.1.0",
+    "rich==14.2.0",
     "rknn-toolkit-lite2==2.3.2 ; platform_machine == 'aarch64'",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff==0.13.0",
+    "ruff==0.14.0",
     "ty==0.0.1a19",
 ]
 model-conversion = []
