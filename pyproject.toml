@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "daphne==4.2.1",
     "django==6.0a1",
+    "django-cors-headers>=4.9.0",
     "django-ninja==1.4.3",
     "gpiozero==2.0.1",
     "numpy==2.2.6",
@@ -26,7 +27,28 @@ model-conversion = []
 [tool.ruff]
 line-length = 120
 indent-width = 4
-target-version = "py311"
+target-version = "py312"
+dummy-variable-rgx = "^(request|_)$"
 
 [tool.ruff.lint]
-select = ["I"]
+select = ["I", "ALL"]
+ignore = [
+    "ERA001",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D401",
+    "FIX002",
+    "D107",
+    "T201", # print found
+    "ANN201",
+    "ANN204",
+    "TRY003",
+    "EM101",
+    "EM102",
+    "TD003",
+    "S101",
+    "PLW0603", # Using the global statement to update `double_buffer` is discouraged
+    "G004"  # f-string in logging-statement
+]

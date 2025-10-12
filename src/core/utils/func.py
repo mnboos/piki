@@ -1,29 +1,34 @@
 import cv2
 import numpy as np
 
+from .interfaces import Box
+
 
 def expand_roi_to_min_size(
-    *, min_roi_size: int, roi: tuple[int, int, int, int], img_shape: tuple[int, int]
+    *,
+    min_roi_size: int,
+    roi: tuple[int, int, int, int],
+    img_shape: tuple[int, int],
 ) -> tuple[int, int, int, int]:
-    """
-    Expands an ROI from its center to a minimum target size, but does not
-    shift the ROI if it hits a boundary. Instead, the expansion is clipped
-    by the image edges.
+    """Expand a ROI from its center to a minimum target size.
+
+     Does not shift the ROI if it hits a boundary. Instead, the expansion is clipped by the image edges.
 
     Args:
-        min_roi_size (int):
+        min_roi_size (int): The minmimal size of the roi.
         roi (tuple): The initial (x, y, w, h) bounding box.
         img_shape (tuple): The (height, width) of the image frame.
 
     Returns:
         tuple: The final (x, y, w, h) of the expanded and clipped ROI.
+
     """
     x, y, w, h = roi
     img_h, img_w = img_shape
 
     # 1. Determine the target size. This ensures the ROI becomes at least min_roi_size
     #    while attempting to make it square if the original box was not.
-    target_size = max(min_roi_size, max(w, h))
+    target_size = max(min_roi_size, w, h)
 
     # 2. Calculate the total padding needed for width and height
     pad_w = max(0, target_size - w)
@@ -54,7 +59,9 @@ def expand_roi_to_min_size(
 
 
 def edge_distance(
-    *, roi: tuple[int, int, int, int], img_shape: tuple[int, int]
+    *,
+    roi: tuple[int, int, int, int],
+    img_shape: tuple[int, int],
 ) -> float:
     """Calculate distance to nearest edge for prioritization."""
     x, y, w, h = roi
@@ -63,11 +70,12 @@ def edge_distance(
 
 
 def cluster_with_constraints(
-    *, boxes: list, max_dimension: int, merge_threshold: int = 999999
+    *,
+    boxes: list,
+    max_dimension: int,
+    merge_threshold: int = 999999,
 ) -> list:
-    """
-    Private helper to greedily cluster boxes, respecting max size and proximity.
-    """
+    """Private helper to greedily cluster boxes, respecting max size and proximity."""
     if not boxes:
         return []
 
@@ -102,8 +110,7 @@ def cluster_with_constraints(
 
                 jx, jy, jw, jh = boxes[j]
                 dist = np.sqrt(
-                    (cluster_cx - (jx + jw / 2)) ** 2
-                    + (cluster_cy - (jy + jh / 2)) ** 2
+                    (cluster_cx - (jx + jw / 2)) ** 2 + (cluster_cy - (jy + jh / 2)) ** 2,
                 )
 
                 if dist > merge_threshold:
@@ -130,22 +137,16 @@ def cluster_with_constraints(
         # Finalize the cluster's bounding box
         final_x = min(boxes[k][0] for k in current_cluster_indices)
         final_y = min(boxes[k][1] for k in current_cluster_indices)
-        final_w = (
-            max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices) - final_x
-        )
-        final_h = (
-            max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices) - final_y
-        )
+        final_w = max(boxes[k][0] + boxes[k][2] for k in current_cluster_indices) - final_x
+        final_h = max(boxes[k][1] + boxes[k][3] for k in current_cluster_indices) - final_y
 
         final_rois.append((final_x, final_y, final_w, final_h))
 
     return final_rois
 
 
-def apply_non_max_suppression(*, boxes, overlap_threshold=0.3):
-    """
-    Applies Non-Max Suppression to a list of bounding boxes to remove redundant,
-    overlapping ROIs.
+def apply_non_max_suppression(*, boxes: list[Box], overlap_threshold: float = 0.3):
+    """Apply Non-Max Suppression to a list of bounding boxes to remove redundant, overlapping ROIs.
 
     Args:
         boxes (list): A list of (x, y, w, h) bounding box tuples.
@@ -155,16 +156,17 @@ def apply_non_max_suppression(*, boxes, overlap_threshold=0.3):
 
     Returns:
         list: A final, clean list of non-overlapping bounding boxes.
+
     """
     if not boxes:
         return []
 
     # Ensure boxes are in a standard list of lists format
     # The NMS function can be picky about this.
-    bbox_list = [[int(x), int(y), int(w), int(h)] for (x, y, w, h) in boxes]
+    # bbox_list = [Box(int(x), int(y), int(w), int(h)) for (x, y, w, h) in boxes]
 
     # Calculate scores (area) for each box
-    scores = [w * h for (x, y, w, h) in bbox_list]
+    scores = [w * h for (x, y, w, h) in boxes]
 
     # --- THE FIX ---
     # Convert scores to a NumPy array of float32, which is what NMSBoxes expects.
@@ -173,38 +175,33 @@ def apply_non_max_suppression(*, boxes, overlap_threshold=0.3):
     # The function requires a score_threshold, which we can set to 0 to consider all boxes.
     # It returns the *indices* of the boxes to keep.
     indices_to_keep = cv2.dnn.NMSBoxes(
-        bboxes=bbox_list,
+        bboxes=boxes,
         scores=scores_np,  # Pass the correctly typed array
         score_threshold=0,
         nms_threshold=overlap_threshold,
     )
 
-    # If NMS returns indices, use them to build the final list of boxes
-    if len(indices_to_keep) > 0:
-        # The indices can be a nested list, so we flatten them
-        final_boxes = [boxes[i] for i in np.array(indices_to_keep).flatten()]
-    else:
-        # If NMS suppressed everything, return an empty list
-        final_boxes = []
-
-    return final_boxes
+    if len(indices_to_keep):
+        return [boxes[i] for i in np.array(indices_to_keep).flatten()]
+    return []
 
 
 def get_padded_roi_images(
     *,
     frame: np.ndarray,
-    rois,
-    preview_downscale_factor,
-    target_size,
-    pad_color=(0, 0, 0),
+    rois: list[Box],
+    preview_downscale_factor: float,
+    target_size: int,
+    pad_color: tuple[int, int, int] = (0, 0, 0),
 ):
-    """
-    Crops ROIs from a frame, preserves their aspect ratio by either center-cropping
-    or padding, and resizes them to a square target size.
+    """Crop ROIs from a frame.
+
+    Preserves their aspect ratio by either center-cropping or padding, and resizes them to a square target size.
 
     Returns:
         list: A list of tuples, where each tuple contains:
               (padded_image, scale_factor, effective_origin_xy)
+
     """
     final_roi_images = []
     frame_h, frame_w, _ = frame.shape
@@ -246,7 +243,8 @@ def get_padded_roi_images(
 
             # Perform the square crop from the original ROI
             square_crop = roi_crop[
-                start_y : start_y + min_dim, start_x : start_x + min_dim
+                start_y : start_y + min_dim,
+                start_x : start_x + min_dim,
             ]
 
             # Update the effective origin to account for the crop
@@ -282,9 +280,7 @@ def get_padded_roi_images(
             # Scale remains 1.0 because we did not resize the original content
 
         # Assert that the final image is the correct size
-        assert final_image.shape[:2] == (target_size, target_size), (
-            "Final image processing failed."
-        )
+        assert final_image.shape[:2] == (target_size, target_size), "Final image processing failed."
 
         final_roi_images.append((final_image, scale, effective_origin))
 

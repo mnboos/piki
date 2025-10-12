@@ -14,14 +14,18 @@
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "lint": "eslint . --fix",
-    "format": "prettier --write src/"
+    "format": "prettier --write src/",
+    "api:generate:schema": "cd ../src && uv run manage.py export_openapi_schema --indent 4 --output api.json",
+    "api:generate:client": "openapi-generator-cli generate -g typescript-fetch -o src/api -i ../src/api.json",
+    "api:update": "npm run api:generate:schema && npm run api:generate:client"
   },
   "dependencies": {
-    "@tanstack/vue-query": "5.85.5",
+    "@tanstack/vue-query": "^5.85.5",
     "vue": "3.5.20",
     "vue-router": "4.5.1"
   },
   "devDependencies": {
+    "@openapitools/openapi-generator-cli": "^2.24.0",
     "@tsconfig/node22": "22.0.2",
     "@types/jsdom": "21.1.7",
     "@types/node": "22.18.0",

@@ -2,8 +2,10 @@ import logging
 import multiprocessing as mp
 import os
 import random
+from collections.abc import Sequence
 from ctypes import c_float
 from multiprocessing import Event, Queue
+from typing import NamedTuple
 
 from .interfaces import MultiprocessingDequeue, TuningSettings
 from .settings import AppSettings, DebugSettings
@@ -35,7 +37,6 @@ logger.info(f"OpenCV has OpenCL: {has_opencl}")
 if has_opencl:
     cv2.ocl.setUseOpenCL(True)
 
-live_stream_enabled = Event()
 worker_ready = Event()
 
 NUM_AI_WORKERS: int = 4
@@ -50,7 +51,29 @@ is_object_detection_disabled = Event()
 # DJANGO_RELOAD_ISSUED = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)
 
-output_buffer = MultiprocessingDequeue(queue=Queue(maxsize=10))  # todo: make typed
+
+class Detection(NamedTuple):
+    # ("tracker", 1, bbox)
+    label: str
+    confidence: float
+    bbox: Sequence[int]
+
+
+class OutputResult(NamedTuple):
+    worker_pid: int
+    timestamp: int
+    frame_lores: np.ndarray
+    detections_denormalized: list[Detection]
+
+
+class InferenceOutput(NamedTuple):
+    worker_pid: int
+    timestamp: int
+    avg_duration: int
+    detections: list[Detection]
+
+
+output_buffer = MultiprocessingDequeue[OutputResult](queue=Queue(maxsize=10))
 prob_threshold = mp.Value(c_float, 0.4)
 
 
@@ -99,15 +122,14 @@ class MotionDetector:
         return is_moving, fg_mask
 
     def create_rois(self, *, mask: np.ndarray) -> list:
-        """
-        Finds blobs with connectedComponents, clusters them with constraints,
-        and finalizes them to meet min_size requirements.
+        """Find, cluster and finalilze blobs with connectedComponents.
 
         Args:
             mask (np.ndarray): The input binary mask.
 
         Returns:
             list: A list of the final, fully optimized ROIs.
+
         """
         # 1. Find all individual blobs in the mask (Fast)
         num_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8, ltype=cv2.CV_32S)
@@ -130,7 +152,7 @@ class MotionDetector:
             return []
 
         # # 3. Cluster the initial boxes with full constraints (Intelligent)
-        enable_clustering = True  # todo: make configurable
+        enable_clustering = True  # TODO(mnboos): make configurable
         if enable_clustering:
             clustered_rois = cluster_with_constraints(
                 boxes=initial_boxes,
@@ -180,13 +202,13 @@ class MotionDetector:
             for x, y, w, h in boxes:
                 # rect_color = (0, 0, 255)
                 rect_color = (
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                    random.randint(0, 255),
+                    random.randint(0, 255),  # noqa: S311
+                    random.randint(0, 255),  # noqa: S311
+                    random.randint(0, 255),  # noqa: S311
                 )
                 cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
 
-        colored_overlay = np.full(frame.shape, overlay_color_rgb, dtype=np.uint8)  # todo: do this only once
+        colored_overlay = np.full(frame.shape, overlay_color_rgb, dtype=np.uint8)  # TODO(mnboos): do this only once
         blended = cv2.addWeighted(
             frame,
             transparency_factor,

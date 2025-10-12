@@ -9,28 +9,31 @@ import subprocess
 import threading
 import time
 import traceback
-from collections import deque, namedtuple
+from collections import deque
+from collections.abc import Sequence
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Lock, Semaphore, shared_memory
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import Optional
+from typing import IO
 
 import numpy as np
 
 from .func import (
     get_padded_roi_images,
 )
-from .interfaces import DoubleBuffer
+from .interfaces import Box, DoubleBuffer
 from .metrics import LiveMetricsDashboard
 from .shared import (
     NUM_AI_WORKERS,
+    Detection,
+    InferenceOutput,
+    OutputResult,
     ai_input_size,
     app_settings,
     cv2,
     is_object_detection_disabled,
-    live_stream_enabled,
     mask_transparency,
     motion_detector,
     output_buffer,
@@ -42,7 +45,8 @@ logger = logging.getLogger(__name__)
 SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
 shm_lock = Lock()  # To synchronize access to the shared memory
 shared_mem: SharedMemory | None = None  # Will hold the SharedMemory instance
-shared_array: Optional[np.typing.NDArray] = None  # The numpy array view of the shared memory
+# noinspection PyTypeHints
+shared_array: np.typing.NDArray | None = None  # The numpy array view of the shared memory
 
 last_known_bbox = None
 last_known_velocity = None
@@ -63,7 +67,7 @@ def init_worker():
     ppid = os.getppid()
     logger.info(f"[Worker-{pid}]: Setup")
 
-    def f():
+    def f() -> None:
         while True:
             try:
                 os.kill(ppid, 0)
@@ -75,23 +79,21 @@ def init_worker():
     thread.start()
 
     @atexit.register
-    def _cleanup():
+    def _cleanup() -> None:
         logger.info(f"[Worker-{pid}] Shutting down....")
 
 
 tracker_lock = Lock()
 tracking = mp.Event()
 coasting = mp.Event()
-tracker: Optional[cv2.Tracker] = None
+tracker: cv2.Tracker | None = None
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 # worker_slot_semaphore = Semaphore(NUM_AI_WORKERS)
 
 
-def frame_producer(ffmpeg_stdout, buffer_instance: DoubleBuffer):
-    """
-    Reads raw frames from FFmpeg's stdout pipe and writes them into a DoubleBuffer.
-    """
+def frame_producer(ffmpeg_stdout: IO[bytes], buffer_instance: DoubleBuffer):
+    """Reads raw frames from FFmpeg's stdout pipe and writes them into a DoubleBuffer."""
     shape = buffer_instance.shape
     dtype = buffer_instance.dtype
     frame_size = int(np.prod(shape) * np.dtype(dtype).itemsize)
@@ -105,31 +107,31 @@ def frame_producer(ffmpeg_stdout, buffer_instance: DoubleBuffer):
             frame = np.frombuffer(in_bytes, dtype=dtype).reshape(shape)
             buffer_instance.write(frame)
     except:
-        logger.error("Exception in producer thread:")
+        logger.exception("Exception in producer thread:")
         traceback.print_exc()
         raise
     logger.info("Producer finished.")
 
 
-def setup_shared_memory(frame_shape, frame_dtype):
+def setup_shared_memory_like(frame: np.typing.NDArray):
     global shared_mem
     global shared_array
 
     """Creates the shared memory block based on the first frame's properties."""
     try:
         # Create a new shared memory block
-        size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
+        size = int(np.prod(frame.shape) * np.dtype(frame.dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
         logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB")
     except FileExistsError:
         # If it already exists from a previous crashed run, unlink it and retry
         logger.info("Shared memory block already exists, unlinking and recreating.")
         SharedMemory(name=SHM_NAME).unlink()
-        size = int(np.prod(frame_shape) * np.dtype(frame_dtype).itemsize)
+        size = int(np.prod(frame.shape) * np.dtype(frame.dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
 
     # Create a NumPy array that uses the shared memory buffer
-    shared_array = np.ndarray(frame_shape, dtype=frame_dtype, buffer=shared_mem.buf)
+    shared_array = np.ndarray(frame.shape, dtype=frame.dtype, buffer=shared_mem.buf)
     return shared_array
 
 
@@ -141,7 +143,7 @@ def cleanup_shared_memory():
         shared_mem.unlink()  # Free the memory block
 
 
-active_futures: list[Future] = []
+active_futures: list[Future[InferenceOutput]] = []
 max_output_timestamp = 0
 dashboard = LiveMetricsDashboard()
 
@@ -165,12 +167,11 @@ dashboard = LiveMetricsDashboard()
 def get_measure(description: str):
     now = time.perf_counter()
 
-    def measure(log: bool = True):
+    def measure(*, log: bool = True) -> None:
         end = time.perf_counter()
         ms = str(round((end - now) * 1000, 2)).rjust(5)
         if log:
             logger.info(f"{description}: {ms} ms!")
-        return ms
 
     return measure
 
@@ -178,12 +179,12 @@ def get_measure(description: str):
 def run_object_detection(
     shape: tuple,
     dtype: np.dtype,
-    rois,
+    rois: list[Box],
     timestamp: int,
-):
-    worker_pid = mp.current_process().pid
+) -> InferenceOutput:
+    worker_pid = mp.current_process().pid or 0
     if is_object_detection_disabled.set():
-        return worker_pid, timestamp, None, (0, [])
+        return InferenceOutput(worker_pid=worker_pid, timestamp=timestamp, avg_duration=0, detections=[])
 
     existing_shm = None
     try:
@@ -205,9 +206,9 @@ def run_object_detection(
         print("images to detect: ", len(padded_images_and_details))
 
         total_duration = 0
-        all_detections = []
+        all_detections: list[Detection] = []
 
-        from .ai import detect_objects
+        from .ai import detect_objects  # noqa: PLC0415
 
         for img, scale, effective_origin in padded_images_and_details:
             eff_orig_x, eff_orig_y = effective_origin
@@ -235,11 +236,15 @@ def run_object_detection(
                     global_px_xmax / frame_w,
                 ]
 
-                all_detections.append((label, confidence, final_norm_coords))
+                all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
         avg_duration = 0 if not len(padded_images_and_details) else total_duration // len(padded_images_and_details)
-        result = avg_duration, all_detections
-        return worker_pid, timestamp, result
+        return InferenceOutput(
+            worker_pid=worker_pid,
+            timestamp=timestamp,
+            avg_duration=avg_duration,
+            detections=all_detections,
+        )
 
     except:
         logger.info(f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!")
@@ -250,7 +255,7 @@ def run_object_detection(
             existing_shm.close()
 
 
-def denormalize(bbox_normalized, frame_shape):
+def denormalize(bbox_normalized: Sequence[int], frame_shape: Sequence[int]) -> Box:
     frame_height, frame_width, _ = frame_shape
     ymin, xmin, ymax, xmax = bbox_normalized
 
@@ -265,25 +270,24 @@ def denormalize(bbox_normalized, frame_shape):
     bottom = int(ymax * frame_height)
     width = right - left
     height = bottom - top
-    tp = namedtuple("Box", "x y w h")
-    return tp(left, top, width, height)
+    return Box(left, top, width, height)
 
 
-def denormalize_detections(detections, frame_shape):
-    detections_denormalized = []
-    for label, confidence, bbox_normalized in detections:
-        x, y, w, h = denormalize(bbox_normalized, frame_shape)
+# def denormalize_detections(detections: list[OutputResult], frame_shape) -> list[Detection]:
+#     detections_denormalized: list[Detection] = []
+#     for result in detections:
+#         x, y, w, h = denormalize(bbox_normalized, frame_shape)
+#
+#         detections_denormalized.append(Detection(label=label, confidence=confidence, bbox=(x, y, w, h)))
+#     return detections_denormalized
 
-        detections_denormalized.append((label, confidence, (x, y, w, h)))
-    return detections_denormalized
 
-
-def on_done(future: Future):
+def on_done(future: Future[InferenceOutput]):
     global max_output_timestamp
     global tracker
     active_futures.remove(future)
     try:
-        worker_pid, timestamp, detected_objects = future.result()
+        worker_pid, timestamp, inference_time, detections = future.result()
 
         with cache_lock:
             frame_lores = lowres_frame_cache.pop(timestamp, None)
@@ -292,45 +296,49 @@ def on_done(future: Future):
             logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
         else:
             max_output_timestamp = timestamp
+            detections_denormalized: list[Detection] = []
 
-            if detected_objects:
-                inference_time, detections = detected_objects
+            for label, confidence, bbox_normalized in detections:
+                x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
+                if x < 0 or y < 0 or w < 0 or h < 0:
+                    print(
+                        "something has been denormalized abnormally: ",
+                        frame_lores.shape,
+                        bbox_normalized,
+                        (x, y, w, h),
+                    )
+                    continue
 
-                detections_denormalized = []
+                detections_denormalized.append(
+                    Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
+                )
 
-                frame_height, frame_width, _ = frame_lores.shape
-                for label, confidence, bbox_normalized in detections:
-                    x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
-                    if x < 0 or y < 0 or w < 0 or h < 0:
-                        print(
-                            "something has been denormalized abnormally: ",
-                            frame_lores.shape,
-                            bbox_normalized,
-                            (x, y, w, h),
-                        )
-                        continue
+                with tracker_lock:
+                    disable_tracking = True
+                    if not disable_tracking and label in ["person"] and not tracking.is_set():
+                        if tracker is None:
+                            tracker_class = cv2.TrackerKCF
+                            params = tracker_class.Params()
+                            logger.info(
+                                "TrackerKCF params: %s",
+                                {k: getattr(params, k) for k in dir(params) if not k.startswith("_")},
+                            )
+                            logger.info("orig params: %s", dir(params))
 
-                    detections_denormalized.append((label, confidence, (x, y, w, h)))
+                            tracker = tracker_class.create(params)
+                        logger.info("Tracker init shape: %s", frame_lores.shape)
+                        tracking.set()
+                        tracker.init(frame_lores, (x, y, w, h))
+            dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
-                    with tracker_lock:
-                        disable_tracking = True
-                        if not disable_tracking and label in ["person"] and not tracking.is_set():
-                            if tracker is None:
-                                tracker_class = cv2.TrackerKCF
-                                params = tracker_class.Params()
-                                logger.info(
-                                    "TrackerKCF params: %s",
-                                    {k: getattr(params, k) for k in dir(params) if not k.startswith("_")},
-                                )
-                                logger.info("orig params: %s", dir(params))
-
-                                tracker = tracker_class.create(params)
-                            logger.info("Tracker init shape: %s", frame_lores.shape)
-                            tracking.set()
-                            tracker.init(frame_lores, (x, y, w, h))
-                dashboard.update(worker_id=worker_pid, inference_time=inference_time)
-                if live_stream_enabled.is_set():
-                    output_buffer.append((worker_pid, timestamp, frame_lores, detections_denormalized))
+            output_buffer.append(
+                OutputResult(
+                    worker_pid=worker_pid,
+                    timestamp=timestamp,
+                    frame_lores=frame_lores,
+                    detections_denormalized=detections_denormalized,
+                ),
+            )
     except BrokenProcessPool:
         logger.info("Pool already broken, when future was done. Shutting down...")
         traceback.print_exc()
@@ -343,19 +351,19 @@ def on_done(future: Future):
         worker_semaphore.release()
 
 
-def process_frame(frame_hires: np.ndarray):
+def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
     global shared_array
     global tracker
     global untracked_frames_count
     global total_untracked_frames_count
     global last_known_bbox
-    global last_known_velocity
+    # global last_known_velocity
 
-    current_time = time.monotonic()
+    current_time = time.time_ns()
 
     with shm_lock:
         if shared_array is None:
-            shared_array = setup_shared_memory(frame_hires.shape, frame_hires.dtype)
+            shared_array = setup_shared_memory_like(frame_hires)
 
         shared_array[:] = frame_hires
 
@@ -421,12 +429,12 @@ def process_frame(frame_hires: np.ndarray):
 
                     last_known_bbox = (current_time, bbox)
                     output_buffer.append(
-                        (
-                            0,
-                            time.monotonic_ns(),
-                            frame_lores,
-                            [("tracker", 1, bbox)],
-                        )
+                        OutputResult(
+                            worker_pid=0,
+                            timestamp=time.monotonic_ns(),
+                            frame_lores=frame_lores,
+                            detections_denormalized=[Detection(label="tracker", confidence=1, bbox=bbox)],
+                        ),
                     )
                 else:
                     untracked_frames_count = 1
@@ -435,73 +443,90 @@ def process_frame(frame_hires: np.ndarray):
                 total_untracked_frames_count += 1
                 untracked_frames_count += 1
 
-                if total_untracked_frames_count >= 90:
+                total_untracked_frames_threshold = 90
+                if total_untracked_frames_count >= total_untracked_frames_threshold:
                     total_untracked_frames_count = 0
                     untracked_frames_count = 0
                     tracker = None
                     tracking.clear()
 
-                if untracked_frames_count > 30:
+                untracked_frames_threshold = 30
+                if untracked_frames_count > untracked_frames_threshold:
                     untracked_frames_count = 0
 
                 output_buffer.append(
-                    (
-                        0,
-                        time.monotonic_ns(),
-                        frame_lores,
-                        [],
-                    )
-                )
-
-        else:
-            if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
-                grayscale_output = True
-                if grayscale_output:
-                    gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
-                    frame_lores = cv2.merge((gray, gray, gray))
-                else:
-                    frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
-
-                buf_highlighted = motion_detector.highlight_movement_on(
-                    frame=frame_lores,
-                    mask=mask,
-                    overlay_color_rgb=(
-                        147,
-                        20,
-                        255,
+                    OutputResult(
+                        worker_pid=0,
+                        timestamp=time.monotonic_ns(),
+                        frame_lores=frame_lores,
+                        detections_denormalized=[],
                     ),
-                    transparency_factor=mask_transparency.value,
-                    draw_boxes=True,
                 )
-                mode = "stream"
-                if mode == "mask":
-                    output_buffer.append((0, current_time, buf_highlighted, []))
-                else:
-                    output_buffer.append((0, current_time, frame_lores, []))
-            elif has_movement:
-                try:
-                    timestamp = time.monotonic_ns()
 
-                    rois = motion_detector.create_rois(mask=mask)
-                    if rois:
-                        with cache_lock:
-                            lowres_frame_cache[timestamp] = frame_lores
+        elif app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
+            grayscale_output = True
+            if grayscale_output:
+                gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+                frame_lores = cv2.merge((gray, gray, gray))
+            else:
+                frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
 
-                        worker_semaphore.acquire()
-                        future: Future | None = process_pool.submit(
-                            run_object_detection,
-                            shape=frame_hires.shape,
-                            dtype=frame_hires.dtype,
-                            rois=rois,
-                            timestamp=timestamp,
-                        )
-                        active_futures.append(future)
-                        future.add_done_callback(on_done)
-                except:
-                    traceback.print_exc()
-                    raise
-            elif not has_movement and not active_futures:
-                output_buffer.append((0, 0, frame_lores, []))
+            buf_highlighted = motion_detector.highlight_movement_on(
+                frame=frame_lores,
+                mask=mask,
+                overlay_color_rgb=(
+                    147,
+                    20,
+                    255,
+                ),
+                transparency_factor=mask_transparency.value,
+                draw_boxes=True,
+            )
+            mode = "stream"
+            if mode == "mask":
+                output_buffer.append(
+                    OutputResult(
+                        worker_pid=0,
+                        timestamp=current_time,
+                        frame_lores=buf_highlighted,
+                        detections_denormalized=[],
+                    ),
+                )
+            else:
+                output_buffer.append(
+                    OutputResult(
+                        worker_pid=0,
+                        timestamp=current_time,
+                        frame_lores=frame_lores,
+                        detections_denormalized=[],
+                    ),
+                )
+        elif has_movement:
+            try:
+                timestamp = time.monotonic_ns()
+
+                rois = motion_detector.create_rois(mask=mask)
+                if rois:
+                    with cache_lock:
+                        lowres_frame_cache[timestamp] = frame_lores
+
+                    worker_semaphore.acquire()
+                    future = process_pool.submit(
+                        run_object_detection,
+                        shape=frame_hires.shape,
+                        dtype=frame_hires.dtype,
+                        rois=rois,
+                        timestamp=timestamp,
+                    )
+                    active_futures.append(future)
+                    future.add_done_callback(on_done)
+            except:
+                traceback.print_exc()
+                raise
+        elif not has_movement and not active_futures:
+            output_buffer.append(
+                OutputResult(worker_pid=0, timestamp=0, frame_lores=frame_lores, detections_denormalized=[]),
+            )
 
 
 class StreamingOutput(io.BufferedIOBase):
@@ -512,8 +537,9 @@ class StreamingOutput(io.BufferedIOBase):
         if len(active_futures) == NUM_AI_WORKERS:
             return
 
-        buf_hires = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
-        process_frame(frame_hires=buf_hires)
+        decoded_frame = cv2.imdecode(np.frombuffer(buf_hires, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if decoded_frame == True:  # noqa: E712
+            process_frame(frame_hires=decoded_frame)
 
 
 input_buffer = StreamingOutput()
@@ -523,7 +549,7 @@ def stream_nonblocking():
     thread_pool.submit(stream_with_ffmpeg)
 
 
-def _run_ffmpeg(*, input_src: str, input_args: list[str], vf: str):
+def _run_ffmpeg(*, input_src: str, input_args: list[str], vf: str) -> subprocess.Popen[bytes]:
     cmd = [
         "ffmpeg",
         *input_args,
@@ -541,9 +567,9 @@ def _run_ffmpeg(*, input_src: str, input_args: list[str], vf: str):
         "-",  # Output to stdout
     ]
     logger.info("Starting FFmpeg with command: %s", " ".join(cmd))
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603
 
-    def log_stderr():
+    def log_stderr() -> None:
         if process.stderr:
             full_error = ""
             for line in iter(process.stderr.readline, b""):
@@ -554,9 +580,9 @@ def _run_ffmpeg(*, input_src: str, input_args: list[str], vf: str):
     return process
 
 
-def start_ffmpeg(*, output_width, output_height):
-    """Launches the FFmpeg process to output a single high-res stream to stdout."""
-    global ffmpeg_process
+def start_ffmpeg(*, output_width: int, output_height: int) -> subprocess.Popen[bytes]:
+    """Launch the FFmpeg process to output a single high-res stream to stdout."""
+    # global ffmpeg_process
 
     video_path = os.environ.get("MOCK_CAMERA_PATH")
     if not video_path:
@@ -565,7 +591,7 @@ def start_ffmpeg(*, output_width, output_height):
     assert Path(video_path).exists(), f"File or device does not exist: {video_path}"
 
     fps = 20
-    if os.path.isfile(video_path):
+    if Path(video_path).is_file():
         input_args = [
             "-re",
             "-stream_loop",
@@ -598,12 +624,11 @@ def start_ffmpeg(*, output_width, output_height):
             ],
             vf=f"fps=fps={fps},hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
         )
-    else:
-        return _run_ffmpeg(
-            input_src=video_path,
-            input_args=["-init_hw_device", "vaapi", *input_args],
-            vf=f"fps=fps={fps}",
-        )
+    return _run_ffmpeg(
+        input_src=video_path,
+        input_args=["-init_hw_device", "vaapi", *input_args],
+        vf=f"fps=fps={fps}",
+    )
 
 
 def stream_with_ffmpeg():
@@ -612,7 +637,8 @@ def stream_with_ffmpeg():
 
     delay_seconds = 5
     logger.info(f"Starting videostream in {delay_seconds}s...")
-    # this sleep is absolutely crucial!!! if we have a low-res video, opencv would be ready before django is and that breaks everything
+    # this sleep is absolutely crucial!!!
+    # if we have a low-res video, opencv would be ready before django is and that breaks everything
     time.sleep(delay_seconds)
 
     print("------------!!!!!!!!!!!!! STREAM")

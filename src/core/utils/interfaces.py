@@ -5,7 +5,7 @@ import logging
 from ctypes import c_int
 from multiprocessing import Condition, Event, Lock, Manager, Queue, Value
 from multiprocessing.shared_memory import SharedMemory
-from typing import Generic, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import numpy as np
 
@@ -18,9 +18,16 @@ manager = Manager()
 atexit.register(manager.shutdown)
 
 
-def is_shared_memory_subclass(cls):
-    """Helper to safely check if a type is a subclass of SharedMemoryObject."""
+def is_shared_memory_subclass(cls: type):
+    """Help to safely check if a type is a subclass of SharedMemoryObject."""
     return inspect.isclass(cls) and issubclass(cls, SharedMemoryObject)
+
+
+class Box(NamedTuple):
+    x: int
+    y: int
+    w: int
+    h: int
 
 
 @dataclasses.dataclass
@@ -39,18 +46,16 @@ class TuningSettings:
 
 
 class DoubleBuffer:
-    """
-    A synchronized, shared-memory double buffer for efficient, non-blocking
-    frame passing between a high-speed producer and a slower consumer.
-    """
+    """A synchronized, shared-memory double buffer."""
 
     def __init__(self, name: str, shape: tuple, dtype: np.dtype):
-        """
-        Initializes the two shared memory buffers.
+        """Initialize the two shared memory buffers.
+
         Args:
             name: A unique name prefix for the shared memory blocks.
             shape: The numpy shape of the data (e.g., (1080, 1920, 3)).
             dtype: The numpy data type (e.g., np.uint8).
+
         """
         self.name = name
         self.shape = shape
@@ -76,9 +81,7 @@ class DoubleBuffer:
         self._new_frame_available = False
 
     def write(self, frame: np.ndarray):
-        """
-        Producer writes a frame to the current write buffer and marks it as available.
-        """
+        """Write a frame to the current write buffer and mark it as available."""
         with self._lock:
             # Copy frame data into the buffer reserved for writing.
             self._write_buf[:] = frame
@@ -90,9 +93,7 @@ class DoubleBuffer:
             self._condition.notify()
 
     def wait_and_read(self) -> np.ndarray:
-        """
-        Consumer waits for a new frame, swaps buffers, and returns the new frame.
-        """
+        """Consumer waits for a new frame, swaps buffers, and returns the new frame."""
         with self._lock:
             # This is the key: the consumer will sleep here until the producer
             # has set the _new_frame_available flag.
@@ -111,7 +112,7 @@ class DoubleBuffer:
         return self._read_buf.copy()
 
     def close(self):
-        """Closes and unlinks the shared memory blocks."""
+        """Close and unlink the shared memory blocks."""
         logger.info(f"Closing and unlinking double buffer '{self.name}'...")
         self._shm_a.close()
         self._shm_a.unlink()
@@ -119,7 +120,7 @@ class DoubleBuffer:
         self._shm_b.unlink()
 
 
-class MultiprocessingDequeue(Generic[T]):
+class MultiprocessingDequeue[T]:
     def __init__(self, queue: "Queue[T]") -> None:
         self.queue = queue
         self.condition = Condition()
@@ -150,12 +151,12 @@ class MultiprocessingDequeue(Generic[T]):
 
 
 class SharedMemoryObject:
-    """
-    A base class that acts like a dataclass but uses a shared
-    dictionary for its state, supporting nested instances.
+    """A base class that acts like a dataclass but uses a shared dictionary for its state.
+
+    Supports nested instances.
     """
 
-    def __init__(self, _dict_proxy=None, **kwargs):
+    def __init__(self, _dict_proxy: dict | None = None, **kwargs: Any):  # noqa: ANN401
         # Initialize the shared dictionary for this instance
         shared_dict = _dict_proxy if _dict_proxy is not None else manager.dict()
         super().__setattr__("_shared_dict", shared_dict)
@@ -174,7 +175,7 @@ class SharedMemoryObject:
             if field_name not in kwargs:
                 self._initialize_field(field_name, field_type)
 
-    def _initialize_field(self, name, type_hint, value=None):
+    def _initialize_field(self, name: str, type_hint: type, value: Any = None) -> None:  # noqa: ANN401
         """Helper method to initialize a single field."""
         is_nested_type = is_shared_memory_subclass(type_hint)
 
@@ -184,7 +185,7 @@ class SharedMemoryObject:
                 nested_obj = value
                 # Adopt the existing object's shared dictionary
                 # noinspection PyProtectedMember
-                self._shared_dict[name] = nested_obj._shared_dict
+                self._shared_dict[name] = nested_obj._shared_dict  # noqa: SLF001
                 super().__setattr__(name, nested_obj)
 
             # Case 2: A dictionary was passed (e.g., debug_settings={'render_bboxes': True})
@@ -202,13 +203,13 @@ class SharedMemoryObject:
                 super().__setattr__(name, nested_obj)
             else:
                 raise TypeError(
-                    f"Argument '{name}' must be a dict or a {type_hint.__name__} instance, not {type(value).__name__}"
+                    f"Argument '{name}' must be a dict or a {type_hint.__name__} instance, not {type(value).__name__}",
                 )
         else:
             # It's a primitive type, just assign the value (or None if not provided)
             self._shared_dict[name] = value
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str):
         """Called when accessing an attribute that isn't found normally."""
         # We need to handle the case where we are accessing a nested object instance
         if name in self.__class__.__annotations__ and is_shared_memory_subclass(self.__class__.__annotations__[name]):
@@ -218,7 +219,7 @@ class SharedMemoryObject:
             return self._shared_dict[name]
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: Any):  # noqa: ANN401
         """Called when setting any attribute."""
         if name not in self.__class__.__annotations__:
             raise AttributeError(f"Cannot set new attribute '{name}'. Only defined fields can be set.")

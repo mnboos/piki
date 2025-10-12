@@ -1,0 +1,95 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "NinjaAPI",
+        "version": "1.0.0",
+        "description": ""
+    },
+    "paths": {
+        "/api/video_feed": {
+            "get": {
+                "operationId": "core_api_video_feed",
+                "summary": "Video Feed",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "multipart/x-mixed-replace; boundary=frame": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Video streaming route."
+            }
+        },
+        "/api/update_options": {
+            "patch": {
+                "operationId": "core_api_update_options",
+                "summary": "Update Options",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PikiOptions"
+                                }
+                            }
+                        }
+                    }
+                },
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PikiOptionsPatch"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "PikiOptions": {
+                "properties": {
+                    "mode": {
+                        "title": "Mode",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "mode"
+                ],
+                "title": "PikiOptions",
+                "type": "object"
+            },
+            "PikiOptionsPatch": {
+                "properties": {
+                    "mode": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mode"
+                    }
+                },
+                "title": "PikiOptionsPatch",
+                "type": "object"
+            }
+        }
+    },
+    "servers": []
+}

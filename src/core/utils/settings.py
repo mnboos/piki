@@ -1,8 +1,18 @@
+from enum import Enum
+
 from .interfaces import SharedMemoryObject
+
+
+class StreamMode(Enum):
+    MASK = "mask"
+    BOXES = "bbox"
+    DETECTIONS = "detections"
 
 
 class DebugSettings(SharedMemoryObject):
     """The in-memory version of our settings."""
+
+    mode: StreamMode
 
     debug_enabled: bool
     render_bboxes: bool
