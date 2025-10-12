@@ -645,20 +645,28 @@ def stream_with_ffmpeg():
     high_res_w, high_res_h = 640, 480
     channels = 3
 
-    double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
+    try:
+        double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
 
-    ffmpeg_process = start_ffmpeg(output_width=high_res_w, output_height=high_res_h)
+        ffmpeg_process = start_ffmpeg(output_width=high_res_w, output_height=high_res_h)
 
-    producer_thread = threading.Thread(target=frame_producer, args=(ffmpeg_process.stdout, double_buffer), daemon=True)
-    producer_thread.start()
+        producer_thread = threading.Thread(
+            target=frame_producer,
+            args=(ffmpeg_process.stdout, double_buffer),
+            daemon=True,
+        )
+        producer_thread.start()
 
-    logger.info("Waiting for producer to fill first buffer...")
-    time.sleep(2)
-    logger.info("Consumer loop starting.")
+        logger.info("Waiting for producer to fill first buffer...")
+        time.sleep(2)
+        logger.info("Consumer loop starting.")
 
-    while True:
-        high_res_frame = double_buffer.wait_and_read()
-        process_frame(high_res_frame)
+        while True:
+            high_res_frame = double_buffer.wait_and_read()
+            process_frame(high_res_frame)
+    except:
+        traceback.print_exc()
+        raise
 
 
 @atexit.register
