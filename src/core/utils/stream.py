@@ -570,35 +570,35 @@ def stream_with_ros():
 
             def listener_callback_hbm(self, msg):
                 try:
-                    # 1. Map the HbmMsg1080P shared memory (Zero Copy)
-                    # NV12 for 1080p is 1620 rows (1080 Y + 540 UV)
-                    full_buffer = np.frombuffer(msg.data, dtype=np.uint8).reshape((1620, 1920))
+                    # 1. Convert the raw buffer to a flat NumPy array
+                    raw_buffer = np.frombuffer(msg.data, dtype=np.uint8)
 
-                    # 2. Get our Stripe Tiles (Left and Right)
-                    # Assuming Stereonet is outputting 640x352 Left and 640x352 Right side-by-side
-                    tiles = get_stereo_stripe_tiles(full_buffer, tile_size=640, active_width=1280, active_height=352)
+                    # 2. Calculate the exact size of an NV12 1080p frame
+                    # Width: 1920, Height: 1080, NV12 factor: 1.5
+                    # Total bytes = 3,110,400
+                    nv12_total_bytes = int(1920 * 1080 * 1.5)
 
-                    # 3. Submit each tile to the AI Inference Pool
+                    # 3. Slice the buffer to the correct size FIRST, then reshape
+                    # This ignores the "extra" 3MB of empty space in the 1080P container
+                    full_nv12_image = raw_buffer[:nv12_total_bytes].reshape((1620, 1920))
+
+                    # 4. Now handle your tiling/processing
+                    # (This is the "Middle Stripe" logic from before)
+                    tiles = get_stereo_stripe_tiles(
+                        full_nv12_image, tile_size=640, active_width=1280, active_height=352, is_nv12=True
+                    )
+
                     for tile_img, tx, ty in tiles:
-                        # Only submit if the BPU isn't backed up
                         if not active_futures:
                             timestamp = time.monotonic_ns()
-
-                            # run_object_detection will handle model.forward()
                             future = inference_pool.submit(
-                                run_object_detection,
-                                frame_hires=tile_img,  # This is the 640x640 tile
-                                rois=[],  # Not used for stripe mode
-                                timestamp=timestamp,
+                                run_object_detection, frame_hires=tile_img, rois=[], timestamp=timestamp
                             )
                             active_futures.append(future)
-
-                            # Add a callback to handle results and store them for Django view
                             future.add_done_callback(lambda f, x=tx, y=ty: self.on_inference_done(f, x, y))
 
                 except Exception as e:
                     self.get_logger().error(f"HBM Stream Error: {e}")
-
             # def listener_callback_hbm(self, msg):
             #     try:
             #         # 1. Map the FULL 1080p Shared Memory buffer (1920x1080)
