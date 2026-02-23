@@ -39,7 +39,7 @@ if has_opencl:
 
 worker_ready = Event()
 
-NUM_AI_WORKERS: int = 4
+NUM_AI_WORKERS: int = 3
 preview_downscale_factor = 1
 ai_input_size = 640
 

@@ -16,7 +16,11 @@ from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Lock, Semaphore, shared_memory
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import IO
+from typing import IO, TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import rclpy
+    from rclpy.node import Node
 
 import numpy as np
 
@@ -54,7 +58,6 @@ untracked_frames_count = 0
 total_untracked_frames_count = 0
 velocity_buffer = deque(maxlen=15)
 
-
 double_buffer: DoubleBuffer | None = None
 worker_semaphore = Semaphore(NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
@@ -89,6 +92,9 @@ coasting = mp.Event()
 tracker: cv2.Tracker | None = None
 process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
+ros_node: Optional["PikiVisionNode"] = None
+
+
 # worker_slot_semaphore = Semaphore(NUM_AI_WORKERS)
 
 
@@ -122,7 +128,7 @@ def setup_shared_memory_like(frame: np.typing.NDArray):
         # Create a new shared memory block
         size = int(np.prod(frame.shape) * np.dtype(frame.dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
-        logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB")
+        logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024 ** 2:.2f} MB")
     except FileExistsError:
         # If it already exists from a previous crashed run, unlink it and retry
         logger.info("Shared memory block already exists, unlinking and recreating.")
@@ -177,10 +183,10 @@ def get_measure(description: str):
 
 
 def run_object_detection(
-    shape: tuple,
-    dtype: np.dtype,
-    rois: list[Box],
-    timestamp: int,
+        shape: tuple,
+        dtype: np.dtype,
+        rois: list[Box],
+        timestamp: int,
 ) -> InferenceOutput:
     worker_pid = mp.current_process().pid or 0
     if is_object_detection_disabled.set():
@@ -331,6 +337,9 @@ def on_done(future: Future[InferenceOutput]):
                         tracker.init(frame_lores, (x, y, w, h))
             dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
+            if ros_node is not None:
+                ros_node.publish_detections(detections_denormalized)
+
             output_buffer.append(
                 OutputResult(
                     worker_pid=worker_pid,
@@ -428,6 +437,10 @@ def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
                         logger.info(f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s")
 
                     last_known_bbox = (current_time, bbox)
+
+                    if ros_node is not None:
+                        ros_node.publish_detections([Detection(label="tracker", confidence=1, bbox=bbox)])
+
                     output_buffer.append(
                         OutputResult(
                             worker_pid=0,
@@ -546,127 +559,120 @@ input_buffer = StreamingOutput()
 
 
 def stream_nonblocking():
-    thread_pool.submit(stream_with_ffmpeg)
+    thread_pool.submit(stream_with_ros)
 
 
-def _run_ffmpeg(*, input_src: str, input_args: list[str], vf: str) -> subprocess.Popen[bytes]:
-    cmd = [
-        "ffmpeg",
-        *input_args,
-        "-i",
-        input_src,
-        "-f",
-        "rawvideo",
-        "-vf",
-        vf,
-        "-pix_fmt",
-        "rgb24",
-        "-an",
-        "-sn",
-        "-dn",
-        "-",  # Output to stdout
-    ]
-    logger.info("Starting FFmpeg with command: %s", " ".join(cmd))
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603
-
-    def log_stderr() -> None:
-        if process.stderr:
-            full_error = ""
-            for line in iter(process.stderr.readline, b""):
-                full_error += line.decode("utf-8").strip()
-            logger.error("FFMPEG: %s", full_error)
-
-    threading.Thread(target=log_stderr, daemon=True).start()
-    return process
-
-
-def start_ffmpeg(*, output_width: int, output_height: int) -> subprocess.Popen[bytes]:
-    """Launch the FFmpeg process to output a single high-res stream to stdout."""
-    # global ffmpeg_process
-
-    video_path = os.environ.get("MOCK_CAMERA_PATH")
-    if not video_path:
-        video_path = "/dev/video0"
-
-    assert Path(video_path).exists(), f"File or device does not exist: {video_path}"
-
-    fps = 20
-    if Path(video_path).is_file():
-        input_args = [
-            "-re",
-            "-stream_loop",
-            "-1",
-        ]
-    else:
-        input_args = [
-            "-f",
-            "v4l2",
-            # "-init_hw_device",
-            # "vaapi",
-            "-r",
-            str(fps),
-            "-framerate",
-            str(fps),
-            "-video_size",
-            f"{output_width}x{output_height}",
-        ]
-        print("Streaming from device")
-
-    if platform.machine().lower() == "aarch64":
-        return _run_ffmpeg(
-            input_src=video_path,
-            input_args=[
-                *input_args,
-                "-hwaccel",
-                "rkmpp",
-                "-hwaccel_output_format",
-                "drm_prime",
-            ],
-            vf=f"fps=fps={fps},hwupload,scale_rkrga=w={output_width}:h={output_height}:format=rgb24,hwdownload",
-        )
-    return _run_ffmpeg(
-        input_src=video_path,
-        input_args=["-init_hw_device", "vaapi", *input_args],
-        vf=f"fps=fps={fps}",
-    )
-
-
-def stream_with_ffmpeg():
-    global double_buffer
-    global ffmpeg_process
+def stream_with_ros():
+    global ros_node
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import Image
+    from std_msgs.msg import String
+    import json
+    from cv_bridge import CvBridge
 
     delay_seconds = 5
-    logger.info(f"Starting videostream in {delay_seconds}s...")
-    # this sleep is absolutely crucial!!!
-    # if we have a low-res video, opencv would be ready before django is and that breaks everything
+    logger.info(f"Starting ROS 2 videostream in {delay_seconds}s...")
     time.sleep(delay_seconds)
 
-    print("------------!!!!!!!!!!!!! STREAM")
+    print("------------!!!!!!!!!!!!! STREAM (ROS 2)")
     high_res_w, high_res_h = 640, 480
-    channels = 3
+
+    class PikiVisionNode(Node):
+        def __init__(self):
+            super().__init__('piki_vision_node')
+            # Default to a pre-resized hardware ISP stream to save CPU/GPU overhead
+            topic_name = os.environ.get('ROS_IMAGE_TOPIC', '/camera/left/image_raw_640x480')
+            self.bridge = CvBridge()
+
+            try:
+                from hbm_img_msgs.msg import HbmMsg1080P
+                self.get_logger().info(f"Using zero-copy HbmMsg1080P for topic: {topic_name}")
+                self.subscription = self.create_subscription(
+                    HbmMsg1080P,
+                    topic_name,
+                    self.listener_callback_hbm,
+                    10
+                )
+            except ImportError:
+                self.get_logger().info(
+                    f"hbm_img_msgs not found, falling back to sensor_msgs.msg.Image for topic: {topic_name}")
+                self.subscription = self.create_subscription(
+                    Image,
+                    topic_name,
+                    self.listener_callback,
+                    10
+                )
+
+            # Publisher for tracking target (for servos)
+            self.target_pub = self.create_publisher(String, '/piki/target_detections', 10)
+
+        def listener_callback_hbm(self, msg):
+            try:
+                # hbm_img_msgs usually contains NV12 image data in its 'data' field.
+                # Convert NV12 to BGR for process_frame.
+                # If your Hobot YOLO model expects NV12 natively, you can bypass this cvtColor
+                # entirely and pass nv12_data straight to process_frame/detect_objects.
+                nv12_data = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height * 3 // 2, msg.width))
+
+                # NOTE: Hardware VPS should ideally handle this NV12->BGR and resize.
+                # As a fallback, CPU cvtColor is used.
+                cv_image = cv2.cvtColor(nv12_data, cv2.COLOR_YUV2BGR_NV12)
+
+                if msg.width == high_res_w and msg.height == high_res_h:
+                    # Skip GPU resize since the ISP already resized it for us!
+                    frame_hires = cv_image
+                else:
+                    # Offload image processing to Mali GPU via OpenCL (T-API) if ISP resize wasn't used
+                    umat_image = cv2.UMat(cv_image)
+                    umat_resized = cv2.resize(umat_image, (high_res_w, high_res_h))
+                    frame_hires = umat_resized.get()
+
+                process_frame(frame_hires)
+            except Exception as e:
+                self.get_logger().error(f'Error processing zero-copy HBM image: {e}')
+                traceback.print_exc()
+
+        def listener_callback(self, msg):
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+
+                if cv_image.shape[1] == high_res_w and cv_image.shape[0] == high_res_h:
+                    # Skip GPU resize since the ISP already gave us the correct size
+                    frame_hires = cv_image
+                else:
+                    # Offload image processing to Mali GPU via OpenCL (T-API)
+                    umat_image = cv2.UMat(cv_image)
+
+                    # Example of where stereo rectification (cv2.remap) would go. 
+                    # It will run on the GPU automatically.
+                    # umat_rectified = cv2.remap(umat_image, map1, map2, cv2.INTER_LINEAR)
+
+                    umat_resized = cv2.resize(umat_image, (high_res_w, high_res_h))
+                    frame_hires = umat_resized.get()
+
+                process_frame(frame_hires)
+            except Exception as e:
+                self.get_logger().error(f'Error processing image: {e}')
+                traceback.print_exc()
+
+        def publish_detections(self, detections):
+            # Serialize detections to JSON and publish
+            data = [{"label": d.label, "confidence": float(d.confidence), "bbox": d.bbox} for d in detections]
+            msg = String()
+            msg.data = json.dumps(data)
+            self.target_pub.publish(msg)
 
     try:
-        double_buffer = DoubleBuffer(name="hires", shape=(high_res_h, high_res_w, channels), dtype=np.uint8)
-
-        ffmpeg_process = start_ffmpeg(output_width=high_res_w, output_height=high_res_h)
-
-        producer_thread = threading.Thread(
-            target=frame_producer,
-            args=(ffmpeg_process.stdout, double_buffer),
-            daemon=True,
-        )
-        producer_thread.start()
-
-        logger.info("Waiting for producer to fill first buffer...")
-        time.sleep(2)
-        logger.info("Consumer loop starting.")
-
-        while True:
-            high_res_frame = double_buffer.wait_and_read()
-            process_frame(high_res_frame)
-    except:
+        rclpy.init(args=None)
+        ros_node = PikiVisionNode()
+        rclpy.spin(ros_node)
+    except Exception as e:
+        logger.error(f"ROS 2 streaming failed: {e}")
         traceback.print_exc()
-        raise
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 @atexit.register

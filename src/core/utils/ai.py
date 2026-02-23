@@ -3,7 +3,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from rknnlite.api import RKNNLite
+from hobot_dnn import pyeasy_dnn as dnn
 
 from .shared import worker_ready
 
@@ -220,30 +220,13 @@ def yolov5_post_process(input_data):
 
 try:
     print("Loading model...")
-    rknn = RKNNLite(verbose=False)
+    model_file = Path(__file__).parent / "models" / "yolov10n.bin"
+    assert model_file.is_file(), f"Model file {model_file} not found!"
 
-    # pre-process config
-    print('--> Config model')
-    #rknn.config(mean_values=[[0, 0, 0]], std_values=[[255, 255, 255]], target_platform='rk3566')
-    print('done')
-
-    model_file = Path(__file__).parent / "models" / "yolov10n.rknn"
-    assert model_file.is_file()
-
-    # Load ONNX model
-    print('--> Loading model')
-    ret = rknn.load_rknn(model_file.absolute())
-    if ret != 0:
-        print('Load model failed!')
-        exit(ret)
-    print('done')
-
-    # Init runtime environment
-    print('--> Init runtime environment')
-    ret = rknn.init_runtime()
-    if ret != 0:
-        print('Init runtime environment failed!')
-        exit(ret)
+    # Load Hobot model
+    print('--> Loading model via pyeasy_dnn')
+    models = dnn.load(str(model_file.absolute()))
+    model = models[0]
     print('done')
 
     worker_ready.set()
@@ -253,21 +236,15 @@ try:
             f"Image shape is {image.shape}, but expected ({IMG_SIZE}, {IMG_SIZE})"
         )
 
-        # image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
         input_data = np.expand_dims(image, axis=0)
 
         t0 = time.perf_counter()
-        outputs = rknn.inference(inputs=[input_data], data_format=['nhwc'])
-        results = yolov10_post_process(outputs, confidence_threshold=0.5)
-        #print("outputs: ", outputs)
-        tt = round((time.perf_counter() - t0) * 1000)
-
+        # pyeasy_dnn returns a list of PyDNNTensor, extracting buffer to get numpy arrays
+        hobot_outputs = model.forward(input_data)
+        outputs = [out.buffer for out in hobot_outputs]
         
-        #results = []
-        #if boxes is not None and classes is not None and scores is not None:
-        #    for box, cls, score in zip(boxes, classes, scores):
-        #        label = CLASSES[cls]
-        #        results.append((label, score, box))  # this box is already locally normalized
+        results = yolov10_post_process(outputs, confidence_threshold=0.5)
+        tt = round((time.perf_counter() - t0) * 1000)
 
         return tt, results
 except:
