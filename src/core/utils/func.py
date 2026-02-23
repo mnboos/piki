@@ -204,6 +204,47 @@ def _slice_nv12_tile(nv12: np.ndarray, frame_w: int, frame_h: int,
     return np.vstack([y_tile, uv_tile])
 
 
+def get_stereo_stripe_tiles(
+    frame: np.ndarray,
+    tile_size: int = 640,
+    active_width: int = 1280,  # 640 (Left) + 640 (Right)
+    active_height: int = 352,
+    is_nv12: bool = True,
+) -> list[tuple[np.ndarray, int, int]]:
+    """
+    Slices the wide stereo image into horizontal 640x640 tiles.
+    Focuses on the vertical 'middle stripe' of the active image content.
+    """
+    buffer_w = frame.shape[1]  # 1920
+    buffer_h = (frame.shape[0] * 2 // 3) if is_nv12 else frame.shape[0]  # 1080
+
+    tiles = []
+
+    # Calculate Vertical Offset to center the 352px image in the 640px model tile
+    # ty = 0 if you want it top-aligned, but centering is better for many models.
+    # However, since stereonet writes to the top-left (0,0), we'll use ty=0
+    # to ensure we actually catch all the data.
+    ty = 0
+
+    # We iterate horizontally across the active width (Left then Right)
+    # 0 -> 640 (Tile 1: Left Camera)
+    # 640 -> 1280 (Tile 2: Right Camera)
+    for tx in range(0, active_width, tile_size):
+        if tx + tile_size > buffer_w:
+            break
+
+        if is_nv12:
+            # Zero-copy NV12 slice
+            tile = _slice_nv12_tile(frame, buffer_w, buffer_h, tx, ty, tile_size)
+        else:
+            # Zero-copy BGR slice
+            tile = frame[ty : ty + tile_size, tx : tx + tile_size]
+
+        tiles.append((tile, tx, ty))
+
+    return tiles
+
+
 def slice_roi_into_tiles(
     *,
     frame: np.ndarray,
@@ -230,54 +271,65 @@ def slice_roi_into_tiles(
 
     Returns:
         List of (tile_array, tile_x, tile_y) in full hi-res frame coordinates.
+
     """
     is_nv12 = model_input_type == "NV12"
 
-    if is_nv12:
-        # NV12 frame shape is (H*3//2, W) — derive actual image dimensions.
-        frame_w = frame.shape[1]
-        frame_h = frame.shape[0] * 2 // 3
-    else:
-        frame_h, frame_w = frame.shape[:2]
+    # CRITICAL FIX: Use the actual buffer capacity
+    # If using HbmMsg1080P, frame.shape[1] is 1920.
+    # We want to allow tiles to be cut from the full buffer.
+    buffer_w = frame.shape[1]
+    buffer_h = (frame.shape[0] * 2 // 3) if is_nv12 else frame.shape[0]
 
-    half = tile_size // 2
     tiles: list[tuple[np.ndarray, int, int]] = []
 
     def emit(tx: int, ty: int):
-        tx = max(0, min(tx, frame_w - tile_size))
-        ty = max(0, min(ty, frame_h - tile_size))
+        # Ensure the tile start doesn't go negative
+        tx = max(0, tx)
+        ty = max(0, ty)
+
+        # Ensure we don't slice outside the PHYSICAL shared memory buffer
+        if tx + tile_size > buffer_w:
+            tx = buffer_w - tile_size
+        if ty + tile_size > buffer_h:
+            ty = buffer_h - tile_size
+
         if is_nv12:
-            tile = _slice_nv12_tile(frame, frame_w, frame_h, tx, ty, tile_size)
+            # This is a ZERO-COPY view of the shared memory
+            tile = _slice_nv12_tile(frame, buffer_w, buffer_h, tx, ty, tile_size)
         else:
             tile = _slice_bgr_tile(frame, tx, ty, tile_size)
         tiles.append((tile, tx, ty))
 
     for roi in rois:
+        # Map preview ROI to high-res coordinates
         rx = int(roi[0] * preview_downscale_factor)
         ry = int(roi[1] * preview_downscale_factor)
         rw = int(roi[2] * preview_downscale_factor)
         rh = int(roi[3] * preview_downscale_factor)
 
+        # Optimization for RDK X5:
+        # If the model wants 640x640 and our motion is inside the 640x352 area,
+        # we just emit one tile starting at 0,0.
+        # The 'extra' 288 pixels of height will be raw buffer data (Zero-cost padding).
         if rw <= tile_size and rh <= tile_size:
-            # Single tile centred on the ROI.
-            emit(rx + rw // 2 - half, ry + rh // 2 - half)
+            # Center the tile on the ROI if possible, otherwise 0,0
+            emit(rx + rw // 2 - tile_size // 2, ry + rh // 2 - tile_size // 2)
         else:
-            # Grid of overlapping tiles covering the full ROI.
-            overlap = int(tile_size * 0.10)
-            stride = tile_size - overlap
+            # Standard grid logic for larger ROIs
             y = ry
             while True:
-                ty = min(y, max(0, ry + rh - tile_size))
+                ty = min(y, buffer_h - tile_size)
                 x = rx
                 while True:
-                    tx = min(x, max(0, rx + rw - tile_size))
+                    tx = min(x, buffer_w - tile_size)
                     emit(tx, ty)
-                    if tx >= rx + rw - tile_size:
+                    if tx >= rx + rw - tile_size or tx >= buffer_w - tile_size:
                         break
-                    x += stride
-                if ty >= ry + rh - tile_size:
+                    x += tile_size - int(tile_size * 0.1)
+                if ty >= ry + rh - tile_size or ty >= buffer_h - tile_size:
                     break
-                y += stride
+                y += tile_size - int(tile_size * 0.1)
 
     return tiles
 

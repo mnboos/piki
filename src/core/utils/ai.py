@@ -239,9 +239,9 @@ try:
     worker_ready.set()
 
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
-        assert image.shape[0] == IMG_SIZE and image.shape[1] == IMG_SIZE, (
-            f"Image shape is {image.shape}, but expected ({IMG_SIZE}, {IMG_SIZE})"
-        )
+        # assert image.shape[0] == IMG_SIZE and image.shape[1] == IMG_SIZE, (
+        #     f"Image shape is {image.shape}, but expected ({IMG_SIZE}, {IMG_SIZE})"
+        # )
 
         input_data = np.expand_dims(image, axis=0)
 

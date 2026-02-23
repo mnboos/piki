@@ -18,6 +18,7 @@ from typing import IO, Optional
 import numpy as np
 
 from .func import (
+    get_stereo_stripe_tiles,
     slice_roi_into_tiles,
 )
 from .interfaces import Box, DoubleBuffer
@@ -537,6 +538,7 @@ def stream_with_ros():
         from sensor_msgs.msg import Image
         from std_msgs.msg import String
         from hbm_img_msgs.msg import HbmMsg1080P
+        from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
         # from cv_bridge import CvBridge
 
         delay_seconds = 5
@@ -549,42 +551,69 @@ def stream_with_ros():
         class PikiVisionNode(Node):
             def __init__(self):
                 super().__init__("piki_vision_node")
-                # Default to a pre-resized hardware ISP stream to save CPU/GPU overhead
-                topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/camera/left/image_raw_640x480")
+                topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/hbmem_img")
 
-                self.get_logger().info(f"Using zero-copy HbmMsg1080P for topic: {topic_name}")
-                self.subscription = self.create_subscription(
-                    HbmMsg1080P, topic_name, self.listener_callback_hbm, 10,
+                # HBM REQUIRED: Best Effort reliability
+                qos_profile = QoSProfile(
+                    reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1
                 )
 
-                # Publisher for tracking target (for servos)
+                self.get_logger().info(f"Subscribing to HBM Topic: {topic_name} with Best Effort QoS")
+                self.subscription = self.create_subscription(
+                    HbmMsg1080P,
+                    topic_name,
+                    self.listener_callback_hbm,
+                    qos_profile,  # Use the profile here
+                )
+
                 self.target_pub = self.create_publisher(String, "/piki/target_detections", 10)
 
             def listener_callback_hbm(self, msg):
                 try:
-                    # hbm_img_msgs usually contains NV12 image data in its 'data' field.
-                    # Convert NV12 to BGR for process_frame.
-                    # If your Hobot YOLO model expects NV12 natively, you can bypass this cvtColor
-                    # entirely and pass nv12_data straight to process_frame/detect_objects.
-                    nv12_data = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height * 3 // 2, msg.width))
+                    # 1. Map the HbmMsg1080P shared memory (Zero Copy)
+                    # NV12 for 1080p is 1620 rows (1080 Y + 540 UV)
+                    full_buffer = np.frombuffer(msg.data, dtype=np.uint8).reshape((1620, 1920))
 
-                    # NOTE: Hardware VPS should ideally handle this NV12->BGR and resize.
-                    # As a fallback, CPU cvtColor is used.
-                    cv_image = cv2.cvtColor(nv12_data, cv2.COLOR_YUV2BGR_NV12)
+                    # 2. Get our Stripe Tiles (Left and Right)
+                    # Assuming Stereonet is outputting 640x352 Left and 640x352 Right side-by-side
+                    tiles = get_stereo_stripe_tiles(full_buffer, tile_size=640, active_width=1280, active_height=352)
 
-                    if msg.width == high_res_w and msg.height == high_res_h:
-                        # Skip GPU resize since the ISP already resized it for us!
-                        frame_hires = cv_image
-                    else:
-                        # Offload image processing to Mali GPU via OpenCL (T-API) if ISP resize wasn't used
-                        umat_image = cv2.UMat(cv_image)
-                        umat_resized = cv2.resize(umat_image, (high_res_w, high_res_h))
-                        frame_hires = umat_resized.get()
+                    # 3. Submit each tile to the AI Inference Pool
+                    for tile_img, tx, ty in tiles:
+                        # Only submit if the BPU isn't backed up
+                        if not active_futures:
+                            timestamp = time.monotonic_ns()
 
-                    process_frame(frame_hires)
+                            # run_object_detection will handle model.forward()
+                            future = inference_pool.submit(
+                                run_object_detection,
+                                frame_hires=tile_img,  # This is the 640x640 tile
+                                rois=[],  # Not used for stripe mode
+                                timestamp=timestamp,
+                            )
+                            active_futures.append(future)
+
+                            # Add a callback to handle results and store them for Django view
+                            future.add_done_callback(lambda f, x=tx, y=ty: self.on_inference_done(f, x, y))
+
                 except Exception as e:
-                    self.get_logger().error(f"Error processing zero-copy HBM image: {e}")
-                    traceback.print_exc()
+                    self.get_logger().error(f"HBM Stream Error: {e}")
+
+            # def listener_callback_hbm(self, msg):
+            #     try:
+            #         # 1. Map the FULL 1080p Shared Memory buffer (1920x1080)
+            #         # This is zero-copy. We reshape to the full capacity of HbmMsg1080P.
+            #         # NV12 for 1080p is 1620 rows (1080 Y + 540 UV)
+            #         full_nv12_buffer = np.frombuffer(msg.data, dtype=np.uint8).reshape((1620, 1920))
+            #
+            #         # 2. Pass the FULL buffer to your processing pipeline.
+            #         # The tiling function above will now correctly slice 640x640
+            #         # blocks from the top-left, effectively using the unused
+            #         # buffer space as "free" padding.
+            #         process_frame(frame_hires=full_nv12_buffer)
+            #     except Exception:
+            #         logger.exception("HBM Callback Error")
+            #         raise
 
             def publish_detections(self, detections: list):
                 # Serialize detections to JSON and publish
