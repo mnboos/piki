@@ -12,7 +12,7 @@ import traceback
 from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from multiprocessing import Lock, shared_memory
+from multiprocessing import Lock, shared_memory, Semaphore
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Optional
