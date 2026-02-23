@@ -5,7 +5,7 @@ import logging
 from ctypes import c_int
 from multiprocessing import Condition, Event, Lock, Manager, Queue, Value
 from multiprocessing.shared_memory import SharedMemory
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, Generic, NamedTuple, TypeVar
 
 import numpy as np
 
@@ -120,8 +120,9 @@ class DoubleBuffer:
         self._shm_b.unlink()
 
 
-class MultiprocessingDequeue[T]:
-    def __init__(self, queue: "Queue[T]") -> None:
+T = TypeVar("T")
+class MultiprocessingDequeue(Generic[T]):
+    def __init__(self, queue: Queue) -> None:
         self.queue = queue
         self.condition = Condition()
         self.event = Event()
