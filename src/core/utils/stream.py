@@ -664,10 +664,9 @@ def stream_with_ros():
                 msg.data = json.dumps(data)
                 self.target_pub.publish(msg)
 
-
-            rclpy.init(args=None)
-            ros_node = PikiVisionNode()
-            rclpy.spin(ros_node)
+        rclpy.init(args=None)
+        ros_node = PikiVisionNode()
+        rclpy.spin(ros_node)
     except Exception as e:
         logger.exception(f"ROS 2 streaming failed: {e}")
         traceback.print_exc()
