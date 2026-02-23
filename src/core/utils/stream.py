@@ -11,9 +11,8 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Sequence
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
-from concurrent.futures.process import BrokenProcessPool
-from multiprocessing import Lock, Semaphore, shared_memory
+from concurrent.futures import Future, ThreadPoolExecutor
+from multiprocessing import Lock, shared_memory
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Optional
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
 import numpy as np
 
 from .func import (
-    get_padded_roi_images,
+    slice_roi_into_tiles,
 )
 from .interfaces import Box, DoubleBuffer
 from .metrics import LiveMetricsDashboard
@@ -90,7 +89,11 @@ tracker_lock = Lock()
 tracking = mp.Event()
 coasting = mp.Event()
 tracker: cv2.Tracker | None = None
-process_pool = ProcessPoolExecutor(max_workers=NUM_AI_WORKERS, initializer=init_worker)
+
+# Single inference thread — the BPU is one hardware block and serialises requests
+# internally anyway. One caller avoids IPC overhead, pickle costs, and shared
+# memory round-trips that the ProcessPoolExecutor required.
+inference_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-inference")
 thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piki-streamer")
 ros_node: Optional["PikiVisionNode"] = None
 
@@ -183,57 +186,50 @@ def get_measure(description: str):
 
 
 def run_object_detection(
-        shape: tuple,
-        dtype: np.dtype,
+        frame_hires: np.ndarray,
         rois: list[Box],
         timestamp: int,
 ) -> InferenceOutput:
+    """Run tile-based inference on the hi-res frame.
+
+    Now runs in a single background thread (inference_pool) rather than a
+    ProcessPoolExecutor. Benefits:
+      - No pickle/IPC overhead — frame passed by reference within the process
+      - No shared memory round-trip
+      - BPU gets one sequential caller instead of 3 competing processes
+    """
     worker_pid = mp.current_process().pid or 0
-    if is_object_detection_disabled.set():
+    if is_object_detection_disabled.is_set():
         return InferenceOutput(worker_pid=worker_pid, timestamp=timestamp, avg_duration=0, detections=[])
 
-    existing_shm = None
     try:
-        # --- Shared Memory Access ---
-        existing_shm = shared_memory.SharedMemory(name=SHM_NAME)
-        frame_in_shm = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
-        with shm_lock:
-            frame_hires = frame_in_shm.copy()
+        frame_h, frame_w = frame_hires.shape[:2]
 
-        frame_h, frame_w, _ = frame_hires.shape
+        from .ai import detect_objects, MODEL_INPUT_TYPE  # noqa: PLC0415
 
-        # --- AI Processing ---
-        padded_images_and_details = get_padded_roi_images(
+        tiles = slice_roi_into_tiles(
             frame=frame_hires,
             rois=rois,
-            target_size=ai_input_size,
+            tile_size=ai_input_size,
             preview_downscale_factor=preview_downscale_factor,
+            model_input_type=MODEL_INPUT_TYPE,
         )
-        print("images to detect: ", len(padded_images_and_details))
+        logger.debug("Tiles to infer: %d", len(tiles))
 
         total_duration = 0
         all_detections: list[Detection] = []
 
-        from .ai import detect_objects  # noqa: PLC0415
-
-        for img, scale, effective_origin in padded_images_and_details:
-            eff_orig_x, eff_orig_y = effective_origin
-
-            duration, detections = detect_objects(img)
+        for tile_img, tile_x, tile_y in tiles:
+            duration, detections = detect_objects(tile_img)
             total_duration += duration
 
             for label, confidence, local_pixel_bbox in detections:
                 local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
 
-                scaled_px_xmin = local_px_xmin * scale
-                scaled_px_ymin = local_px_ymin * scale
-                scaled_px_xmax = local_px_xmax * scale
-                scaled_px_ymax = local_px_ymax * scale
-
-                global_px_xmin = scaled_px_xmin + eff_orig_x
-                global_px_ymin = scaled_px_ymin + eff_orig_y
-                global_px_xmax = scaled_px_xmax + eff_orig_x
-                global_px_ymax = scaled_px_ymax + eff_orig_y
+                global_px_xmin = local_px_xmin + tile_x
+                global_px_ymin = local_px_ymin + tile_y
+                global_px_xmax = local_px_xmax + tile_x
+                global_px_ymax = local_px_ymax + tile_y
 
                 final_norm_coords = [
                     global_px_ymin / frame_h,
@@ -241,10 +237,9 @@ def run_object_detection(
                     global_px_ymax / frame_h,
                     global_px_xmax / frame_w,
                 ]
-
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
-        avg_duration = 0 if not len(padded_images_and_details) else total_duration // len(padded_images_and_details)
+        avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
             timestamp=timestamp,
@@ -253,12 +248,8 @@ def run_object_detection(
         )
 
     except:
-        logger.info(f"!!!!!!!!!!!!!!! FATAL ERROR IN AI WORKER (PID: {os.getpid()}) !!!!!!!!!!!!!!")
-        traceback.print_exc()
+        logger.exception("Fatal error in inference thread (PID: %d)", os.getpid())
         raise
-    finally:
-        if existing_shm is not None:
-            existing_shm.close()
 
 
 def denormalize(bbox_normalized: Sequence[int], frame_shape: Sequence[int]) -> Box:
@@ -299,7 +290,7 @@ def on_done(future: Future[InferenceOutput]):
             frame_lores = lowres_frame_cache.pop(timestamp, None)
 
         if timestamp < max_output_timestamp:
-            logger.info(f"Worker-{worker_pid} was slow, the results came too late :(")
+            logger.info(f"Inference result arrived late, discarding (timestamp={timestamp})")
         else:
             max_output_timestamp = timestamp
             detections_denormalized: list[Detection] = []
@@ -307,12 +298,7 @@ def on_done(future: Future[InferenceOutput]):
             for label, confidence, bbox_normalized in detections:
                 x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
                 if x < 0 or y < 0 or w < 0 or h < 0:
-                    print(
-                        "something has been denormalized abnormally: ",
-                        frame_lores.shape,
-                        bbox_normalized,
-                        (x, y, w, h),
-                    )
+                    logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
                     continue
 
                 detections_denormalized.append(
@@ -325,16 +311,10 @@ def on_done(future: Future[InferenceOutput]):
                         if tracker is None:
                             tracker_class = cv2.TrackerKCF
                             params = tracker_class.Params()
-                            logger.info(
-                                "TrackerKCF params: %s",
-                                {k: getattr(params, k) for k in dir(params) if not k.startswith("_")},
-                            )
-                            logger.info("orig params: %s", dir(params))
-
                             tracker = tracker_class.create(params)
-                        logger.info("Tracker init shape: %s", frame_lores.shape)
                         tracking.set()
                         tracker.init(frame_lores, (x, y, w, h))
+
             dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
             if ros_node is not None:
@@ -348,34 +328,23 @@ def on_done(future: Future[InferenceOutput]):
                     detections_denormalized=detections_denormalized,
                 ),
             )
-    except BrokenProcessPool:
-        logger.info("Pool already broken, when future was done. Shutting down...")
-        traceback.print_exc()
     except KeyboardInterrupt:
-        logger.info("Future done, shutting down....")
+        logger.info("Shutting down on KeyboardInterrupt in on_done.")
     except:
         traceback.print_exc()
         raise
-    finally:
-        worker_semaphore.release()
 
 
 def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
-    global shared_array
     global tracker
     global untracked_frames_count
     global total_untracked_frames_count
     global last_known_bbox
-    # global last_known_velocity
 
     current_time = time.time_ns()
 
-    with shm_lock:
-        if shared_array is None:
-            shared_array = setup_shared_memory_like(frame_hires)
-
-        shared_array[:] = frame_hires
-
+    # Downscale for motion detection only — MOG2 does not need full resolution.
+    # preview_downscale_factor=3 gives 640x360 from 1920x1080.
     frame_lores = cv2.resize(
         frame_hires,
         None,
@@ -520,19 +489,21 @@ def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
 
                 rois = motion_detector.create_rois(mask=mask)
                 if rois:
-                    with cache_lock:
-                        lowres_frame_cache[timestamp] = frame_lores
+                    # Skip if inference is already busy — drop the frame rather than queue up.
+                    # The BPU will finish the current batch faster than we can accumulate frames.
+                    if not active_futures:
+                        with cache_lock:
+                            lowres_frame_cache[timestamp] = frame_lores
 
-                    worker_semaphore.acquire()
-                    future = process_pool.submit(
-                        run_object_detection,
-                        shape=frame_hires.shape,
-                        dtype=frame_hires.dtype,
-                        rois=rois,
-                        timestamp=timestamp,
-                    )
-                    active_futures.append(future)
-                    future.add_done_callback(on_done)
+                        # Pass frame_hires directly — no shared memory, no pickle.
+                        future = inference_pool.submit(
+                            run_object_detection,
+                            frame_hires=frame_hires.copy(),
+                            rois=rois,
+                            timestamp=timestamp,
+                        )
+                        active_futures.append(future)
+                        future.add_done_callback(on_done)
             except:
                 traceback.print_exc()
                 raise
@@ -682,7 +653,7 @@ def cleanup():
     input_buffer.close()
 
     thread_pool.shutdown(wait=True, cancel_futures=True)
-    process_pool.shutdown(wait=True, cancel_futures=True)
+    inference_pool.shutdown(wait=True, cancel_futures=True)
     if ffmpeg_process:
         ffmpeg_process.kill()
     cleanup_shared_memory()

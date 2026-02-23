@@ -227,6 +227,13 @@ try:
     print('--> Loading model via pyeasy_dnn')
     models = dnn.load(str(model_file.absolute()))
     model = models[0]
+
+    # Detect whether the model was compiled with NV12 input or BGR/RGB.
+    # NV12 models skip CPU colorspace conversion — the BPU handles it internally.
+    _input_type = model.inputs[0].properties.tensor_type
+    _input_type_name = str(_input_type)
+    MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type_name.upper() or "YUV" in _input_type_name.upper() else "BGR"
+    print(f"Model input type detected: {MODEL_INPUT_TYPE} (raw: {_input_type_name})")
     print('done')
 
     worker_ready.set()

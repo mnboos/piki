@@ -39,8 +39,16 @@ if has_opencl:
 
 worker_ready = Event()
 
-NUM_AI_WORKERS: int = 3
-preview_downscale_factor = 1
+# BPU is a single shared hardware resource — multiple competing processes hurt
+# throughput more than they help. One inference thread feeding tiles sequentially
+# is faster because the BPU pipeline is already internally pipelined.
+NUM_AI_WORKERS: int = 1
+
+# Run MOG2 motion detection on 1/3 scale (640x360) instead of full 1920x1080.
+# Motion detection doesn't need full resolution — this saves significant CPU.
+# The hi-res frame is still stored in shared memory for full-res tile slicing.
+preview_downscale_factor = 3
+
 ai_input_size = 640
 
 settings = TuningSettings()

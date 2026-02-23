@@ -186,6 +186,102 @@ def apply_non_max_suppression(*, boxes: list[Box], overlap_threshold: float = 0.
     return []
 
 
+def _slice_bgr_tile(frame: np.ndarray, tx: int, ty: int, tile_size: int) -> np.ndarray:
+    return frame[ty: ty + tile_size, tx: tx + tile_size].copy()
+
+
+def _slice_nv12_tile(nv12: np.ndarray, frame_w: int, frame_h: int,
+                     tx: int, ty: int, tile_size: int) -> np.ndarray:
+    """Slice a tile from a flat NV12 array without any colorspace conversion.
+
+    NV12 layout: Y plane (frame_h rows) followed by interleaved UV plane (frame_h/2 rows).
+    Chroma is 4:2:0 so UV coords are halved.
+    """
+    y_plane = nv12[:frame_h]
+    uv_plane = nv12[frame_h:]
+    y_tile = y_plane[ty: ty + tile_size, tx: tx + tile_size]
+    uv_tile = uv_plane[ty // 2: (ty + tile_size) // 2, tx: tx + tile_size]
+    return np.vstack([y_tile, uv_tile])
+
+
+def slice_roi_into_tiles(
+    *,
+    frame: np.ndarray,
+    rois: list[Box],
+    tile_size: int,
+    preview_downscale_factor: float,
+    model_input_type: str = "BGR",
+) -> list[tuple[np.ndarray, int, int]]:
+    """Slice each motion ROI into one or more native-resolution tiles.
+
+    No resizing is ever performed. Each tile is a direct pixel crop at model
+    input size — full detail preserved.
+
+    If model_input_type is 'NV12', `frame` is expected to be the raw NV12
+    array (shape: (H*3//2, W)) and tiles are sliced as NV12 — skipping CPU
+    colorspace conversion entirely. Otherwise standard BGR slicing is used.
+
+    Args:
+        frame:                   Hi-res frame. BGR (H, W, 3) or NV12 (H*3//2, W).
+        rois:                    ROIs in preview-space (x, y, w, h).
+        tile_size:               Model input size (640).
+        preview_downscale_factor: Scale to map preview → hi-res coords.
+        model_input_type:        'NV12' or 'BGR'.
+
+    Returns:
+        List of (tile_array, tile_x, tile_y) in full hi-res frame coordinates.
+    """
+    is_nv12 = model_input_type == "NV12"
+
+    if is_nv12:
+        # NV12 frame shape is (H*3//2, W) — derive actual image dimensions.
+        frame_w = frame.shape[1]
+        frame_h = frame.shape[0] * 2 // 3
+    else:
+        frame_h, frame_w = frame.shape[:2]
+
+    half = tile_size // 2
+    tiles: list[tuple[np.ndarray, int, int]] = []
+
+    def emit(tx: int, ty: int):
+        tx = max(0, min(tx, frame_w - tile_size))
+        ty = max(0, min(ty, frame_h - tile_size))
+        if is_nv12:
+            tile = _slice_nv12_tile(frame, frame_w, frame_h, tx, ty, tile_size)
+        else:
+            tile = _slice_bgr_tile(frame, tx, ty, tile_size)
+        tiles.append((tile, tx, ty))
+
+    for roi in rois:
+        rx = int(roi[0] * preview_downscale_factor)
+        ry = int(roi[1] * preview_downscale_factor)
+        rw = int(roi[2] * preview_downscale_factor)
+        rh = int(roi[3] * preview_downscale_factor)
+
+        if rw <= tile_size and rh <= tile_size:
+            # Single tile centred on the ROI.
+            emit(rx + rw // 2 - half, ry + rh // 2 - half)
+        else:
+            # Grid of overlapping tiles covering the full ROI.
+            overlap = int(tile_size * 0.10)
+            stride = tile_size - overlap
+            y = ry
+            while True:
+                ty = min(y, max(0, ry + rh - tile_size))
+                x = rx
+                while True:
+                    tx = min(x, max(0, rx + rw - tile_size))
+                    emit(tx, ty)
+                    if tx >= rx + rw - tile_size:
+                        break
+                    x += stride
+                if ty >= ry + rh - tile_size:
+                    break
+                y += stride
+
+    return tiles
+
+
 def get_padded_roi_images(
     *,
     frame: np.ndarray,
