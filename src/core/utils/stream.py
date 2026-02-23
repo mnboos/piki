@@ -99,6 +99,9 @@ class PikiVisionNode(Node):
             # Reshape into a full 1080p NV12 frame
             full_nv12_image = raw_buffer[:nv12_total_bytes].reshape((1620, 1920))
 
+            bgr_debug = cv2.cvtColor(full_nv12_image, cv2.COLOR_YUV2BGR_NV12)
+            cv2.imwrite("/userdata/debug_frame.jpg", bgr_debug)
+
             # 2. Get your tiles (Middle Stripe logic)
             # This slices 640x640 blocks from the 1080p buffer
             tiles = get_stereo_stripe_tiles(
