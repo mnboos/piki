@@ -34,21 +34,34 @@ export ROS_LOG_DIR=/userdata/.roslog
 # calibration matrices (Kl, Kr, Dl, Dr, R, t) — stereonet loads them
 # automatically and rectifies internally regardless of this flag.
 # Set to True only if you provide an external calibration_file_path override.
-echo "[piki] Starting hobot_stereonet..."
-ros2 launch hobot_stereonet stereonet_model_v2.2.launch.py \
-    mipi_image_width:=640 \
-    mipi_image_height:=352 \
-    mipi_lpwm_enable:=True \
-    mipi_image_framerate:=30.0 \
-    need_rectify:=False \
-    io_method:=shared_mem &
-STEREONET_PID=$!
-echo "[piki] hobot_stereonet PID: $STEREONET_PID"
+# CRITICAL for Shared Memory (HBM) to work with Django
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/tros/humble/lib/hobot_shm/config/shm_fastdds.xml
+export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 
-# Give stereonet time to load the BPU model and open the MIPI device before
-# Django tries to subscribe to /hbmem_img.
-echo "[piki] Waiting for stereonet to initialise..."
-sleep 10
+# ── 2. Start MIPI Camera (Shared Memory Mode) ────────────────────────────────
+echo "[piki] Starting mipi_cam (Stereo Capture)..."
+# We capture at 1280x704 because the ISP needs this for 2x 640x352 eyes
+ros2 launch mipi_cam mipi_cam.launch.py \
+    mipi_image_width:=1280 \
+    mipi_image_height:=704 \
+    mipi_video_device:=vps_camera \
+    mipi_io_method:=shared_mem \
+    mipi_out_format:=nv12 &
+CAM_PID=$!
+
+sleep 3 # Give ISP time to initialize
+
+# ── 3. Start StereoNet Model ──────────────────────────────────────────────────
+echo "[piki] Starting hobot_stereonet (AI Engine)..."
+# We use the core model launch and point it to the camera's raw output
+ros2 launch hobot_stereonet stereonet_model.launch.py \
+    stereo_image_topic:=/image_raw \
+    io_method:=shared_mem \
+    pub_rectified_hbm:=True &
+STEREONET_PID=$!
+
+sleep 5
 
 # ── Start Django ──────────────────────────────────────────────────────────────
 echo "[piki] Starting Django..."
