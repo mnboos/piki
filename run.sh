@@ -1,5 +1,7 @@
 #!/usr/bin/bash
 
+source /opt/ros/humble/setup.bash
+
 . .venv/bin/activate
 cd src
 
