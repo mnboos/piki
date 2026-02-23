@@ -187,20 +187,20 @@ def apply_non_max_suppression(*, boxes: list[Box], overlap_threshold: float = 0.
 
 
 def _slice_bgr_tile(frame: np.ndarray, tx: int, ty: int, tile_size: int) -> np.ndarray:
-    return frame[ty: ty + tile_size, tx: tx + tile_size].copy()
+    return frame[ty : ty + tile_size, tx : tx + tile_size].copy()
 
 
-def _slice_nv12_tile(nv12: np.ndarray, frame_w: int, frame_h: int,
-                     tx: int, ty: int, tile_size: int) -> np.ndarray:
+def _slice_nv12_tile(nv12, buffer_w, buffer_h, tx, ty, tile_size):
     """Slice a tile from a flat NV12 array without any colorspace conversion.
 
     NV12 layout: Y plane (frame_h rows) followed by interleaved UV plane (frame_h/2 rows).
     Chroma is 4:2:0 so UV coords are halved.
     """
-    y_plane = nv12[:frame_h]
-    uv_plane = nv12[frame_h:]
-    y_tile = y_plane[ty: ty + tile_size, tx: tx + tile_size]
-    uv_tile = uv_plane[ty // 2: (ty + tile_size) // 2, tx: tx + tile_size]
+    # This works as long as buffer_w is 1920 and buffer_h is 1080
+    y_plane = nv12[:buffer_h, :buffer_w]
+    uv_plane = nv12[buffer_h:, :buffer_w]
+    y_tile = y_plane[ty : ty + tile_size, tx : tx + tile_size]
+    uv_tile = uv_plane[ty // 2 : (ty + tile_size) // 2, tx : tx + tile_size]
     return np.vstack([y_tile, uv_tile])
 
 
