@@ -1,0 +1,1 @@
+2026/02/21 21:07:59 [error] 8632#0: *1 open() "./html/favicon.ico" failed (2: No such file or directory), client: 127.0.0.1, server: localhost, request: "GET /favicon.ico HTTP/1.1", host: "localhost", referrer: "http://localhost/"
