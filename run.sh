@@ -74,6 +74,8 @@ export PYTHONUNBUFFERED=1
 # Tell the ROS node inside Django which topic to subscribe to.
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
+export  MODEL_FILE=/app/model/basic/yolov10_640x640_nv12.bin
+
 python manage.py runserver --noreload 0.0.0.0:8000 &
 DJANGO_PID=$!
 echo "[piki] Django PID: $DJANGO_PID"

@@ -1,3 +1,4 @@
+import os
 import time
 import traceback
 from pathlib import Path
@@ -220,7 +221,10 @@ def yolov5_post_process(input_data):
 
 try:
     print("Loading model...")
-    model_file = Path(__file__).parent / "models" / "yolov10n.bin"
+
+    model_file_env = os.environ.get("MODEL_FILE")
+    model_file = Path(model_file_env).resolve() if model_file_env else Path(__file__).parent / "models" / "yolov10n.bin"
+
     assert model_file.is_file(), f"Model file {model_file} not found!"
 
     # Load Hobot model
