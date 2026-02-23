@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 set -e
 
-fuser -k 8000/tcp
+#fuser -k 8000/tcp
 
 # ── Configuration ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
