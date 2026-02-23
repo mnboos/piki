@@ -12,10 +12,13 @@ from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from multiprocessing import Lock, Semaphore
-from multiprocessing.shared_memory import SharedMemory
 from typing import IO, Optional
 
 import numpy as np
+import rclpy
+from hbm_img_msgs.msg import HbmMsg1080P
+from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from .func import (
     get_stereo_stripe_tiles,
@@ -40,11 +43,6 @@ from .shared import (
 
 logger = logging.getLogger(__name__)
 
-SHM_NAME = "psm_frame_buffer"  # A unique name for our shared memory block
-shm_lock = Lock()  # To synchronize access to the shared memory
-shared_mem: SharedMemory | None = None  # Will hold the SharedMemory instance
-# noinspection PyTypeHints
-shared_array: np.typing.NDArray | None = None  # The numpy array view of the shared memory
 
 last_known_bbox = None
 last_known_velocity = None
@@ -78,6 +76,91 @@ def init_worker():
     @atexit.register
     def _cleanup() -> None:
         logger.info(f"[Worker-{pid}] Shutting down....")
+
+
+class PikiVisionNode(Node):
+    def __init__(self):
+        super().__init__("piki_vision_node")
+        topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/hbmem_img")
+
+        qos_profile = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
+
+        self.get_logger().info(f"Subscribing to: {topic_name}")
+        self.subscription = self.create_subscription(HbmMsg1080P, topic_name, self.listener_callback_hbm, qos_profile)
+
+    def listener_callback_hbm(self, msg):
+        try:
+            # 1. Handle the 1080p HBM Buffer correctly
+            # msg.data is 6,220,800 bytes (1080p BGR size)
+            # We need the first 3,110,400 bytes for 1080p NV12
+            raw_buffer = np.frombuffer(msg.data, dtype=np.uint8)
+            nv12_total_bytes = int(1920 * 1080 * 1.5)
+
+            # Reshape into a full 1080p NV12 frame
+            full_nv12_image = raw_buffer[:nv12_total_bytes].reshape((1620, 1920))
+
+            # 2. Get your tiles (Middle Stripe logic)
+            # This slices 640x640 blocks from the 1080p buffer
+            tiles = get_stereo_stripe_tiles(
+                full_nv12_image, tile_size=640, active_width=1280, active_height=352, is_nv12=True,
+            )
+
+            # 3. Submit to BPU
+            for tile_img, tx, ty in tiles:
+                # Basic throttling: don't overwhelm the inference pool
+                if len(active_futures) < 2:
+                    timestamp = time.monotonic_ns()
+                    future = inference_pool.submit(
+                        run_object_detection, frame_hires=tile_img, rois=[], timestamp=timestamp,
+                    )
+                    active_futures.append(future)
+                    # Pass tx and ty so we can map coordinates back correctly
+                    future.add_done_callback(lambda f, x=tx, y=ty: self.on_inference_done(f, x, y))
+
+        except Exception:
+            logger.exception("HBM Stream Error")
+            raise
+
+    def on_inference_done(self, future, tile_x, tile_y):
+        """Handle AI results and push to Django's output_buffer."""
+        global max_output_timestamp
+        try:
+            if future in active_futures:
+                active_futures.remove(future)
+
+            # 1. Get AI Detections
+            # results is an InferenceOutput(worker_pid, timestamp, avg_duration, detections)
+            result = future.result()
+
+            # 2. Map coordinates back to the full stereo image
+            mapped_detections = []
+            for det in result.detections:
+                # det.bbox is [x1, y1, x2, y2] relative to the 640x640 tile
+                # We add the tile offset to get global coordinates
+                x1 = det.bbox[0] + tile_x
+                y1 = det.bbox[1] + tile_y
+                x2 = det.bbox[2] + tile_x
+                y2 = det.bbox[3] + tile_y
+
+                # Convert back to [x, y, w, h] for your existing drawing logic
+                bbox_global = (x1, y1, x2 - x1, y2 - y1)
+
+                mapped_detections.append(Detection(label=det.label, confidence=det.confidence, bbox=bbox_global))
+
+            # 3. Push to output_buffer for the Django Ninja API to stream
+            # We need a 'frame_lores' for the UI.
+            # (In tiling mode, we might just pass a dummy or the last processed tile)
+            output_buffer.append(
+                OutputResult(
+                    worker_pid=result.worker_pid,
+                    timestamp=result.timestamp,
+                    frame_lores=None,  # You'll need to handle preview frame separately
+                    detections_denormalized=mapped_detections,
+                ),
+            )
+
+        except Exception as e:
+            self.get_logger().error(f"Inference Result Error: {e}")
 
 
 tracker_lock = Lock()
@@ -115,36 +198,6 @@ def frame_producer(ffmpeg_stdout: IO[bytes], buffer_instance: DoubleBuffer):
         traceback.print_exc()
         raise
     logger.info("Producer finished.")
-
-
-def setup_shared_memory_like(frame: np.typing.NDArray):
-    global shared_mem
-    global shared_array
-
-    """Creates the shared memory block based on the first frame's properties."""
-    try:
-        # Create a new shared memory block
-        size = int(np.prod(frame.shape) * np.dtype(frame.dtype).itemsize)
-        shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
-        logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB")
-    except FileExistsError:
-        # If it already exists from a previous crashed run, unlink it and retry
-        logger.info("Shared memory block already exists, unlinking and recreating.")
-        SharedMemory(name=SHM_NAME).unlink()
-        size = int(np.prod(frame.shape) * np.dtype(frame.dtype).itemsize)
-        shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
-
-    # Create a NumPy array that uses the shared memory buffer
-    shared_array = np.ndarray(frame.shape, dtype=frame.dtype, buffer=shared_mem.buf)
-    return shared_array
-
-
-def cleanup_shared_memory():
-    """Closes and unlinks the shared memory block on application exit."""
-    logger.info("Cleaning up shared memory...")
-    if shared_mem:
-        shared_mem.close()
-        shared_mem.unlink()  # Free the memory block
 
 
 active_futures: list[Future[InferenceOutput]] = []
@@ -482,11 +535,11 @@ def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
             try:
                 timestamp = time.monotonic_ns()
 
-                rois = motion_detector.create_rois(mask=mask)
-                if rois:
+                if not active_futures:
+                    rois = motion_detector.create_rois(mask=mask)
+                    if rois:
                     # Skip if inference is already busy — drop the frame rather than queue up.
                     # The BPU will finish the current batch faster than we can accumulate frames.
-                    if not active_futures:
                         with cache_lock:
                             lowres_frame_cache[timestamp] = frame_lores
 
@@ -531,14 +584,7 @@ def stream_nonblocking():
 def stream_with_ros():
     try:
         global ros_node
-        import json
 
-        import rclpy
-        from rclpy.node import Node
-        from sensor_msgs.msg import Image
-        from std_msgs.msg import String
-        from hbm_img_msgs.msg import HbmMsg1080P
-        from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
         # from cv_bridge import CvBridge
 
         delay_seconds = 5
@@ -546,88 +592,15 @@ def stream_with_ros():
         time.sleep(delay_seconds)
 
         print("------------!!!!!!!!!!!!! STREAM (ROS 2)")
-        high_res_w, high_res_h = 640, 352
-
-        class PikiVisionNode(Node):
-            def __init__(self):
-                super().__init__("piki_vision_node")
-                topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/hbmem_img")
-
-                # HBM REQUIRED: Best Effort reliability
-                qos_profile = QoSProfile(
-                    reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1
-                )
-
-                self.get_logger().info(f"Subscribing to HBM Topic: {topic_name} with Best Effort QoS")
-                self.subscription = self.create_subscription(
-                    HbmMsg1080P,
-                    topic_name,
-                    self.listener_callback_hbm,
-                    qos_profile,  # Use the profile here
-                )
-
-                self.target_pub = self.create_publisher(String, "/piki/target_detections", 10)
-
-            def listener_callback_hbm(self, msg):
-                try:
-                    # 1. Convert the raw buffer to a flat NumPy array
-                    raw_buffer = np.frombuffer(msg.data, dtype=np.uint8)
-
-                    # 2. Calculate the exact size of an NV12 1080p frame
-                    # Width: 1920, Height: 1080, NV12 factor: 1.5
-                    # Total bytes = 3,110,400
-                    nv12_total_bytes = int(1920 * 1080 * 1.5)
-
-                    # 3. Slice the buffer to the correct size FIRST, then reshape
-                    # This ignores the "extra" 3MB of empty space in the 1080P container
-                    full_nv12_image = raw_buffer[:nv12_total_bytes].reshape((1620, 1920))
-
-                    # 4. Now handle your tiling/processing
-                    # (This is the "Middle Stripe" logic from before)
-                    tiles = get_stereo_stripe_tiles(
-                        full_nv12_image, tile_size=640, active_width=1280, active_height=352, is_nv12=True
-                    )
-
-                    for tile_img, tx, ty in tiles:
-                        if not active_futures:
-                            timestamp = time.monotonic_ns()
-                            future = inference_pool.submit(
-                                run_object_detection, frame_hires=tile_img, rois=[], timestamp=timestamp
-                            )
-                            active_futures.append(future)
-                            future.add_done_callback(lambda f, x=tx, y=ty: self.on_inference_done(f, x, y))
-
-                except Exception as e:
-                    self.get_logger().error(f"HBM Stream Error: {e}")
-            # def listener_callback_hbm(self, msg):
-            #     try:
-            #         # 1. Map the FULL 1080p Shared Memory buffer (1920x1080)
-            #         # This is zero-copy. We reshape to the full capacity of HbmMsg1080P.
-            #         # NV12 for 1080p is 1620 rows (1080 Y + 540 UV)
-            #         full_nv12_buffer = np.frombuffer(msg.data, dtype=np.uint8).reshape((1620, 1920))
-            #
-            #         # 2. Pass the FULL buffer to your processing pipeline.
-            #         # The tiling function above will now correctly slice 640x640
-            #         # blocks from the top-left, effectively using the unused
-            #         # buffer space as "free" padding.
-            #         process_frame(frame_hires=full_nv12_buffer)
-            #     except Exception:
-            #         logger.exception("HBM Callback Error")
-            #         raise
-
-            def publish_detections(self, detections: list):
-                # Serialize detections to JSON and publish
-                data = [{"label": d.label, "confidence": float(d.confidence), "bbox": d.bbox} for d in detections]
-                msg = String()
-                msg.data = json.dumps(data)
-                self.target_pub.publish(msg)
+        # high_res_w, high_res_h = 640, 352
 
         rclpy.init(args=None)
         ros_node = PikiVisionNode()
         rclpy.spin(ros_node)
-    except Exception as e:
-        logger.exception(f"ROS 2 streaming failed: {e}")
+    except Exception:
+        logger.exception("ROS 2 streaming failed")
         traceback.print_exc()
+        raise
     finally:
         if rclpy.ok():
             rclpy.shutdown()
@@ -643,6 +616,5 @@ def cleanup():
     inference_pool.shutdown(wait=True, cancel_futures=True)
     if ffmpeg_process:
         ffmpeg_process.kill()
-    cleanup_shared_memory()
 
     logger.info("[DJANGO SHUTDOWN] Processes stopped..")
