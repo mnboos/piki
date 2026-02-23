@@ -35,15 +35,13 @@ export ROS_LOG_DIR=/userdata/.roslog
 # automatically and rectifies internally regardless of this flag.
 # Set to True only if you provide an external calibration_file_path override.
 echo "[piki] Starting hobot_stereonet..."
-ros2 launch hobot_stereonet stereonet_model_web_visual_v2.2.launch.py \
+ros2 launch hobot_stereonet stereonet_model.launch.py \
     mipi_image_width:=640 \
     mipi_image_height:=352 \
+    mipi_lpwm_enable:=True \
     mipi_image_framerate:=30.0 \
-    io_method:=shared_mem \
     need_rectify:=False \
-    height_min:=-10.0 \
-    height_max:=10.0 \
-    pc_max_depth:=5.0 &
+    io_method:=shared_mem &
 STEREONET_PID=$!
 echo "[piki] hobot_stereonet PID: $STEREONET_PID"
 
