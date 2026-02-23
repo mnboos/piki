@@ -38,8 +38,8 @@ echo "[piki] Starting hobot_stereonet..."
 ros2 launch hobot_stereonet stereonet_model_web_visual_v2.2.launch.py \
     mipi_image_width:=640 \
     mipi_image_height:=352 \
-    mipi_lpwm_enable:=True \
     mipi_image_framerate:=30.0 \
+    io_method:=shared_mem \
     need_rectify:=False \
     height_min:=-10.0 \
     height_max:=10.0 \
