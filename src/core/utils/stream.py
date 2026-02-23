@@ -3,7 +3,6 @@ import io
 import logging
 import multiprocessing as mp
 import os
-import platform
 import signal
 import subprocess
 import threading
@@ -12,14 +11,9 @@ import traceback
 from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from multiprocessing import Lock, shared_memory, Semaphore
+from multiprocessing import Lock, Semaphore
 from multiprocessing.shared_memory import SharedMemory
-from pathlib import Path
-from typing import IO, TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    import rclpy
-    from rclpy.node import Node
+from typing import IO, Optional
 
 import numpy as np
 
@@ -131,7 +125,7 @@ def setup_shared_memory_like(frame: np.typing.NDArray):
         # Create a new shared memory block
         size = int(np.prod(frame.shape) * np.dtype(frame.dtype).itemsize)
         shared_mem = SharedMemory(create=True, size=size, name=SHM_NAME)
-        logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024 ** 2:.2f} MB")
+        logger.info(f"Created shared memory block '{SHM_NAME}' with size {size / 1024**2:.2f} MB")
     except FileExistsError:
         # If it already exists from a previous crashed run, unlink it and retry
         logger.info("Shared memory block already exists, unlinking and recreating.")
@@ -186,9 +180,9 @@ def get_measure(description: str):
 
 
 def run_object_detection(
-        frame_hires: np.ndarray,
-        rois: list[Box],
-        timestamp: int,
+    frame_hires: np.ndarray,
+    rois: list[Box],
+    timestamp: int,
 ) -> InferenceOutput:
     """Run tile-based inference on the hi-res frame.
 
@@ -205,7 +199,7 @@ def run_object_detection(
     try:
         frame_h, frame_w = frame_hires.shape[:2]
 
-        from .ai import detect_objects, MODEL_INPUT_TYPE  # noqa: PLC0415
+        from .ai import MODEL_INPUT_TYPE, detect_objects  # noqa: PLC0415
 
         tiles = slice_roi_into_tiles(
             frame=frame_hires,
@@ -536,12 +530,14 @@ def stream_nonblocking():
 def stream_with_ros():
     try:
         global ros_node
+        import json
+
         import rclpy
         from rclpy.node import Node
         from sensor_msgs.msg import Image
         from std_msgs.msg import String
-        import json
-        from cv_bridge import CvBridge
+        from hbm_img_msgs.msg import HbmMsg1080P
+        # from cv_bridge import CvBridge
 
         delay_seconds = 5
         logger.info(f"Starting ROS 2 videostream in {delay_seconds}s...")
@@ -552,32 +548,17 @@ def stream_with_ros():
 
         class PikiVisionNode(Node):
             def __init__(self):
-                super().__init__('piki_vision_node')
+                super().__init__("piki_vision_node")
                 # Default to a pre-resized hardware ISP stream to save CPU/GPU overhead
-                topic_name = os.environ.get('ROS_IMAGE_TOPIC', '/camera/left/image_raw_640x480')
-                self.bridge = CvBridge()
+                topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/camera/left/image_raw_640x480")
 
-                try:
-                    from hbm_img_msgs.msg import HbmMsg1080P
-                    self.get_logger().info(f"Using zero-copy HbmMsg1080P for topic: {topic_name}")
-                    self.subscription = self.create_subscription(
-                        HbmMsg1080P,
-                        topic_name,
-                        self.listener_callback_hbm,
-                        10
-                    )
-                except ImportError:
-                    self.get_logger().info(
-                        f"hbm_img_msgs not found, falling back to sensor_msgs.msg.Image for topic: {topic_name}")
-                    self.subscription = self.create_subscription(
-                        Image,
-                        topic_name,
-                        self.listener_callback,
-                        10
-                    )
+                self.get_logger().info(f"Using zero-copy HbmMsg1080P for topic: {topic_name}")
+                self.subscription = self.create_subscription(
+                    HbmMsg1080P, topic_name, self.listener_callback_hbm, 10,
+                )
 
                 # Publisher for tracking target (for servos)
-                self.target_pub = self.create_publisher(String, '/piki/target_detections', 10)
+                self.target_pub = self.create_publisher(String, "/piki/target_detections", 10)
 
             def listener_callback_hbm(self, msg):
                 try:
@@ -602,33 +583,10 @@ def stream_with_ros():
 
                     process_frame(frame_hires)
                 except Exception as e:
-                    self.get_logger().error(f'Error processing zero-copy HBM image: {e}')
+                    self.get_logger().error(f"Error processing zero-copy HBM image: {e}")
                     traceback.print_exc()
 
-            def listener_callback(self, msg):
-                try:
-                    cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-
-                    if cv_image.shape[1] == high_res_w and cv_image.shape[0] == high_res_h:
-                        # Skip GPU resize since the ISP already gave us the correct size
-                        frame_hires = cv_image
-                    else:
-                        # Offload image processing to Mali GPU via OpenCL (T-API)
-                        umat_image = cv2.UMat(cv_image)
-
-                        # Example of where stereo rectification (cv2.remap) would go.
-                        # It will run on the GPU automatically.
-                        # umat_rectified = cv2.remap(umat_image, map1, map2, cv2.INTER_LINEAR)
-
-                        umat_resized = cv2.resize(umat_image, (high_res_w, high_res_h))
-                        frame_hires = umat_resized.get()
-
-                    process_frame(frame_hires)
-                except Exception as e:
-                    self.get_logger().error(f'Error processing image: {e}')
-                    traceback.print_exc()
-
-            def publish_detections(self, detections):
+            def publish_detections(self, detections: list):
                 # Serialize detections to JSON and publish
                 data = [{"label": d.label, "confidence": float(d.confidence), "bbox": d.bbox} for d in detections]
                 msg = String()

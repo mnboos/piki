@@ -1,6 +1,8 @@
 #!/usr/bin/bash
 set -e
 
+fuser -k 8000/tcp
+
 # ── Configuration ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -54,6 +56,8 @@ sleep 10
 echo "[piki] Starting Django..."
 source "${SCRIPT_DIR}/.venv/bin/activate"
 cd "${SCRIPT_DIR}/src"
+
+export PYTHONPATH=$PYTHONPATH:/opt/tros/humble/lib/python3.10/site-packages
 
 export PYTHONUNBUFFERED=1
 # Tell the ROS node inside Django which topic to subscribe to.
