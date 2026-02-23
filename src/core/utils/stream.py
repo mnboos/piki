@@ -548,7 +548,7 @@ def stream_with_ros():
         time.sleep(delay_seconds)
 
         print("------------!!!!!!!!!!!!! STREAM (ROS 2)")
-        high_res_w, high_res_h = 640, 480
+        high_res_w, high_res_h = 640, 352
 
         class PikiVisionNode(Node):
             def __init__(self):

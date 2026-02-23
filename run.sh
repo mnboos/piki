@@ -3,47 +3,52 @@ set -e
 
 # ── Configuration ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CALIBRATION_FILE="${SCRIPT_DIR}/calibration.yaml"
-ROS_IMAGE_TOPIC="/camera/left/image_raw"
+
+# stereonet publishes the rectified left image on this topic (640x352, NV12, shared mem).
+# Django subscribes to this — no separate mipi_cam process needed.
+ROS_IMAGE_TOPIC="/hbmem_img"
 
 # ── Source environments ───────────────────────────────────────────────────────
-# tros.b must be sourced BEFORE the venv, as it sets up ROS Python paths.
-# If you source the venv first, Python picks up the venv interpreter and
-# loses the tros.b site-packages.
+# tros.b must be sourced BEFORE the venv — it injects rclpy, hobot_dnn etc.
+# into the Python path. Activating the venv afterwards layers on top correctly.
 source /opt/tros/humble/setup.bash
 
-# ── Validate calibration file ─────────────────────────────────────────────────
-if [ ! -f "$CALIBRATION_FILE" ]; then
-    echo ""
-    echo "  WARNING: calibration.yaml not found at $CALIBRATION_FILE"
-    echo "  Stereo rectification will be disabled (need_rectify:=False)."
-    echo "  Run camera calibration first for correct depth data."
-    echo "  See: ros2 run camera_calibration cameracalibrator --help"
-    echo ""
-    NEED_RECTIFY="False"
-    CALIBRATION_ARGS=""
-else
-    NEED_RECTIFY="True"
-    CALIBRATION_ARGS="calibration_file_path:=${CALIBRATION_FILE}"
-fi
+# ── Fix tros.b runtime directories ───────────────────────────────────────────
+# tros.b nodes write logs to /userdata/.roslog — create it if absent.
+# nginx (websocket node) needs a logs/ dir relative to the working directory.
+mkdir -p /userdata/.roslog
+mkdir -p "${SCRIPT_DIR}/logs"
+export ROS_LOG_DIR=/userdata/.roslog
 
 # ── Start hobot_stereonet ─────────────────────────────────────────────────────
-# This handles: MIPI camera → ISP → NV12 → stereo rectification → depth map
-# It publishes rectified left/right images on /hbmem_img (shared memory, zero-copy)
+# Owns the MIPI hardware exclusively. Handles:
+#   SC230AI sensors → ISP (noise reduction, WDR) → rectification → NV12
+# Publishes:
+#   /hbmem_img          — rectified left image, 640x352 NV12, zero-copy shared mem
+#   /depth_map          — disparity/depth map from stereonet BPU model
+#   /hobot_stereonet_visual — colourised depth visualisation (for debugging)
+#
+# NOTE: need_rectify:=False because the camera EEPROM already contains the
+# calibration matrices (Kl, Kr, Dl, Dr, R, t) — stereonet loads them
+# automatically and rectifies internally regardless of this flag.
+# Set to True only if you provide an external calibration_file_path override.
 echo "[piki] Starting hobot_stereonet..."
 ros2 launch hobot_stereonet stereonet_model_web_visual_v2.2.launch.py \
-    mipi_image_width:=1920 \
-    mipi_image_height:=1080 \
+    mipi_image_width:=640 \
+    mipi_image_height:=352 \
+    mipi_lpwm_enable:=True \
     mipi_image_framerate:=30.0 \
-    need_rectify:=${NEED_RECTIFY} \
-    ${CALIBRATION_ARGS} &
+    need_rectify:=False \
+    height_min:=-10.0 \
+    height_max:=10.0 \
+    pc_max_depth:=5.0 &
 STEREONET_PID=$!
 echo "[piki] hobot_stereonet PID: $STEREONET_PID"
 
-# Give the camera node a moment to initialise before Django tries to subscribe.
-# hobot_stereonet takes a few seconds to load the BPU model and open the MIPI device.
+# Give stereonet time to load the BPU model and open the MIPI device before
+# Django tries to subscribe to /hbmem_img.
 echo "[piki] Waiting for stereonet to initialise..."
-sleep 8
+sleep 10
 
 # ── Start Django ──────────────────────────────────────────────────────────────
 echo "[piki] Starting Django..."
@@ -51,7 +56,7 @@ source "${SCRIPT_DIR}/.venv/bin/activate"
 cd "${SCRIPT_DIR}/src"
 
 export PYTHONUNBUFFERED=1
-export MOCK_CAMERA_PATH=/dev/video0
+# Tell the ROS node inside Django which topic to subscribe to.
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
 python manage.py runserver --noreload 0.0.0.0:8000 &
@@ -59,7 +64,6 @@ DJANGO_PID=$!
 echo "[piki] Django PID: $DJANGO_PID"
 
 # ── Shutdown handler ──────────────────────────────────────────────────────────
-# When you Ctrl+C, kill both processes cleanly.
 cleanup() {
     echo ""
     echo "[piki] Shutting down..."
@@ -72,9 +76,9 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # ── Wait ──────────────────────────────────────────────────────────────────────
-# Block here until either process dies, then shut everything down.
+# Unblocks if either process exits — then shut both down.
 wait -n $DJANGO_PID $STEREONET_PID
 EXIT_CODE=$?
-echo "[piki] A process exited (code: $EXIT_CODE), shutting down the other..."
+echo "[piki] A process exited (code: $EXIT_CODE), shutting down..."
 cleanup
 exit $EXIT_CODE

@@ -47,7 +47,7 @@ NUM_AI_WORKERS: int = 1
 # Run MOG2 motion detection on 1/3 scale (640x360) instead of full 1920x1080.
 # Motion detection doesn't need full resolution — this saves significant CPU.
 # The hi-res frame is still stored in shared memory for full-res tile slicing.
-preview_downscale_factor = 3
+preview_downscale_factor = 2
 
 ai_input_size = 640
 
