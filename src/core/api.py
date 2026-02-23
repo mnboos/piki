@@ -31,6 +31,18 @@ async def stream_camera():
             await asyncio.sleep(0.01)
             continue
 
+        if latest_result is None:
+            await asyncio.sleep(0.01)
+            continue
+
+        frame = latest_result.frame_lores
+
+        # Check if frame is None or an empty numpy array
+        if frame is None or (hasattr(frame, "size") and frame.size == 0):
+            # No frame to show, wait for the next one
+            await asyncio.sleep(0.01)
+            continue
+
         # The 'frame' here is the low-resolution preview frame
         # _worker_pid, _timestamp, frame, detected_objects = latest_result
         frame = latest_result.frame_lores
@@ -90,7 +102,8 @@ async def stream_camera():
             )
 
         # Convert the processed RGB frame to BGR for web streaming and encode
-        bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        # bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        bgr = frame
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
         success, buffer = cv2.imencode(".jpeg", bgr, encode_param)
         if success:
