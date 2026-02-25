@@ -39,26 +39,44 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/tros/humble/lib/hobot_shm/config/shm_fastdds.xml
 export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 
-# ── 2. Start MIPI Camera (Shared Memory Mode) ────────────────────────────────
-echo "[piki] Starting mipi_cam (Stereo Capture)..."
-# We capture at 1280x704 because the ISP needs this for 2x 640x352 eyes
+## ── 2. Start MIPI Camera (Shared Memory Mode) ────────────────────────────────
+#echo "[piki] Starting mipi_cam (Stereo Capture)..."
+## We capture at 1280x704 because the ISP needs this for 2x 640x352 eyes
+#ros2 launch mipi_cam mipi_cam.launch.py \
+#    mipi_image_width:=1280 \
+#    mipi_image_height:=704 \
+#    mipi_video_device:=vps_camera \
+#    mipi_io_method:=shared_mem \
+#    mipi_out_format:=nv12 &
+#CAM_PID=$!
+#
+#sleep 3 # Give ISP time to initialize
+#
+## ── 3. Start StereoNet Model ──────────────────────────────────────────────────
+#echo "[piki] Starting hobot_stereonet (AI Engine)..."
+## We use the core model launch and point it to the camera's raw output
+#ros2 launch hobot_stereonet stereonet_model.launch.py \
+#    stereo_image_topic:=/image_raw \
+#    io_method:=shared_mem \
+#    pub_rectified_hbm:=True &
+#STEREONET_PID=$!
+
+# ── 2. Start MIPI Camera ──────────────────────────────────────────────────────
 ros2 launch mipi_cam mipi_cam.launch.py \
     mipi_image_width:=1280 \
     mipi_image_height:=704 \
     mipi_video_device:=vps_camera \
     mipi_io_method:=shared_mem \
-    mipi_out_format:=nv12 &
+    mipi_out_format:=nv12 \
+    mipi_out_topic:=/image_combine_raw &
 CAM_PID=$!
 
-sleep 3 # Give ISP time to initialize
+sleep 3
 
 # ── 3. Start StereoNet Model ──────────────────────────────────────────────────
-echo "[piki] Starting hobot_stereonet (AI Engine)..."
-# We use the core model launch and point it to the camera's raw output
 ros2 launch hobot_stereonet stereonet_model.launch.py \
-    stereo_image_topic:=/image_raw \
-    io_method:=shared_mem \
-    pub_rectified_hbm:=True &
+    stereo_image_topic:=/image_combine_raw \
+    camera_info_topic:=/image_right_raw/camera_info &
 STEREONET_PID=$!
 
 sleep 5
