@@ -190,59 +190,54 @@ def _slice_bgr_tile(frame: np.ndarray, tx: int, ty: int, tile_size: int) -> np.n
     return frame[ty : ty + tile_size, tx : tx + tile_size].copy()
 
 
-def _slice_nv12_tile(nv12, buffer_w, buffer_h, tx, ty, tile_size):
-    """Slice a tile from a flat NV12 array without any colorspace conversion.
+def _slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:
+    # Y tile: (tile_size, tile_size) view
+    y_tile = nv12[ty : ty + tile_size, tx : tx + tile_size]
+    # UV tile: starts at buffer_h rows down, half the y coords
+    uv_y = buffer_h + ty // 2
+    uv_tile = nv12[uv_y : uv_y + tile_size // 2, tx : tx + tile_size]
+    # Flatten to 1D — this is what model.forward() expects
+    return np.concatenate([y_tile.flatten(), uv_tile.flatten()])
 
-    NV12 layout: Y plane (frame_h rows) followed by interleaved UV plane (frame_h/2 rows).
-    Chroma is 4:2:0 so UV coords are halved.
-    """
-    # This works as long as buffer_w is 1920 and buffer_h is 1080
-    y_plane = nv12[:buffer_h, :buffer_w]
-    uv_plane = nv12[buffer_h:, :buffer_w]
-    y_tile = y_plane[ty : ty + tile_size, tx : tx + tile_size]
-    uv_tile = uv_plane[ty // 2 : (ty + tile_size) // 2, tx : tx + tile_size]
-    return np.vstack([y_tile, uv_tile])
-
-
-def get_stereo_stripe_tiles(
-    frame: np.ndarray,
-    tile_size: int = 640,
-    active_width: int = 1280,  # 640 (Left) + 640 (Right)
-    active_height: int = 352,
-    is_nv12: bool = True,
-) -> list[tuple[np.ndarray, int, int]]:
-    """
-    Slices the wide stereo image into horizontal 640x640 tiles.
-    Focuses on the vertical 'middle stripe' of the active image content.
-    """
-    buffer_w = frame.shape[1]  # 1920
-    buffer_h = (frame.shape[0] * 2 // 3) if is_nv12 else frame.shape[0]  # 1080
-
-    tiles = []
-
-    # Calculate Vertical Offset to center the 352px image in the 640px model tile
-    # ty = 0 if you want it top-aligned, but centering is better for many models.
-    # However, since stereonet writes to the top-left (0,0), we'll use ty=0
-    # to ensure we actually catch all the data.
-    ty = 0
-
-    # We iterate horizontally across the active width (Left then Right)
-    # 0 -> 640 (Tile 1: Left Camera)
-    # 640 -> 1280 (Tile 2: Right Camera)
-    for tx in range(0, active_width, tile_size):
-        if tx + tile_size > buffer_w:
-            break
-
-        if is_nv12:
-            # Zero-copy NV12 slice
-            tile = _slice_nv12_tile(frame, buffer_w, buffer_h, tx, ty, tile_size)
-        else:
-            # Zero-copy BGR slice
-            tile = frame[ty : ty + tile_size, tx : tx + tile_size]
-
-        tiles.append((tile, tx, ty))
-
-    return tiles
+# def get_stereo_stripe_tiles(
+#     frame: np.ndarray,
+#     tile_size: int = 640,
+#     active_width: int = 1280,  # 640 (Left) + 640 (Right)
+#     active_height: int = 352,
+#     is_nv12: bool = True,
+# ) -> list[tuple[np.ndarray, int, int]]:
+#     """
+#     Slices the wide stereo image into horizontal 640x640 tiles.
+#     Focuses on the vertical 'middle stripe' of the active image content.
+#     """
+#     buffer_w = frame.shape[1]  # 1920
+#     buffer_h = (frame.shape[0] * 2 // 3) if is_nv12 else frame.shape[0]  # 1080
+#
+#     tiles = []
+#
+#     # Calculate Vertical Offset to center the 352px image in the 640px model tile
+#     # ty = 0 if you want it top-aligned, but centering is better for many models.
+#     # However, since stereonet writes to the top-left (0,0), we'll use ty=0
+#     # to ensure we actually catch all the data.
+#     ty = 0
+#
+#     # We iterate horizontally across the active width (Left then Right)
+#     # 0 -> 640 (Tile 1: Left Camera)
+#     # 640 -> 1280 (Tile 2: Right Camera)
+#     for tx in range(0, active_width, tile_size):
+#         if tx + tile_size > buffer_w:
+#             break
+#
+#         if is_nv12:
+#             # Zero-copy NV12 slice
+#             tile = _slice_nv12_tile(frame, buffer_w, buffer_h, tx, ty, tile_size)
+#         else:
+#             # Zero-copy BGR slice
+#             tile = frame[ty : ty + tile_size, tx : tx + tile_size]
+#
+#         tiles.append((tile, tx, ty))
+#
+#     return tiles
 
 
 def slice_roi_into_tiles(
@@ -283,10 +278,12 @@ def slice_roi_into_tiles(
 
     tiles: list[tuple[np.ndarray, int, int]] = []
 
-    def emit(tx: int, ty: int):
+    seen: set[tuple[int, int]] = set()
+
+    def maybe_add_to_tiles(tx: int, ty: int):
         # Ensure the tile start doesn't go negative
-        tx = max(0, tx)
-        ty = max(0, ty)
+        tx = max(0, min(tx, buffer_w - tile_size))
+        ty = max(0, min(ty, buffer_h - tile_size))
 
         # Ensure we don't slice outside the PHYSICAL shared memory buffer
         if tx + tile_size > buffer_w:
@@ -294,12 +291,14 @@ def slice_roi_into_tiles(
         if ty + tile_size > buffer_h:
             ty = buffer_h - tile_size
 
-        if is_nv12:
-            # This is a ZERO-COPY view of the shared memory
-            tile = _slice_nv12_tile(frame, buffer_w, buffer_h, tx, ty, tile_size)
-        else:
-            tile = _slice_bgr_tile(frame, tx, ty, tile_size)
-        tiles.append((tile, tx, ty))
+        if (tx, ty) not in seen:
+            seen.add((tx, ty))
+
+            if is_nv12:
+                tile = _slice_nv12_tile(nv12=frame,buffer_h=buffer_h, tx=tx, ty=ty, tile_size=tile_size)
+            else:
+                tile = _slice_bgr_tile(frame, tx, ty, tile_size)
+            tiles.append((tile, tx, ty))
 
     for roi in rois:
         # Map preview ROI to high-res coordinates
@@ -314,7 +313,7 @@ def slice_roi_into_tiles(
         # The 'extra' 288 pixels of height will be raw buffer data (Zero-cost padding).
         if rw <= tile_size and rh <= tile_size:
             # Center the tile on the ROI if possible, otherwise 0,0
-            emit(rx + rw // 2 - tile_size // 2, ry + rh // 2 - tile_size // 2)
+            maybe_add_to_tiles(rx + rw // 2 - tile_size // 2, ry + rh // 2 - tile_size // 2)
         else:
             # Standard grid logic for larger ROIs
             y = ry
@@ -323,7 +322,7 @@ def slice_roi_into_tiles(
                 x = rx
                 while True:
                     tx = min(x, buffer_w - tile_size)
-                    emit(tx, ty)
+                    maybe_add_to_tiles(tx, ty)
                     if tx >= rx + rw - tile_size or tx >= buffer_w - tile_size:
                         break
                     x += tile_size - int(tile_size * 0.1)

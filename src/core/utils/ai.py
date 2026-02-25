@@ -183,42 +183,36 @@ CLASSES = (
 
 
 def yolov10_post_process(outputs: list, confidence_threshold: float = 0.5):
-    """Parse the output of a YOLOv10 model.
-
-    Args:
-        outputs: The list of NumPy arrays from rknn.inference().
-                 Assumes a single output tensor of shape (1, 300, 6).
-        confidence_threshold: The minimum score for a detection to be kept.
-
-    Returns:
-        A list of tuples, where each tuple is (label, confidence, box).
-        The box is in [x1, y1, x2, y2] format.
-
     """
-    # The output from rknn.inference() is a list of arrays. YOLOv10 typically has one output.
+    Robustly parses YOLOv10 output tensors from the RDK X5 BPU.
+    """
+    # 1. Access the first output buffer
     detections = outputs[0]
 
-    # The shape is (1, 300, 6). We remove the first dimension (batch size).
-    detections = detections[0]  # Shape is now (300, 6)
+    # 2. SQUEEZE: This is the critical fix.
+    # If shape is (1, 1, 300, 6) or (1, 300, 6), this turns it into (300, 6)
+    detections = np.squeeze(detections)
+
+    # 3. Handle the case where the model finds exactly 0 or 1 object
+    if detections.ndim == 1:
+        # If shape is (6,), it's a single detection; make it (1, 6)
+        detections = np.expand_dims(detections, axis=0)
+    elif detections.ndim == 0:
+        return []
 
     final_results = []
     for detection in detections:
-        # detection is a row: [x1, y1, x2, y2, score, label_index]
-        score = detection[4]
+        # detection is now guaranteed to be [x1, y1, x2, y2, score, label_idx]
+        score = float(detection[4])
 
-        # Apply the confidence threshold
         if score >= confidence_threshold:
-            label_index = int(detection[5])
-            box = detection[0:4]  # The box is already in [x1, y1, x2, y2] format
-
-            # Get the class name
-            label = CLASSES[label_index]
-
-            final_results.append((label, score, box))
+            label_idx = int(detection[5])
+            if label_idx < len(CLASSES):
+                label = CLASSES[label_idx]
+                box = detection[0:4] # [x1, y1, x2, y2]
+                final_results.append((label, score, box))
 
     return final_results
-
-
 try:
     print("Loading model...")
 

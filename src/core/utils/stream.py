@@ -1,5 +1,6 @@
 import atexit
 import io
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -19,9 +20,9 @@ import rclpy
 from hbm_img_msgs.msg import HbmMsg1080P
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
 
 from .func import (
-    get_stereo_stripe_tiles,
     slice_roi_into_tiles,
 )
 from .interfaces import Box, DoubleBuffer
@@ -104,20 +105,20 @@ class PikiVisionNode(Node):
             uv_plane = raw_buffer[uv_start : uv_start + uv_height * stride].reshape(uv_height, stride)
 
             clean_nv12 = np.vstack([y_plane, uv_plane])
-            bgr_image = cv2.cvtColor(clean_nv12, cv2.COLOR_YUV2BGR_NV12)
 
-            cv2.imwrite("/userdata/debug_frame_fixed.jpg", bgr_image)
+            # bgr_image = cv2.cvtColor(clean_nv12, cv2.COLOR_YUV2BGR_NV12)
+            # cv2.imwrite("/userdata/debug_frame_fixed.jpg", bgr_image)
 
-            print(f"Buffer size: {raw_buffer.size}, w={w}, h={h}")
-            print(f"Expected NV12 size: {w * h * 3 // 2}")
+            # print(f"Buffer size: {raw_buffer.size}, w={w}, h={h}")
+            # print(f"Expected NV12 size: {w * h * 3 // 2}")
 
             # Now send the standard 3-channel BGR frame to your pipeline
-            process_frame(frame_hires=clean_nv12)
+            process_frame(frame_hires=clean_nv12, frame_w=w, frame_h=h)
 
         except Exception as e:
             self.get_logger().error(f"HBM Fix Error: {e}")
 
-    def on_inference_done(self, future, tile_x, tile_y):
+    def on_inference_done(self, future: Future, tile_x: int, tile_y: int):
         """Handle AI results and push to Django's output_buffer."""
         global max_output_timestamp
         try:
@@ -159,12 +160,8 @@ class PikiVisionNode(Node):
             self.get_logger().error(f"Inference Result Error: {e}")
 
     def publish_detections(self, detections: list):
-        """
-        Takes a list of Detection namedtuples, converts them to JSON,
-        and publishes them to the ROS 2 topic.
-        """
-        import json
-        from std_msgs.msg import String
+        """Takes a list of Detection namedtuples, converts them to JSON, and publishes them to the ROS 2 topic."""
+
 
         # Format detections for JSON serialization
         # detections is a list of Detection(label, confidence, bbox)
@@ -173,7 +170,7 @@ class PikiVisionNode(Node):
             data.append({
                 "label": d.label,
                 "confidence": float(d.confidence),
-                "bbox": [float(x) for x in d.bbox] # Ensure coordinates are floats
+                "bbox": [float(x) for x in d.bbox], # Ensure coordinates are floats
             })
 
         msg = String()
@@ -269,7 +266,8 @@ def run_object_detection(
         return InferenceOutput(worker_pid=worker_pid, timestamp=timestamp, avg_duration=0, detections=[])
 
     try:
-        frame_h, frame_w = frame_hires.shape[:2]
+        frame_w = frame_hires.shape[1]
+        frame_h = frame_hires.shape[0] * 2 // 3  # NV12: total rows = h * 1.5
 
         from .ai import MODEL_INPUT_TYPE, detect_objects  # noqa: PLC0415
 
@@ -401,7 +399,7 @@ def on_done(future: Future[InferenceOutput]):
         raise
 
 
-def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
+def process_frame(frame_hires: np.ndarray, frame_w: int, frame_h: int):
     global tracker
     global untracked_frames_count
     global total_untracked_frames_count
@@ -411,172 +409,172 @@ def process_frame(frame_hires: np.ndarray):  # noqa: C901, PLR0912, PLR0915
 
     # Downscale for motion detection only — MOG2 does not need full resolution.
     # preview_downscale_factor=3 gives 640x360 from 1920x1080.
+    # Motion detection — use Y plane directly, no conversion
+    y_plane = frame_hires[:frame_h]
     frame_lores = cv2.resize(
-        frame_hires,
+        y_plane,
         None,
         fx=1 / preview_downscale_factor,
         fy=1 / preview_downscale_factor,
         interpolation=cv2.INTER_NEAREST,
     )
+    has_movement, mask = motion_detector.is_moving(frame_lores)
 
-    if frame_lores is not None and frame_lores.size:
-        has_movement, mask = motion_detector.is_moving(frame_lores)
+    with tracker_lock:
+        is_tracking = tracking.is_set()
 
-        with tracker_lock:
-            is_tracking = tracking.is_set()
+    if is_tracking:
+        is_coasting = untracked_frames_count
+        if not is_coasting:
+            assert tracker
+            # measure_tracking = get_measure("tracking")
+            found, bbox = tracker.update(frame_lores)
+            # tracking_duration = measure_tracking(log=False)
+            # logger.info(f"Tracked in {tracking_duration} ms: ", found, bbox)
 
-        if is_tracking:
-            is_coasting = untracked_frames_count
-            if not is_coasting:
-                assert tracker
-                # measure_tracking = get_measure("tracking")
-                found, bbox = tracker.update(frame_lores)
-                # tracking_duration = measure_tracking(log=False)
-                # logger.info(f"Tracked in {tracking_duration} ms: ", found, bbox)
+            if found:
+                if not last_known_bbox:
+                    last_known_bbox = current_time, (0, 0, 0, 0)
 
-                if found:
-                    if not last_known_bbox:
-                        last_known_bbox = current_time, (0, 0, 0, 0)
+                last_time, last_bbox = last_known_bbox
+                last_known_bbox = current_time, bbox
 
-                    last_time, last_bbox = last_known_bbox
-                    last_known_bbox = current_time, bbox
+                x, y, w, h = bbox
+                current_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
+                x, y, w, h = last_bbox
+                last_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
 
-                    x, y, w, h = bbox
-                    current_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
-                    x, y, w, h = last_bbox
-                    last_pos = np.array([x + w / 2, y + h / 2], dtype=np.float32)
+                dt = current_time - last_time
 
-                    dt = current_time - last_time
+                if dt:
+                    instantaneous_velocity_vector = (current_pos - last_pos) / dt
+                    velocity_buffer.append(instantaneous_velocity_vector)
 
-                    if dt:
-                        instantaneous_velocity_vector = (current_pos - last_pos) / dt
-                        velocity_buffer.append(instantaneous_velocity_vector)
+                if len(velocity_buffer) > 0:
+                    average_velocity_vector = np.mean(list(velocity_buffer), axis=0)
 
-                    if len(velocity_buffer) > 0:
-                        average_velocity_vector = np.mean(list(velocity_buffer), axis=0)
+                    # 4. Calculate speed (magnitude) from the AVERAGE vector
+                    smoothed_pixels_per_second = np.linalg.norm(average_velocity_vector)
 
-                        # 4. Calculate speed (magnitude) from the AVERAGE vector
-                        smoothed_pixels_per_second = np.linalg.norm(average_velocity_vector)
+                    stationary_threshold_pixels_per_sec = 5
+                    # 5. Apply the stationary threshold
+                    if smoothed_pixels_per_second < stationary_threshold_pixels_per_sec:
+                        logger.info(
+                            "SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d",
+                            smoothed_pixels_per_second,
+                        )
+                        final_speed_pixels_per_sec = 0.0  # Snap to zero if it's just jitter
+                    else:
+                        final_speed_pixels_per_sec = smoothed_pixels_per_second
 
-                        stationary_threshold_pixels_per_sec = 5
-                        # 5. Apply the stationary threshold
-                        if smoothed_pixels_per_second < stationary_threshold_pixels_per_sec:
-                            logger.info(
-                                "SNAPPING SPEED TO ZEEEEEEEEEEEEEEEROOOOOOOOOO: %d",
-                                smoothed_pixels_per_second,
-                            )
-                            final_speed_pixels_per_sec = 0.0  # Snap to zero if it's just jitter
-                        else:
-                            final_speed_pixels_per_sec = smoothed_pixels_per_second
+                    logger.info(f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s")
 
-                        logger.info(f"Smoothed Speed: {final_speed_pixels_per_sec:.2f} px/s")
+                last_known_bbox = (current_time, bbox)
 
-                    last_known_bbox = (current_time, bbox)
-
-                    if ros_node is not None:
-                        ros_node.publish_detections([Detection(label="tracker", confidence=1, bbox=bbox)])
-
-                    output_buffer.append(
-                        OutputResult(
-                            worker_pid=0,
-                            timestamp=time.monotonic_ns(),
-                            frame_lores=frame_lores,
-                            detections_denormalized=[Detection(label="tracker", confidence=1, bbox=bbox)],
-                        ),
-                    )
-                else:
-                    untracked_frames_count = 1
-                    total_untracked_frames_count += 1
-            else:
-                total_untracked_frames_count += 1
-                untracked_frames_count += 1
-
-                total_untracked_frames_threshold = 90
-                if total_untracked_frames_count >= total_untracked_frames_threshold:
-                    total_untracked_frames_count = 0
-                    untracked_frames_count = 0
-                    tracker = None
-                    tracking.clear()
-
-                untracked_frames_threshold = 30
-                if untracked_frames_count > untracked_frames_threshold:
-                    untracked_frames_count = 0
+                if ros_node is not None:
+                    ros_node.publish_detections([Detection(label="tracker", confidence=1, bbox=bbox)])
 
                 output_buffer.append(
                     OutputResult(
                         worker_pid=0,
                         timestamp=time.monotonic_ns(),
                         frame_lores=frame_lores,
-                        detections_denormalized=[],
-                    ),
-                )
-
-        elif app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
-            grayscale_output = True
-            if grayscale_output:
-                gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
-                frame_lores = cv2.merge((gray, gray, gray))
-            else:
-                frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
-
-            buf_highlighted = motion_detector.highlight_movement_on(
-                frame=frame_lores,
-                mask=mask,
-                overlay_color_rgb=(
-                    147,
-                    20,
-                    255,
-                ),
-                transparency_factor=mask_transparency.value,
-                draw_boxes=True,
-            )
-            mode = "stream"
-            if mode == "mask":
-                output_buffer.append(
-                    OutputResult(
-                        worker_pid=0,
-                        timestamp=current_time,
-                        frame_lores=buf_highlighted,
-                        detections_denormalized=[],
+                        detections_denormalized=[Detection(label="tracker", confidence=1, bbox=bbox)],
                     ),
                 )
             else:
-                output_buffer.append(
-                    OutputResult(
-                        worker_pid=0,
-                        timestamp=current_time,
-                        frame_lores=frame_lores,
-                        detections_denormalized=[],
-                    ),
-                )
-        elif has_movement:
-            try:
-                timestamp = time.monotonic_ns()
+                untracked_frames_count = 1
+                total_untracked_frames_count += 1
+        else:
+            total_untracked_frames_count += 1
+            untracked_frames_count += 1
 
-                if not active_futures:
-                    rois = motion_detector.create_rois(mask=mask)
-                    if rois:
-                    # Skip if inference is already busy — drop the frame rather than queue up.
-                    # The BPU will finish the current batch faster than we can accumulate frames.
-                        with cache_lock:
-                            lowres_frame_cache[timestamp] = frame_lores
+            total_untracked_frames_threshold = 90
+            if total_untracked_frames_count >= total_untracked_frames_threshold:
+                total_untracked_frames_count = 0
+                untracked_frames_count = 0
+                tracker = None
+                tracking.clear()
 
-                        # Pass frame_hires directly — no shared memory, no pickle.
-                        future = inference_pool.submit(
-                            run_object_detection,
-                            frame_hires=frame_hires.copy(),
-                            rois=rois,
-                            timestamp=timestamp,
-                        )
-                        active_futures.append(future)
-                        future.add_done_callback(on_done)
-            except:
-                traceback.print_exc()
-                raise
-        elif not has_movement and not active_futures:
+            untracked_frames_threshold = 30
+            if untracked_frames_count > untracked_frames_threshold:
+                untracked_frames_count = 0
+
             output_buffer.append(
-                OutputResult(worker_pid=0, timestamp=0, frame_lores=frame_lores, detections_denormalized=[]),
+                OutputResult(
+                    worker_pid=0,
+                    timestamp=time.monotonic_ns(),
+                    frame_lores=frame_lores,
+                    detections_denormalized=[],
+                ),
             )
+
+    elif app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
+        grayscale_output = True
+        if grayscale_output:
+            gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+            frame_lores = cv2.merge((gray, gray, gray))
+        else:
+            frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
+
+        buf_highlighted = motion_detector.highlight_movement_on(
+            frame=frame_lores,
+            mask=mask,
+            overlay_color_rgb=(
+                147,
+                20,
+                255,
+            ),
+            transparency_factor=mask_transparency.value,
+            draw_boxes=True,
+        )
+        mode = "stream"
+        if mode == "mask":
+            output_buffer.append(
+                OutputResult(
+                    worker_pid=0,
+                    timestamp=current_time,
+                    frame_lores=buf_highlighted,
+                    detections_denormalized=[],
+                ),
+            )
+        else:
+            output_buffer.append(
+                OutputResult(
+                    worker_pid=0,
+                    timestamp=current_time,
+                    frame_lores=frame_lores,
+                    detections_denormalized=[],
+                ),
+            )
+    elif has_movement:
+        try:
+            timestamp = time.monotonic_ns()
+
+            if not active_futures:
+                rois = motion_detector.create_rois(mask=mask)
+                if rois:
+                # Skip if inference is already busy — drop the frame rather than queue up.
+                # The BPU will finish the current batch faster than we can accumulate frames.
+                    with cache_lock:
+                        lowres_frame_cache[timestamp] = frame_lores
+
+                    # Pass frame_hires directly — no shared memory, no pickle.
+                    future = inference_pool.submit(
+                        run_object_detection,
+                        frame_hires=frame_hires,
+                        rois=rois,
+                        timestamp=timestamp,
+                    )
+                    active_futures.append(future)
+                    future.add_done_callback(on_done)
+        except:
+            traceback.print_exc()
+            raise
+    elif not has_movement and not active_futures:
+        output_buffer.append(
+            OutputResult(worker_pid=0, timestamp=0, frame_lores=frame_lores, detections_denormalized=[]),
+        )
 
 
 class StreamingOutput(io.BufferedIOBase):
