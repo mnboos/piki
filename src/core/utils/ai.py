@@ -2,11 +2,14 @@ import os
 import time
 import traceback
 from pathlib import Path
+import logging
 
 import numpy as np
 from hobot_dnn import pyeasy_dnn as dnn
 
 from .shared import worker_ready
+
+logger = logging.getLogger(__name__)
 
 QUANTIZE_ON = True
 
@@ -213,6 +216,7 @@ def yolov10_post_process(outputs: list, confidence_threshold: float = 0.5):
                 final_results.append((label, score, box))
 
     return final_results
+
 try:
     print("Loading model...")
 
@@ -250,6 +254,8 @@ try:
 
         results = yolov10_post_process(outputs, confidence_threshold=0.5)
         tt = round((time.perf_counter() - t0) * 1000)
+
+        logger.debug(f"results: {results}")
 
         return tt, results
 except:
