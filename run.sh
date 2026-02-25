@@ -6,9 +6,6 @@ set -e
 # ── Configuration ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# stereonet publishes the rectified left image on this topic (640x352, NV12, shared mem).
-# Django subscribes to this — no separate mipi_cam process needed.
-ROS_IMAGE_TOPIC="/hbmem_img"
 
 # ── Source environments ───────────────────────────────────────────────────────
 # tros.b must be sourced BEFORE the venv — it injects rclpy, hobot_dnn etc.
@@ -96,7 +93,10 @@ cd "${SCRIPT_DIR}/src"
 export PYTHONPATH=$PYTHONPATH:/opt/tros/humble/lib/python3.10/site-packages
 
 export PYTHONUNBUFFERED=1
-# Tell the ROS node inside Django which topic to subscribe to.
+
+# stereonet publishes the rectified left image on this topic (640x352, NV12, shared mem).
+# Django subscribes to this — no separate mipi_cam process needed.
+ROS_IMAGE_TOPIC="/StereoNetNode/stereonet_visual"
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
 export  MODEL_FILE=/app/model/basic/yolov5s_v7_640x640_nv12.bin

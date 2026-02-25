@@ -83,8 +83,7 @@ def init_worker():
 class PikiVisionNode(Node):
     def __init__(self):
         super().__init__("piki_vision_node")
-        # topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/hbmem_img")
-        topic_name = "/StereoNetNode/rectified_image"
+        topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/hbmem_img")
 
         qos_profile = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
 
