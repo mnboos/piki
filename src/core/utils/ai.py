@@ -248,39 +248,45 @@ get_Postprocess_result.argtypes = [ctypes.POINTER(Yolov5PostProcessInfo_t)]
 get_Postprocess_result.restype = ctypes.c_char_p
 
 
-def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
-    info = Yolov5PostProcessInfo_t()
-    info.height = img_size
-    info.width = img_size
-    info.ori_height = img_size
-    info.ori_width = img_size
-    info.score_threshold = score_threshold
-    info.nms_threshold = 0.45
-    info.nms_top_k = 20
-    info.is_pad_resize = 0
+def get_TensorLayout(layout: str):
+    return 2 if layout == "NCHW" else 0
 
-    output_tensors = (hbDNNTensor_t * len(outputs))()
-    for i, out in enumerate(outputs):
-        output_tensors[i].properties.tensorLayout = 0  # NHWC
-        if out.dtype == np.float32:
+def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
+    yolov5_postprocess_info = Yolov5PostProcessInfo_t()
+    yolov5_postprocess_info.height = img_size
+    yolov5_postprocess_info.width = img_size
+    yolov5_postprocess_info.ori_height = img_size
+    yolov5_postprocess_info.ori_width = img_size
+    yolov5_postprocess_info.score_threshold = 0.4
+    yolov5_postprocess_info.nms_threshold = 0.45
+    yolov5_postprocess_info.nms_top_k = 20
+    yolov5_postprocess_info.is_pad_resize = 0
+
+    output_tensors = (hbDNNTensor_t * len(models[0].outputs))()
+    for i in range(len(models[0].outputs)):
+        output_tensors[i].properties.tensorLayout = get_TensorLayout(outputs[i].properties.layout)
+        # print(output_tensors[i].properties.tensorLayout)
+        if len(outputs[i].properties.scale_data) == 0:
             output_tensors[i].properties.quantiType = 0
             output_tensors[i].sysMem[0].virAddr = ctypes.cast(
-                out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.c_void_p,
+                outputs[i].buffer.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.c_void_p
             )
-        else:  # int32 quantized
+        else:
             output_tensors[i].properties.quantiType = 2
-            output_tensors[i].properties.scale.scaleData = model.outputs[i].properties.scale_data.ctypes.data_as(
-                ctypes.POINTER(ctypes.c_float),
+            output_tensors[i].properties.scale.scaleData = outputs[i].properties.scale_data.ctypes.data_as(
+                ctypes.POINTER(ctypes.c_float)
             )
             output_tensors[i].sysMem[0].virAddr = ctypes.cast(
-                out.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), ctypes.c_void_p,
+                outputs[i].buffer.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), ctypes.c_void_p
             )
-        for j, dim in enumerate(model.outputs[i].properties.shape):
-            output_tensors[i].properties.validShape.dimensionSize[j] = dim
 
-        libpostprocess.Yolov5doProcess(output_tensors[i], ctypes.pointer(info), i)
+        for j in range(len(outputs[i].properties.shape)):
+            output_tensors[i].properties.validShape.dimensionSize[j] = outputs[i].properties.shape[j]
 
-    result_str = get_Postprocess_result(ctypes.pointer(info)).decode("utf-8")
+        libpostprocess.Yolov5doProcess(output_tensors[i], ctypes.pointer(yolov5_postprocess_info), i)
+
+    result_str = get_Postprocess_result(ctypes.pointer(yolov5_postprocess_info)).decode("utf-8")
+
     data = json.loads(result_str[16:])  # strip "YOLOV5_RESULT:" prefix
 
     results = []
