@@ -329,14 +329,7 @@ try:
 
         t0 = time.perf_counter()
         # pyeasy_dnn returns a list of PyDNNTensor, extracting buffer to get numpy arrays
-        hobot_outputs = model.forward(input_data)
-        outputs = [out.buffer for out in hobot_outputs]
-
-        # DEBUG - print output shapes and sample values
-        for i, out in enumerate(outputs):
-            print(f"Output[{i}] shape: {out.shape}, dtype: {out.dtype}")
-            print(f"  min={out.min():.3f}, max={out.max():.3f}, mean={out.mean():.3f}")
-            print(f"  sample: {out.flat[:12]}")  # first 12 values
+        outputs = model.forward(input_data)
 
         results = yolov10_post_process(outputs=outputs, score_threshold=0.5)
         tt = round((time.perf_counter() - t0) * 1000)
