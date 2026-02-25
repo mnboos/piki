@@ -205,7 +205,7 @@ get_Postprocess_result = libpostprocess.Yolov5PostProcess
 get_Postprocess_result.argtypes = [ctypes.POINTER(Yolov5PostProcessInfo_t)]
 get_Postprocess_result.restype = ctypes.c_char_p
 
-def yolov10_post_process(outputs, img_size=640, score_threshold=0.25):
+def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
     info = Yolov5PostProcessInfo_t()
     info.height = img_size
     info.width = img_size
@@ -288,7 +288,7 @@ try:
             print(f"  min={out.min():.3f}, max={out.max():.3f}, mean={out.mean():.3f}")
             print(f"  sample: {out.flat[:12]}")  # first 12 values
 
-        results = yolov10_post_process(outputs, confidence_threshold=0.5)
+        results = yolov10_post_process(outputs=outputs, score_threshold=0.5)
         tt = round((time.perf_counter() - t0) * 1000)
 
         logger.debug(f"results: {results}")
