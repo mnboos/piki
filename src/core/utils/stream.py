@@ -314,8 +314,8 @@ def run_object_detection(
         raise
 
 
-def denormalize(bbox_normalized: Sequence[int], frame_shape: Sequence[int]) -> Box:
-    frame_height, frame_width, _ = frame_shape
+def denormalize(*, bbox_normalized: Sequence[int], frame_shape: Sequence[int]) -> Box:
+    frame_height, frame_width = frame_shape
     ymin, xmin, ymax, xmax = bbox_normalized
 
     ymin = max(0.0, ymin)
@@ -358,7 +358,7 @@ def on_done(future: Future[InferenceOutput]):
             detections_denormalized: list[Detection] = []
 
             for label, confidence, bbox_normalized in detections:
-                x, y, w, h = denormalize(bbox_normalized, frame_lores.shape)
+                x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=frame_lores.shape)
                 if x < 0 or y < 0 or w < 0 or h < 0:
                     logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
                     continue
