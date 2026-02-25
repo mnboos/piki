@@ -187,7 +187,48 @@ CLASSES = (
 )
 
 
-libpostprocess = ctypes.CDLL('/usr/lib/libpostprocess.so')
+libpostprocess = ctypes.CDLL("/usr/lib/libpostprocess.so")
+
+
+class hbSysMem_t(ctypes.Structure):
+    _fields_ = [("phyAddr", ctypes.c_double), ("virAddr", ctypes.c_void_p), ("memSize", ctypes.c_int)]
+
+
+class hbDNNQuantiShift_yt(ctypes.Structure):
+    _fields_ = [("shiftLen", ctypes.c_int), ("shiftData", ctypes.c_char_p)]
+
+
+class hbDNNQuantiScale_t(ctypes.Structure):
+    _fields_ = [
+        ("scaleLen", ctypes.c_int),
+        ("scaleData", ctypes.POINTER(ctypes.c_float)),
+        ("zeroPointLen", ctypes.c_int),
+        ("zeroPointData", ctypes.c_char_p),
+    ]
+
+
+class hbDNNTensorShape_t(ctypes.Structure):
+    _fields_ = [("dimensionSize", ctypes.c_int * 8), ("numDimensions", ctypes.c_int)]
+
+
+class hbDNNTensorProperties_t(ctypes.Structure):
+    _fields_ = [
+        ("validShape", hbDNNTensorShape_t),
+        ("alignedShape", hbDNNTensorShape_t),
+        ("tensorLayout", ctypes.c_int),
+        ("tensorType", ctypes.c_int),
+        ("shift", hbDNNQuantiShift_yt),
+        ("scale", hbDNNQuantiScale_t),
+        ("quantiType", ctypes.c_int),
+        ("quantizeAxis", ctypes.c_int),
+        ("alignedByteSize", ctypes.c_int),
+        ("stride", ctypes.c_int * 8),
+    ]
+
+
+class hbDNNTensor_t(ctypes.Structure):
+    _fields_ = [("sysMem", hbSysMem_t * 4), ("properties", hbDNNTensorProperties_t)]
+
 
 class Yolov5PostProcessInfo_t(ctypes.Structure):
     _fields_ = [
@@ -201,9 +242,11 @@ class Yolov5PostProcessInfo_t(ctypes.Structure):
         ("is_pad_resize", ctypes.c_int),
     ]
 
+
 get_Postprocess_result = libpostprocess.Yolov5PostProcess
 get_Postprocess_result.argtypes = [ctypes.POINTER(Yolov5PostProcessInfo_t)]
 get_Postprocess_result.restype = ctypes.c_char_p
+
 
 def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
     info = Yolov5PostProcessInfo_t()
@@ -222,30 +265,31 @@ def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
         if out.dtype == np.float32:
             output_tensors[i].properties.quantiType = 0
             output_tensors[i].sysMem[0].virAddr = ctypes.cast(
-                out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.c_void_p
+                out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.c_void_p,
             )
         else:  # int32 quantized
             output_tensors[i].properties.quantiType = 2
-            output_tensors[i].properties.scale.scaleData = (
-                model.outputs[i].properties.scale_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            output_tensors[i].properties.scale.scaleData = model.outputs[i].properties.scale_data.ctypes.data_as(
+                ctypes.POINTER(ctypes.c_float),
             )
             output_tensors[i].sysMem[0].virAddr = ctypes.cast(
-                out.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), ctypes.c_void_p
+                out.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), ctypes.c_void_p,
             )
         for j, dim in enumerate(model.outputs[i].properties.shape):
             output_tensors[i].properties.validShape.dimensionSize[j] = dim
 
         libpostprocess.Yolov5doProcess(output_tensors[i], ctypes.pointer(info), i)
 
-    result_str = get_Postprocess_result(ctypes.pointer(info)).decode('utf-8')
+    result_str = get_Postprocess_result(ctypes.pointer(info)).decode("utf-8")
     data = json.loads(result_str[16:])  # strip "YOLOV5_RESULT:" prefix
 
     results = []
     for det in data:
-        label = CLASSES[det['id']] if det['id'] < len(CLASSES) else str(det['id'])
-        bbox = det['bbox']  # [x1, y1, x2, y2]
-        results.append((label.strip(), float(det['score']), np.array(bbox)))
+        label = CLASSES[det["id"]] if det["id"] < len(CLASSES) else str(det["id"])
+        bbox = det["bbox"]  # [x1, y1, x2, y2]
+        results.append((label.strip(), float(det["score"]), np.array(bbox)))
     return results
+
 
 try:
     print("Loading model...")
