@@ -87,6 +87,7 @@ class PikiVisionNode(Node):
 
         self.get_logger().info(f"Subscribing to: {topic_name}")
         self.subscription = self.create_subscription(HbmMsg1080P, topic_name, self.listener_callback_hbm, qos_profile)
+        self.target_pub = self.create_publisher(String, "/piki/detections", 10)
 
     def listener_callback_hbm(self, msg: Any):
         try:
