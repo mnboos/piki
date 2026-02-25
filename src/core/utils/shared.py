@@ -2,12 +2,13 @@ import logging
 import multiprocessing as mp
 import os
 import random
+import threading
 from collections.abc import Sequence
 from ctypes import c_float
-from multiprocessing import Event, Queue
-from typing import NamedTuple
+from multiprocessing import Event
+from typing import NamedTuple, Optional
 
-from .interfaces import MultiprocessingDequeue, TuningSettings
+from .interfaces import TuningSettings
 from .settings import AppSettings, DebugSettings
 
 # Those most be set BEFORE importing cv2
@@ -67,13 +68,6 @@ class Detection(NamedTuple):
     bbox: Sequence[int]
 
 
-class OutputResult(NamedTuple):
-    worker_pid: int
-    timestamp: int
-    frame_lores: np.ndarray
-    detections_denormalized: list[Detection]
-
-
 class InferenceOutput(NamedTuple):
     worker_pid: int
     timestamp: int
@@ -81,7 +75,31 @@ class InferenceOutput(NamedTuple):
     detections: list[Detection]
 
 
-output_buffer = MultiprocessingDequeue[OutputResult](queue=Queue(maxsize=10))
+class LatestFrame:
+    def __init__(self):
+        self.frame: Optional[np.ndarray] = None
+        self.detections: list[Detection] = []
+        self.timestamp: int = 0
+        self.condition = threading.Condition()
+
+    def update(self, frame: np.ndarray, detections: list[Detection], timestamp: int):
+        with self.condition:
+            self.frame = frame
+            self.detections = detections
+            self.timestamp = timestamp
+            self.condition.notify_all()
+
+    def get(self):
+        with self.condition:
+            return self.frame, self.detections, self.timestamp
+
+    def wait_for_frame(self, last_timestamp: int):
+        with self.condition:
+            self.condition.wait_for(lambda: self.timestamp > last_timestamp, timeout=1.0)
+            return self.frame, self.detections, self.timestamp
+
+
+latest_frame = LatestFrame()
 prob_threshold = mp.Value(c_float, 0.4)
 
 
