@@ -90,39 +90,32 @@ class PikiVisionNode(Node):
 
     def listener_callback_hbm(self, msg):
         try:
-            # 1. Handle the 1080p HBM Buffer correctly
-            # msg.data is 6,220,800 bytes (1080p BGR size)
-            # We need the first 3,110,400 bytes for 1080p NV12
+            w, h = msg.width, msg.height  # 1280, 704
+            stride = msg.step  # 1280
+
             raw_buffer = np.frombuffer(msg.data, dtype=np.uint8)
-            nv12_total_bytes = int(1920 * 1080 * 1.5)
 
-            # Reshape into a full 1080p NV12 frame
-            full_nv12_image = raw_buffer[:nv12_total_bytes].reshape((1620, 1920))
+            # Y plane: first h lines
+            y_plane = raw_buffer[: h * stride].reshape(h, stride)
 
-            bgr_debug = cv2.cvtColor(full_nv12_image, cv2.COLOR_YUV2BGR_NV12)
-            cv2.imwrite("/userdata/debug_frame.jpg", bgr_debug)
+            # UV plane: starts right after Y, height = h//2
+            uv_start = h * stride
+            uv_height = h // 2
+            uv_plane = raw_buffer[uv_start : uv_start + uv_height * stride].reshape(uv_height, stride)
 
-            # 2. Get your tiles (Middle Stripe logic)
-            # This slices 640x640 blocks from the 1080p buffer
-            tiles = get_stereo_stripe_tiles(
-                full_nv12_image, tile_size=640, active_width=1280, active_height=352, is_nv12=True,
-            )
+            clean_nv12 = np.vstack([y_plane, uv_plane])
+            bgr_image = cv2.cvtColor(clean_nv12, cv2.COLOR_YUV2BGR_NV12)
 
-            # 3. Submit to BPU
-            for tile_img, tx, ty in tiles:
-                # Basic throttling: don't overwhelm the inference pool
-                if len(active_futures) < 2:
-                    timestamp = time.monotonic_ns()
-                    future = inference_pool.submit(
-                        run_object_detection, frame_hires=tile_img, rois=[], timestamp=timestamp,
-                    )
-                    active_futures.append(future)
-                    # Pass tx and ty so we can map coordinates back correctly
-                    future.add_done_callback(lambda f, x=tx, y=ty: self.on_inference_done(f, x, y))
+            cv2.imwrite("/userdata/debug_frame_fixed.jpg", bgr_image)
 
-        except Exception:
-            logger.exception("HBM Stream Error")
-            raise
+            print(f"Buffer size: {raw_buffer.size}, w={w}, h={h}")
+            print(f"Expected NV12 size: {w * h * 3 // 2}")
+
+            # Now send the standard 3-channel BGR frame to your pipeline
+            process_frame(frame_hires=clean_nv12)
+
+        except Exception as e:
+            self.get_logger().error(f"HBM Fix Error: {e}")
 
     def on_inference_done(self, future, tile_x, tile_y):
         """Handle AI results and push to Django's output_buffer."""
@@ -165,6 +158,28 @@ class PikiVisionNode(Node):
         except Exception as e:
             self.get_logger().error(f"Inference Result Error: {e}")
 
+    def publish_detections(self, detections: list):
+        """
+        Takes a list of Detection namedtuples, converts them to JSON,
+        and publishes them to the ROS 2 topic.
+        """
+        import json
+        from std_msgs.msg import String
+
+        # Format detections for JSON serialization
+        # detections is a list of Detection(label, confidence, bbox)
+        data = []
+        for d in detections:
+            data.append({
+                "label": d.label,
+                "confidence": float(d.confidence),
+                "bbox": [float(x) for x in d.bbox] # Ensure coordinates are floats
+            })
+
+        msg = String()
+        msg.data = json.dumps(data)
+        self.target_pub.publish(msg)
+        # self.get_logger().info(f"Published {len(data)} detections")
 
 tracker_lock = Lock()
 tracking = mp.Event()
