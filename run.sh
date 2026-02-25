@@ -62,13 +62,20 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 #STEREONET_PID=$!
 
 # ── 2. Start MIPI Camera ──────────────────────────────────────────────────────
-ros2 launch mipi_cam mipi_cam.launch.py \
+#ros2 launch mipi_cam mipi_cam.launch.py \
+#    mipi_image_width:=1280 \
+#    mipi_image_height:=704 \
+#    mipi_video_device:=vps_camera \
+#    mipi_io_method:=shared_mem \
+#    mipi_out_format:=nv12 \
+#    mipi_out_topic:=/image_combine_raw &
+#CAM_PID=$!
+ros2 launch mipi_cam mipi_cam_dual_channel.launch.py \
     mipi_image_width:=1280 \
     mipi_image_height:=704 \
     mipi_video_device:=vps_camera \
     mipi_io_method:=shared_mem \
-    mipi_out_format:=nv12 \
-    mipi_out_topic:=/image_combine_raw &
+    mipi_out_format:=nv12 &
 CAM_PID=$!
 
 sleep 3
