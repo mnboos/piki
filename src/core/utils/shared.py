@@ -109,7 +109,7 @@ class MotionDetector:
         # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
         # frame = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        gray = frame if frame.ndim == 2 or frame.shape[2] == 1 else cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         frame = self.clahe.apply(gray)
 
         denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
