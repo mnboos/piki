@@ -67,21 +67,26 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 #    mipi_out_format:=nv12 \
 #    mipi_out_topic:=/image_combine_raw &
 #CAM_PID=$!
-ros2 launch mipi_cam mipi_cam_dual_channel.launch.py \
-    mipi_image_width:=1280 \
-    mipi_image_height:=704 \
-    mipi_video_device:=vps_camera \
-    mipi_io_method:=shared_mem \
-    mipi_out_format:=nv12 &
-CAM_PID=$!
+#ros2 launch mipi_cam mipi_cam_dual_channel.launch.py \
+#    mipi_image_width:=1280 \
+#    mipi_image_height:=704 \
+#    mipi_io_method:=shared_mem \
+#    mipi_out_format:=nv12 &
+#CAM_PID=$!
+#
+#sleep 3
+#
+## ── 3. Start StereoNet Model ──────────────────────────────────────────────────
+#ros2 launch hobot_stereonet stereonet_model.launch.py \
+#    stereo_image_topic:=/image_combine_raw \
+#    camera_info_topic:=/image_right_raw/camera_info &
+#STEREONET_PID=$!
+#
 
-sleep 3
-
-# ── 3. Start StereoNet Model ──────────────────────────────────────────────────
-ros2 launch hobot_stereonet stereonet_model.launch.py \
-    stereo_image_topic:=/image_combine_raw \
-    camera_info_topic:=/image_right_raw/camera_info &
-STEREONET_PID=$!
+ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
+mipi_image_width:=640 mipi_image_height:=352 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
+need_rectify:=False height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
+uncertainty_th:=0.1
 
 sleep 5
 
