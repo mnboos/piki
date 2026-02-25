@@ -1,8 +1,10 @@
+import ctypes
+import json
+import logging
 import os
 import time
 import traceback
 from pathlib import Path
-import logging
 
 import numpy as np
 from hobot_dnn import pyeasy_dnn as dnn
@@ -185,37 +187,65 @@ CLASSES = (
 )
 
 
-def yolov10_post_process(outputs: list, confidence_threshold: float = 0.5):
-    """
-    Robustly parses YOLOv10 output tensors from the RDK X5 BPU.
-    """
-    # 1. Access the first output buffer
-    detections = outputs[0]
+libpostprocess = ctypes.CDLL('/usr/lib/libpostprocess.so')
 
-    # 2. SQUEEZE: This is the critical fix.
-    # If shape is (1, 1, 300, 6) or (1, 300, 6), this turns it into (300, 6)
-    detections = np.squeeze(detections)
+class Yolov5PostProcessInfo_t(ctypes.Structure):
+    _fields_ = [
+        ("height", ctypes.c_int),
+        ("width", ctypes.c_int),
+        ("ori_height", ctypes.c_int),
+        ("ori_width", ctypes.c_int),
+        ("score_threshold", ctypes.c_float),
+        ("nms_threshold", ctypes.c_float),
+        ("nms_top_k", ctypes.c_int),
+        ("is_pad_resize", ctypes.c_int),
+    ]
 
-    # 3. Handle the case where the model finds exactly 0 or 1 object
-    if detections.ndim == 1:
-        # If shape is (6,), it's a single detection; make it (1, 6)
-        detections = np.expand_dims(detections, axis=0)
-    elif detections.ndim == 0:
-        return []
+get_Postprocess_result = libpostprocess.Yolov5PostProcess
+get_Postprocess_result.argtypes = [ctypes.POINTER(Yolov5PostProcessInfo_t)]
+get_Postprocess_result.restype = ctypes.c_char_p
 
-    final_results = []
-    for detection in detections:
-        # detection is now guaranteed to be [x1, y1, x2, y2, score, label_idx]
-        score = float(detection[4])
+def yolov10_post_process(outputs, img_size=640, score_threshold=0.25):
+    info = Yolov5PostProcessInfo_t()
+    info.height = img_size
+    info.width = img_size
+    info.ori_height = img_size
+    info.ori_width = img_size
+    info.score_threshold = score_threshold
+    info.nms_threshold = 0.45
+    info.nms_top_k = 20
+    info.is_pad_resize = 0
 
-        if score >= confidence_threshold:
-            label_idx = int(detection[5])
-            if label_idx < len(CLASSES):
-                label = CLASSES[label_idx]
-                box = detection[0:4] # [x1, y1, x2, y2]
-                final_results.append((label, score, box))
+    output_tensors = (hbDNNTensor_t * len(outputs))()
+    for i, out in enumerate(outputs):
+        output_tensors[i].properties.tensorLayout = 0  # NHWC
+        if out.dtype == np.float32:
+            output_tensors[i].properties.quantiType = 0
+            output_tensors[i].sysMem[0].virAddr = ctypes.cast(
+                out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.c_void_p
+            )
+        else:  # int32 quantized
+            output_tensors[i].properties.quantiType = 2
+            output_tensors[i].properties.scale.scaleData = (
+                model.outputs[i].properties.scale_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            )
+            output_tensors[i].sysMem[0].virAddr = ctypes.cast(
+                out.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), ctypes.c_void_p
+            )
+        for j, dim in enumerate(model.outputs[i].properties.shape):
+            output_tensors[i].properties.validShape.dimensionSize[j] = dim
 
-    return final_results
+        libpostprocess.Yolov5doProcess(output_tensors[i], ctypes.pointer(info), i)
+
+    result_str = get_Postprocess_result(ctypes.pointer(info)).decode('utf-8')
+    data = json.loads(result_str[16:])  # strip "YOLOV5_RESULT:" prefix
+
+    results = []
+    for det in data:
+        label = CLASSES[det['id']] if det['id'] < len(CLASSES) else str(det['id'])
+        bbox = det['bbox']  # [x1, y1, x2, y2]
+        results.append((label.strip(), float(det['score']), np.array(bbox)))
+    return results
 
 try:
     print("Loading model...")
