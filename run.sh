@@ -83,9 +83,14 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 #STEREONET_PID=$!
 #
 
+# SC230AI dual stereo: 1280x640 combined (two 640x640 eyes side by side).
+# stereo_combine_mode=1: images are packed left|right in one frame.
+# need_rectify=True: stereonet rectifies using the built-in stereo.yaml calibration.
+# The published /StereoNetNode/rectified_image will be the left eye at 1280x640.
 ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
-mipi_image_width:=640 mipi_image_height:=352 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
-need_rectify:=False height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
+mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
+stereo_combine_mode:=1 need_rectify:=True \
+height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
 uncertainty_th:=0.1 &
 STEREONET_PID=$!
 
@@ -100,9 +105,10 @@ export PYTHONPATH=$PYTHONPATH:/opt/tros/humble/lib/python3.10/site-packages
 
 export PYTHONUNBUFFERED=1
 
-# stereonet publishes the rectified left image on this topic (640x352, NV12).
-# Django subscribes to this — no separate mipi_cam process needed.
-ROS_IMAGE_TOPIC="/StereoNetNode/rectified_image"
+# /image_left_raw is the full-res left camera at 1280x640 NV12 (ISP output before
+# stereonet downscales to its 640x352 depth model input). Use this for YOLO tiling:
+# 1280x640 → up to 2 native 640x640 tiles → no resize → best YOLO accuracy.
+ROS_IMAGE_TOPIC="/image_left_raw"
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
 export  MODEL_FILE=/app/model/basic/yolov8_640x640_nv12.bin

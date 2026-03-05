@@ -325,7 +325,7 @@ def yolov8_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_th
             order = order[1:][inter / np.maximum(union, 1e-6) < iou_thres]
         for k in keep:
             label = CLASSES[int(c)].strip() if int(c) < len(CLASSES) else str(int(c))
-            results.append((label, float(s[k]), b[idx[k]]))
+            results.append((label, float(s[k]), b[k]))
     return results
 
 
