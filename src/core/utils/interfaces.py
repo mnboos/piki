@@ -108,8 +108,9 @@ class DoubleBuffer:
             # Reset the flag so we will wait for the *next* frame.
             self._new_frame_available = False
 
-        # Return a copy of the data from the (now updated) read buffer.
-        return self._read_buf.copy()
+        # Return a view of the (now stable) read buffer — zero-copy.
+        # The caller must not hold this reference across the next wait_and_read() call.
+        return self._read_buf
 
     def close(self):
         """Close and unlink the shared memory blocks."""

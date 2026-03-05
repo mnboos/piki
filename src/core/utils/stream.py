@@ -16,7 +16,7 @@ from typing import IO, Any, Optional
 
 import numpy as np
 import rclpy
-from hbm_img_msgs.msg import HbmMsg1080P
+from sensor_msgs.msg import Image as RosImage
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
@@ -38,6 +38,7 @@ from .shared import (
     mask_transparency,
     motion_detector,
     preview_downscale_factor,
+    streaming_active,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,9 @@ cache_lock = Lock()
 
 latest_ai_detections = []
 latest_ai_lock = threading.Lock()
+
+latest_depth_map: np.ndarray | None = None
+latest_depth_lock = threading.Lock()
 
 
 def init_worker():
@@ -83,39 +87,48 @@ def init_worker():
 class PikiVisionNode(Node):
     def __init__(self):
         super().__init__("piki_vision_node")
-        topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/hbmem_img")
+        topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/StereoNetNode/rectified_image")
 
         qos_profile = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
 
         self.get_logger().info(f"Subscribing to: {topic_name}")
-        self.subscription = self.create_subscription(HbmMsg1080P, topic_name, self.listener_callback_hbm, qos_profile)
+        self.subscription = self.create_subscription(RosImage, topic_name, self.listener_callback_hbm, qos_profile)
         self.target_pub = self.create_publisher(String, "/piki/detections", 10)
+
+        # Subscribe to stereonet depth map for 3-D cat localisation.
+        self.create_subscription(
+            RosImage, "/StereoNetNode/stereonet_depth", self._depth_callback, qos_profile
+        )
+
+    def _depth_callback(self, msg: Any):
+        """Cache the latest depth map (mono16, mm) for use by on_done()."""
+        raw = np.frombuffer(msg.data, dtype=np.uint16)
+        depth = raw.reshape(msg.height, msg.width) if raw.size == msg.height * msg.width else None
+        if depth is not None:
+            with latest_depth_lock:
+                global latest_depth_map
+                latest_depth_map = depth
 
     def listener_callback_hbm(self, msg: Any):
         try:
-            w, h = msg.width, msg.height  # 1280, 704
-            stride = msg.step  # 1280
+            w, h = msg.width, msg.height
+            stride = msg.step if msg.step > 0 else w
 
-            raw_buffer = np.frombuffer(msg.data, dtype=np.uint8)
+            # Zero-copy fast path: when stride == width the NV12 bytes are packed
+            # contiguously, so np.frombuffer gives a read-only view and reshape
+            # returns another view — no allocation at all.
+            if stride == w:
+                data_size = h * w * 3 // 2
+                nv12 = np.frombuffer(msg.data, dtype=np.uint8)[:data_size].reshape(h * 3 // 2, w)
+            else:
+                # Stride-padded layout — reconstruct a contiguous NV12 array.
+                raw_buffer = np.frombuffer(msg.data, dtype=np.uint8) if not isinstance(msg.data, np.ndarray) else msg.data
+                y_plane = raw_buffer[: h * stride].reshape(h, stride)[:, :w]
+                uv_start = h * stride
+                uv_plane = raw_buffer[uv_start : uv_start + (h // 2) * stride].reshape(h // 2, stride)[:, :w]
+                nv12 = np.vstack([y_plane, uv_plane])
 
-            # Y plane: first h lines
-            y_plane = raw_buffer[: h * stride].reshape(h, stride)
-
-            # UV plane: starts right after Y, height = h//2
-            uv_start = h * stride
-            uv_height = h // 2
-            uv_plane = raw_buffer[uv_start : uv_start + uv_height * stride].reshape(uv_height, stride)
-
-            clean_nv12 = np.vstack([y_plane, uv_plane])
-
-            # bgr_image = cv2.cvtColor(clean_nv12, cv2.COLOR_YUV2BGR_NV12)
-            # cv2.imwrite("/userdata/debug_frame_fixed.jpg", bgr_image)
-
-            # print(f"Buffer size: {raw_buffer.size}, w={w}, h={h}")
-            # print(f"Expected NV12 size: {w * h * 3 // 2}")
-
-            # Now send the standard 3-channel BGR frame to your pipeline
-            process_frame(nv12_frame=clean_nv12, frame_h=h)
+            process_frame(nv12_frame=nv12, frame_h=h)
 
         except Exception as e:
             logger.exception("HBM error")
@@ -353,43 +366,68 @@ def on_done(future: Future[InferenceOutput]):
     try:
         worker_pid, timestamp, inference_time, detections = future.result()
 
-        with cache_lock:
-            frame_lores = lowres_frame_cache.pop(timestamp, None)
-
         if timestamp < max_output_timestamp:
             logger.info(f"Inference result arrived late, discarding (timestamp={timestamp})")
         else:
             max_output_timestamp = timestamp
-            detections_denormalized: list[Detection] = []
 
+            # --- Production work: always run regardless of streaming state ---
             for label, confidence, bbox_normalized in detections:
-                x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=frame_lores.shape)
-                if x < 0 or y < 0 or w < 0 or h < 0:
-                    logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
-                    continue
-
-                detections_denormalized.append(
-                    Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
-                )
-
-                with tracker_lock:
-                    disable_tracking = True
-                    if not disable_tracking and label in ["person"] and not tracking.is_set():
-                        if tracker is None:
-                            tracker_class = cv2.TrackerKCF
-                            params = tracker_class.Params()
-                            tracker = tracker_class.create(params)
-                        tracking.set()
-                        tracker.init(frame_lores, (x, y, w, h))
+                if label.strip().lower() == "cat":
+                    from .engine import aim_at  # noqa: PLC0415
+                    with latest_depth_lock:
+                        depth_snap = latest_depth_map
+                    aim_at(bbox_normalized=bbox_normalized, depth_map=depth_snap)
 
             dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
-            if ros_node is not None:
-                ros_node.publish_detections(detections_denormalized)
+            # --- Display work: only when a stream consumer is active ---
+            if streaming_active.is_set():
+                with cache_lock:
+                    frame_lores = lowres_frame_cache.pop(timestamp, None)
 
-            with latest_ai_lock:
-                global latest_ai_detections
-                latest_ai_detections = detections_denormalized
+                detections_denormalized: list[Detection] = []
+                for label, confidence, bbox_normalized in detections:
+                    if frame_lores is None:
+                        break
+
+                    x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=frame_lores.shape)
+                    if x < 0 or y < 0 or w < 0 or h < 0:
+                        logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
+                        continue
+
+                    detections_denormalized.append(
+                        Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
+                    )
+
+                    with tracker_lock:
+                        disable_tracking = True
+                        if not disable_tracking and label in ["person"] and not tracking.is_set():
+                            if tracker is None:
+                                tracker_class = cv2.TrackerKCF
+                                params = tracker_class.Params()
+                                tracker = tracker_class.create(params)
+                            tracking.set()
+                            tracker.init(frame_lores, (x, y, w, h))
+
+                if ros_node is not None:
+                    ros_node.publish_detections(detections_denormalized)
+
+                with latest_ai_lock:
+                    global latest_ai_detections
+                    latest_ai_detections = detections_denormalized
+            else:
+                # Drain the cache entry so it doesn't grow unboundedly.
+                with cache_lock:
+                    lowres_frame_cache.pop(timestamp, None)
+
+                if ros_node is not None:
+                    # Publish with normalized coordinates — no frame needed.
+                    ros_node.publish_detections([
+                        Detection(label=label, confidence=confidence, bbox=list(bbox))
+                        for label, confidence, bbox in detections
+                    ])
+
     except KeyboardInterrupt:
         logger.info("Shutting down on KeyboardInterrupt in on_done.")
     except:
@@ -481,7 +519,8 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     elif app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
         grayscale_output = True
         if grayscale_output:
-            gray = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+            # frame_lores is the Y-plane of NV12 — already single-channel grayscale.
+            gray = frame_lores if frame_lores.ndim == 2 else cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
             frame_lores = cv2.merge((gray, gray, gray))
         else:
             frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
@@ -503,8 +542,9 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
             if not active_futures:
                 rois = motion_detector.create_rois(mask=mask)
                 if rois:
-                    with cache_lock:
-                        lowres_frame_cache[timestamp] = frame_lores
+                    if streaming_active.is_set():
+                        with cache_lock:
+                            lowres_frame_cache[timestamp] = frame_lores
 
                     future = inference_pool.submit(
                         run_object_detection,
@@ -517,16 +557,19 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
         except Exception:
             logger.exception("Error in process_frame AI logic")
 
-        with latest_ai_lock:
-            detections_to_show = latest_ai_detections
+        if streaming_active.is_set():
+            with latest_ai_lock:
+                detections_to_show = latest_ai_detections
     else:
-        # No movement, clear detections
-        with latest_ai_lock:
-            latest_ai_detections = []
-        detections_to_show = []
+        if streaming_active.is_set():
+            # No movement — clear stale detections for the display.
+            with latest_ai_lock:
+                latest_ai_detections = []
+            detections_to_show = []
 
-    # Update the shared latest_frame state
-    latest_frame.update(frame_lores, detections_to_show, current_time)
+    # Update the shared latest_frame state only while a client is watching.
+    if streaming_active.is_set():
+        latest_frame.update(frame_lores, detections_to_show, current_time)
 
 
 def stream_nonblocking():

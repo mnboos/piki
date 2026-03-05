@@ -251,6 +251,84 @@ get_Postprocess_result.restype = ctypes.c_char_p
 def get_TensorLayout(layout: str):
     return 2 if layout == "NCHW" else 0
 
+
+# ---------------------------------------------------------------------------
+# YOLOv8 / YOLOv12n post-processor (pure numpy, ~5ms)
+# Output format: 6 tensors alternating cls(float32) / box-DFL(int32) at 3 scales
+# ---------------------------------------------------------------------------
+_YV8_REG_MAX = 16
+_YV8_BINS = np.arange(_YV8_REG_MAX, dtype=np.float32)
+
+
+def yolov8_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_thres=0.45):
+    logit_thres = np.log(conf_thres / (1.0 - conf_thres))
+    all_boxes, all_confs, all_cls = [], [], []
+
+    for si, stride in enumerate([8, 16, 32]):
+        cls_raw = outputs[si * 2].buffer.squeeze(0)       # (H, W, 80) float32 logits
+        box_int = outputs[si * 2 + 1].buffer.squeeze(0)  # (H, W, 64) int32 quantized DFL
+        scale = outputs[si * 2 + 1].properties.scale_data  # 4 floats, one per ltrb direction
+
+        # Pre-filter: only process grid cells with a confident detection
+        mask = cls_raw.max(axis=-1) > logit_thres
+        if not mask.any():
+            continue
+
+        cls_scores = 1.0 / (1.0 + np.exp(-cls_raw[mask]))  # sigmoid, shape (N, 80)
+
+        # Dequantize + DFL softmax weighted sum → ltrb in pixels
+        box_f = box_int[mask].astype(np.float32).reshape(-1, 4, _YV8_REG_MAX)  # (N, 4, 16)
+        for d in range(4):
+            box_f[:, d, :] *= scale[d]
+        box_f -= box_f.max(-1, keepdims=True)
+        np.exp(box_f, out=box_f)
+        box_f /= box_f.sum(-1, keepdims=True)
+        ltrb = (box_f * _YV8_BINS).sum(-1) * stride  # (N, 4)
+
+        ys, xs = np.where(mask)
+        cx = (xs + 0.5) * stride
+        cy = (ys + 0.5) * stride
+        x1 = np.clip(cx - ltrb[:, 0], 0, img_w)
+        y1 = np.clip(cy - ltrb[:, 1], 0, img_h)
+        x2 = np.clip(cx + ltrb[:, 2], 0, img_w)
+        y2 = np.clip(cy + ltrb[:, 3], 0, img_h)
+
+        all_boxes.append(np.stack([x1, y1, x2, y2], axis=1))
+        all_confs.append(cls_scores.max(-1))
+        all_cls.append(cls_scores.argmax(-1).astype(np.int32))
+
+    if not all_boxes:
+        return []
+    boxes = np.concatenate(all_boxes)
+    confs = np.concatenate(all_confs)
+    cls_ids = np.concatenate(all_cls)
+
+    results = []
+    for c in np.unique(cls_ids):
+        idx = np.where(cls_ids == c)[0]
+        b, s = boxes[idx], confs[idx]
+        order = s.argsort()[::-1]
+        keep = []
+        while order.size:
+            i = order[0]
+            keep.append(i)
+            if order.size == 1:
+                break
+            ix1 = np.maximum(b[i, 0], b[order[1:], 0])
+            iy1 = np.maximum(b[i, 1], b[order[1:], 1])
+            ix2 = np.minimum(b[i, 2], b[order[1:], 2])
+            iy2 = np.minimum(b[i, 3], b[order[1:], 3])
+            inter = np.maximum(0, ix2 - ix1) * np.maximum(0, iy2 - iy1)
+            union = ((b[i, 2] - b[i, 0]) * (b[i, 3] - b[i, 1])
+                     + (b[order[1:], 2] - b[order[1:], 0]) * (b[order[1:], 3] - b[order[1:], 1])
+                     - inter)
+            order = order[1:][inter / np.maximum(union, 1e-6) < iou_thres]
+        for k in keep:
+            label = CLASSES[int(c)].strip() if int(c) < len(CLASSES) else str(int(c))
+            results.append((label, float(s[k]), b[idx[k]]))
+    return results
+
+
 def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
     yolov5_postprocess_info = Yolov5PostProcessInfo_t()
     yolov5_postprocess_info.height = img_size
@@ -301,7 +379,11 @@ try:
     print("Loading model...")
 
     model_file_env = os.environ.get("MODEL_FILE")
-    model_file = Path(model_file_env).resolve() if model_file_env else Path(__file__).parent / "models" / "yolov10n.bin"
+    model_file = (
+        Path(model_file_env).resolve()
+        if model_file_env
+        else Path("/app/model/basic/yolov8_640x640_nv12.bin")
+    )
 
     assert model_file.is_file(), f"Model file {model_file} not found!"
 
@@ -315,27 +397,23 @@ try:
     _input_type = model.inputs[0].properties.tensor_type
     _input_type_name = str(_input_type)
     MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type_name.upper() or "YUV" in _input_type_name.upper() else "BGR"
+    # YOLOv8 / YOLOv12n have 6 output tensors (alternating cls/box at 3 scales)
+    _USE_YOLOv8_DECODER = len(model.outputs) == 6
     print(f"Model input type detected: {MODEL_INPUT_TYPE} (raw: {_input_type_name})")
+    print(f"Post-processor: {'yolov8 (numpy DFL)' if _USE_YOLOv8_DECODER else 'yolov5 (libpostprocess)'}")
     print("done")
 
     worker_ready.set()
 
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
-        # assert image.shape[0] == IMG_SIZE and image.shape[1] == IMG_SIZE, (
-        #     f"Image shape is {image.shape}, but expected ({IMG_SIZE}, {IMG_SIZE})"
-        # )
-
-        input_data = np.expand_dims(image, axis=0)
-
         t0 = time.perf_counter()
-        # pyeasy_dnn returns a list of PyDNNTensor, extracting buffer to get numpy arrays
-        outputs = model.forward(input_data)
-
-        results = yolov10_post_process(outputs=outputs, score_threshold=0.5)
+        outputs = model.forward(image)
+        if _USE_YOLOv8_DECODER:
+            results = yolov8_post_process(outputs=outputs, conf_thres=0.5)
+        else:
+            results = yolov10_post_process(outputs=outputs, score_threshold=0.5)
         tt = round((time.perf_counter() - t0) * 1000)
-
         logger.debug(f"results: {results}")
-
         return tt, results
 except:
     traceback.print_exc()

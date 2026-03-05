@@ -187,16 +187,29 @@ def apply_non_max_suppression(*, boxes: list[Box], overlap_threshold: float = 0.
 
 
 def _slice_bgr_tile(frame: np.ndarray, tx: int, ty: int, tile_size: int) -> np.ndarray:
-    return frame[ty : ty + tile_size, tx : tx + tile_size].copy()
+    tile = frame[ty : ty + tile_size, tx : tx + tile_size]
+    return tile if tile.flags["C_CONTIGUOUS"] else np.ascontiguousarray(tile)
 
 
 def _slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:
-    # Y tile: (tile_size, tile_size) view
+    # ── Y plane ──────────────────────────────────────────────────────────────
+    # Rows are the actual luminance rows [ty, ty+tile_size).  When the source
+    # image is shorter than tile_size (e.g. 640×352 fed into a 640-tile model)
+    # numpy silently truncates the slice — we zero-pad the missing rows instead
+    # so the output is always exactly tile_size × tile_size bytes.
     y_tile = nv12[ty : ty + tile_size, tx : tx + tile_size]
-    # UV tile: starts at buffer_h rows down, half the y coords
+    y_rows = y_tile.shape[0]
+    if y_rows < tile_size:
+        y_tile = np.vstack([y_tile, np.zeros((tile_size - y_rows, tile_size), dtype=np.uint8)])
+
+    # ── UV plane ─────────────────────────────────────────────────────────────
     uv_y = buffer_h + ty // 2
     uv_tile = nv12[uv_y : uv_y + tile_size // 2, tx : tx + tile_size]
-    # Flatten to 1D — this is what model.forward() expects
+    uv_rows = uv_tile.shape[0]
+    if uv_rows < tile_size // 2:
+        uv_tile = np.vstack([uv_tile, np.zeros((tile_size // 2 - uv_rows, tile_size), dtype=np.uint8)])
+
+    # Flatten to 1-D — this is the format pyeasy_dnn model.forward() expects.
     return np.concatenate([y_tile.flatten(), uv_tile.flatten()])
 
 # def get_stereo_stripe_tiles(
@@ -281,15 +294,11 @@ def slice_roi_into_tiles(
     seen: set[tuple[int, int]] = set()
 
     def maybe_add_to_tiles(tx: int, ty: int):
-        # Ensure the tile start doesn't go negative
-        tx = max(0, min(tx, buffer_w - tile_size))
-        ty = max(0, min(ty, buffer_h - tile_size))
-
-        # Ensure we don't slice outside the PHYSICAL shared memory buffer
-        if tx + tile_size > buffer_w:
-            tx = buffer_w - tile_size
-        if ty + tile_size > buffer_h:
-            ty = buffer_h - tile_size
+        # Clamp tile origin so it never goes negative.
+        # When buffer_dim < tile_size the tile starts at 0 and intentionally
+        # reads beyond the live image into the (zeroed) shared-memory padding.
+        tx = max(0, min(tx, max(0, buffer_w - tile_size)))
+        ty = max(0, min(ty, max(0, buffer_h - tile_size)))
 
         if (tx, ty) not in seen:
             seen.add((tx, ty))

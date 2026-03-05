@@ -57,6 +57,11 @@ mask_transparency = mp.Value(c_float, 0.5)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
+# Set while at least one MJPEG client is connected.  When clear, all
+# display-only work (frame caching, bbox rendering, latest_frame updates)
+# is skipped so the inference/motion-detection loop runs at full speed.
+streaming_active = threading.Event()
+
 # DJANGO_RELOAD_ISSUED = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)
 

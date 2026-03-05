@@ -86,7 +86,8 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
 mipi_image_width:=640 mipi_image_height:=352 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
 need_rectify:=False height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
-uncertainty_th:=0.1
+uncertainty_th:=0.1 &
+STEREONET_PID=$!
 
 sleep 5
 
@@ -99,12 +100,12 @@ export PYTHONPATH=$PYTHONPATH:/opt/tros/humble/lib/python3.10/site-packages
 
 export PYTHONUNBUFFERED=1
 
-# stereonet publishes the rectified left image on this topic (640x352, NV12, shared mem).
+# stereonet publishes the rectified left image on this topic (640x352, NV12).
 # Django subscribes to this — no separate mipi_cam process needed.
-ROS_IMAGE_TOPIC="/StereoNetNode/stereonet_visual"
+ROS_IMAGE_TOPIC="/StereoNetNode/rectified_image"
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
-export  MODEL_FILE=/app/model/basic/yolov5s_v7_640x640_nv12.bin
+export  MODEL_FILE=/app/model/basic/yolov8_640x640_nv12.bin
 
 python manage.py runserver --noreload 0.0.0.0:8000 &
 DJANGO_PID=$!
