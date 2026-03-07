@@ -53,7 +53,7 @@ velocity_buffer = deque(maxlen=15)
 double_buffer: DoubleBuffer | None = None
 worker_semaphore = Semaphore(NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
-lowres_frame_cache = {}
+lowres_frame_cache = {}  # timestamp → lores frame shape (tuple); used by on_done to denormalize bboxes
 cache_lock = Lock()
 
 latest_ai_detections = []
@@ -384,14 +384,14 @@ def on_done(future: Future[InferenceOutput]):
             # --- Display work: only when a stream consumer is active ---
             if streaming_active.is_set():
                 with cache_lock:
-                    frame_lores = lowres_frame_cache.pop(timestamp, None)
+                    lores_shape = lowres_frame_cache.pop(timestamp, None)
 
                 detections_denormalized: list[Detection] = []
                 for label, confidence, bbox_normalized in detections:
-                    if frame_lores is None:
+                    if lores_shape is None:
                         break
 
-                    x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=frame_lores.shape)
+                    x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=lores_shape)
                     if x < 0 or y < 0 or w < 0 or h < 0:
                         logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
                         continue
@@ -408,7 +408,9 @@ def on_done(future: Future[InferenceOutput]):
                                 params = tracker_class.Params()
                                 tracker = tracker_class.create(params)
                             tracking.set()
-                            tracker.init(frame_lores, (x, y, w, h))
+                            # NOTE: tracker.init needs actual frame pixels — if tracking is
+                            # re-enabled, change lowres_frame_cache back to storing frame copies.
+                            tracker.init(None, (x, y, w, h))
 
                 if ros_node is not None:
                     ros_node.publish_detections(detections_denormalized)
@@ -541,7 +543,9 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                 if rois:
                     if streaming_active.is_set():
                         with cache_lock:
-                            lowres_frame_cache[timestamp] = frame_lores.copy()
+                            # Store only the shape (a 2-tuple) — on_done only needs it for
+                            # denormalize(). Avoids a 200 KB copy per detection event.
+                            lowres_frame_cache[timestamp] = frame_lores.shape
 
                     future = inference_pool.submit(
                         run_object_detection,
