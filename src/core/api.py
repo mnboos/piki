@@ -19,7 +19,6 @@ async def stream_camera():
     box_color = (0, 255, 128)  # A nice green for the boxes
     thickness = 2
 
-    app_settings.debug_settings.debug_enabled = False
     is_object_detection_disabled.clear()
     streaming_active.set()
     try:
@@ -102,4 +101,7 @@ class PikiOptions(Schema):
 
 @api.patch("/update_options", response=PikiOptions)
 def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
-    return PikiOptions(mode=options.get("mode", "mask"))
+    mode = options.get("mode", "boxes")
+    app_settings.debug_settings.mode = mode
+    app_settings.debug_settings.debug_enabled = (mode == "mask")
+    return PikiOptions(mode=mode)
