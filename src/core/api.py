@@ -1,5 +1,6 @@
 import asyncio
 
+import numpy as np
 from django.http import HttpRequest
 from django.http.response import StreamingHttpResponse
 from ninja import NinjaAPI, PatchDict, Schema
@@ -35,6 +36,13 @@ async def stream_camera():
             if frame is None or (hasattr(frame, "size") and frame.size == 0):
                 continue
 
+            # Convert grayscale Y-plane (2D) to writable BGR for drawing.
+            # frame_lores is the decimated NV12 Y-plane — single-channel uint8.
+            if frame.ndim == 2:
+                draw_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            else:
+                draw_frame = np.array(frame)  # writable copy if already BGR
+
             # Draw detections on the frame
             for detection in detections:
                 left, top, w, h = detection.bbox
@@ -42,16 +50,16 @@ async def stream_camera():
                 right = left + w
                 bottom = top + h
 
-                cv2.rectangle(frame, (left, top), (right, bottom), box_color, thickness)
+                cv2.rectangle(draw_frame, (left, top), (right, bottom), box_color, thickness)
 
                 text_to_draw = f"{detection.label} ({detection.confidence:.1%})"
                 (text_w, text_h), _ = cv2.getTextSize(text_to_draw, font, font_scale, thickness)
                 text_bg_rect_start = (left, top - text_h - 7)
                 text_bg_rect_end = (left + text_w, top)
-                cv2.rectangle(frame, text_bg_rect_start, text_bg_rect_end, box_color, -1)
+                cv2.rectangle(draw_frame, text_bg_rect_start, text_bg_rect_end, box_color, -1)
 
                 cv2.putText(
-                    frame,
+                    draw_frame,
                     text_to_draw,
                     (left, top - 5),
                     font,
@@ -62,7 +70,7 @@ async def stream_camera():
                 )
 
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
-            success, buffer = cv2.imencode(".jpeg", frame, encode_param)
+            success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
             if success:
                 frame_bytes = buffer.tobytes()
                 yield b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n"

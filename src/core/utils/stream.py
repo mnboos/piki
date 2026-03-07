@@ -541,7 +541,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                 if rois:
                     if streaming_active.is_set():
                         with cache_lock:
-                            lowres_frame_cache[timestamp] = frame_lores
+                            lowres_frame_cache[timestamp] = frame_lores.copy()
 
                     future = inference_pool.submit(
                         run_object_detection,
@@ -566,7 +566,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
 
     # Update the shared latest_frame state only while a client is watching.
     if streaming_active.is_set():
-        latest_frame.update(frame_lores, detections_to_show, current_time)
+        latest_frame.update(frame_lores.copy(), detections_to_show, current_time)
 
 
 def stream_nonblocking():

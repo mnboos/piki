@@ -18,7 +18,7 @@ const { mutate: updateOptions } = useMutation({
 
 watch(options, options => updateOptions(options), { deep: true });
 
-const feedUrl = `http://${window.location.hostname}:8000/api/video_feed`
+const feedUrl = "/api/video_feed"
 </script>
 
 <template>
