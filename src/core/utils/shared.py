@@ -117,12 +117,17 @@ class MotionDetector:
         )
         self.morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         # self.morph_kernel = np.ones((3, 3), np.uint8)
-        self.pixelcount_threshold = 500
-
-        self.min_area = 500
         self.min_roi_size = int(ai_input_size / preview_downscale_factor)
         self.max_roi_size = int((ai_input_size + 100) / preview_downscale_factor)
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+    def reset(self):
+        """Discard the learned background model and start fresh."""
+        self.backSub = cv2.createBackgroundSubtractorMOG2(
+            detectShadows=False,
+            history=settings.foreground_mask_options.mog2_history.value,
+            varThreshold=settings.foreground_mask_options.mog2_var_threshold.value,
+        )
 
     def is_moving(self, frame: np.ndarray):
         # motion_ms = get_measure("Detect motion")
@@ -148,7 +153,7 @@ class MotionDetector:
         # cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
         # # Connect nearby regions (cat body parts)
         # cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self.morph_kernel, fg_mask)
-        is_moving = cv2.countNonZero(fg_mask) >= self.pixelcount_threshold
+        is_moving = cv2.countNonZero(fg_mask) >= settings.foreground_mask_options.pixelcount_threshold.value
         # motion_ms()
         return is_moving, fg_mask
 
@@ -171,7 +176,7 @@ class MotionDetector:
         # if num_labels > 1:
         for i in range(1, num_labels):
             area = stats[i, cv2.CC_STAT_AREA]
-            if area >= self.min_area:
+            if area >= settings.foreground_mask_options.min_area.value:
                 x = stats[i, cv2.CC_STAT_LEFT]
                 y = stats[i, cv2.CC_STAT_TOP]
                 w = stats[i, cv2.CC_STAT_WIDTH]

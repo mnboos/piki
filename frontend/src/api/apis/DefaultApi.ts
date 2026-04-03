@@ -35,6 +35,67 @@ export interface CoreApiUpdateOptionsRequest {
 export class DefaultApi extends runtime.BaseAPI {
 
     /**
+     * Return current tuning values so the frontend can initialise its controls.
+     * Get Options
+     */
+    async coreApiGetOptionsRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PikiOptions>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/options`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => PikiOptionsFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current tuning values so the frontend can initialise its controls.
+     * Get Options
+     */
+    async coreApiGetOptions(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<PikiOptions> {
+        const response = await this.coreApiGetOptionsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Discard the MOG2 background model so it relearns the current scene.
+     * Reset Background
+     */
+    async coreApiResetBackgroundRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/reset_background`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     * Discard the MOG2 background model so it relearns the current scene.
+     * Reset Background
+     */
+    async coreApiResetBackground(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.coreApiResetBackgroundRaw(initOverrides);
+    }
+
+    /**
      * Update Options
      */
     async coreApiUpdateOptionsRaw(requestParameters: CoreApiUpdateOptionsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PikiOptions>> {

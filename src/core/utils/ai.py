@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from hobot_dnn import pyeasy_dnn as dnn
 
-from .shared import worker_ready
+from .shared import prob_threshold, worker_ready
 
 logger = logging.getLogger(__name__)
 
@@ -408,10 +408,11 @@ try:
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
         t0 = time.perf_counter()
         outputs = model.forward(image)
+        conf = prob_threshold.value
         if _USE_YOLOv8_DECODER:
-            results = yolov8_post_process(outputs=outputs, conf_thres=0.5)
+            results = yolov8_post_process(outputs=outputs, conf_thres=conf)
         else:
-            results = yolov10_post_process(outputs=outputs, score_threshold=0.5)
+            results = yolov10_post_process(outputs=outputs, score_threshold=conf)
         tt = round((time.perf_counter() - t0) * 1000)
         logger.debug(f"results: {results}")
         return tt, results

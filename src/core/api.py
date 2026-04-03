@@ -1,11 +1,21 @@
 import asyncio
+from typing import Optional
 
 import numpy as np
 from django.http import HttpRequest
 from django.http.response import StreamingHttpResponse
 from ninja import NinjaAPI, PatchDict, Schema
 
-from .utils.shared import app_settings, cv2, is_object_detection_disabled, latest_frame, streaming_active
+from .utils.shared import (
+    app_settings,
+    cv2,
+    is_object_detection_disabled,
+    latest_frame,
+    motion_detector,
+    prob_threshold,
+    settings,
+    streaming_active,
+)
 
 # api = NinjaAPI(csrf=True, auth=django_auth)
 api = NinjaAPI()
@@ -15,7 +25,6 @@ async def stream_camera():
     """Video streaming generator function with corrected drawing logic."""
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.5
-    # text_color = (255, 255, 255)  # White in BGR
     box_color = (0, 255, 128)  # A nice green for the boxes
     thickness = 2
 
@@ -97,11 +106,48 @@ async def video_feed(request: HttpRequest):
 
 class PikiOptions(Schema):
     mode: str
+    conf_threshold: Optional[float] = None
+    pixelcount_threshold: Optional[int] = None
+    min_area: Optional[int] = None
 
 
 @api.patch("/update_options", response=PikiOptions)
 def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
-    mode = options.get("mode", "boxes")
+    mode = options.get("mode", app_settings.debug_settings.mode)
     app_settings.debug_settings.mode = mode
-    app_settings.debug_settings.debug_enabled = (mode == "mask")
-    return PikiOptions(mode=mode)
+    # debug_enabled gates the mask/rois branch in process_frame
+    app_settings.debug_settings.debug_enabled = mode in ("mask", "rois")
+
+    if (v := options.get("conf_threshold")) is not None:
+        prob_threshold.value = float(v)
+
+    if (v := options.get("pixelcount_threshold")) is not None:
+        settings.foreground_mask_options.pixelcount_threshold.value = int(v)
+
+    if (v := options.get("min_area")) is not None:
+        settings.foreground_mask_options.min_area.value = int(v)
+
+    return PikiOptions(
+        mode=mode,
+        conf_threshold=prob_threshold.value,
+        pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
+        min_area=settings.foreground_mask_options.min_area.value,
+    )
+
+
+@api.post("/reset_background")
+def reset_background(request: HttpRequest):
+    """Discard the MOG2 background model so it relearns the current scene."""
+    motion_detector.reset()
+    return {"status": "ok"}
+
+
+@api.get("/options", response=PikiOptions)
+def get_options(request: HttpRequest):
+    """Return current tuning values so the frontend can initialise its controls."""
+    return PikiOptions(
+        mode=app_settings.debug_settings.mode or "boxes",
+        conf_threshold=prob_threshold.value,
+        pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
+        min_area=settings.foreground_mask_options.min_area.value,
+    )

@@ -516,25 +516,34 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                 untracked_frames_count = 0
 
     elif app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
-        grayscale_output = True
-        if grayscale_output:
-            # frame_lores is the Y-plane of NV12 — already single-channel grayscale.
-            gray = frame_lores if frame_lores.ndim == 2 else cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
-            frame_lores = cv2.merge((gray, gray, gray))
-        else:
-            frame_lores = cv2.cvtColor(frame_lores, cv2.COLOR_BGR2RGB)
+        mode = app_settings.debug_settings.mode
+        gray = frame_lores if frame_lores.ndim == 2 else cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+        frame_lores = cv2.merge((gray, gray, gray))
 
-        frame_lores = motion_detector.highlight_movement_on(
-            frame=frame_lores,
-            mask=mask,
-            overlay_color_rgb=(
-                147,
-                20,
-                255,
-            ),
-            transparency_factor=mask_transparency.value,
-            draw_boxes=True,
-        )
+        if mode == "rois":
+            # Draw the exact tile rectangles that will be sent to YOLO, so the user
+            # can see what motion detection selected.
+            rois = motion_detector.create_rois(mask=mask)
+            for roi in rois:
+                rx, ry, rw, rh = roi
+                cv2.rectangle(frame_lores, (rx, ry), (rx + rw, ry + rh), (0, 200, 255), 2)
+                # Also show the motion blobs underneath
+            frame_lores = motion_detector.highlight_movement_on(
+                frame=frame_lores,
+                mask=mask,
+                overlay_color_rgb=(147, 20, 255),
+                transparency_factor=mask_transparency.value,
+                draw_boxes=False,
+            )
+        else:
+            # "mask" mode — show motion blobs with bounding boxes
+            frame_lores = motion_detector.highlight_movement_on(
+                frame=frame_lores,
+                mask=mask,
+                overlay_color_rgb=(147, 20, 255),
+                transparency_factor=mask_transparency.value,
+                draw_boxes=True,
+            )
     elif has_movement:
         try:
             timestamp = time.monotonic_ns()

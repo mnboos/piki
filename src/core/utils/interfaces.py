@@ -35,6 +35,8 @@ class ForegroundMaskOptions:
     mog2_history = Value(c_int, 500)
     mog2_var_threshold = Value(c_int, 16)
     denoise_kernelsize = Value(c_int, 7)
+    pixelcount_threshold = Value(c_int, 500)
+    min_area = Value(c_int, 500)
 
 
 class TuningSettings:

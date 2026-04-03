@@ -55,6 +55,39 @@
                     "required": true
                 }
             }
+        },
+        "/api/reset_background": {
+            "post": {
+                "operationId": "core_api_reset_background",
+                "summary": "Reset Background",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                },
+                "description": "Discard the MOG2 background model so it relearns the current scene."
+            }
+        },
+        "/api/options": {
+            "get": {
+                "operationId": "core_api_get_options",
+                "summary": "Get Options",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PikiOptions"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return current tuning values so the frontend can initialise its controls."
+            }
         }
     },
     "components": {
@@ -64,6 +97,39 @@
                     "mode": {
                         "title": "Mode",
                         "type": "string"
+                    },
+                    "conf_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Conf Threshold"
+                    },
+                    "pixelcount_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Pixelcount Threshold"
+                    },
+                    "min_area": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Min Area"
                     }
                 },
                 "required": [
@@ -84,6 +150,39 @@
                             }
                         ],
                         "title": "Mode"
+                    },
+                    "conf_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Conf Threshold"
+                    },
+                    "pixelcount_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Pixelcount Threshold"
+                    },
+                    "min_area": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Min Area"
                     }
                 },
                 "title": "PikiOptionsPatch",

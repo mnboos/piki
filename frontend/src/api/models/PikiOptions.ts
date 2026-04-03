@@ -25,6 +25,24 @@ export interface PikiOptions {
      * @memberof PikiOptions
      */
     mode: string;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    confThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    pixelcountThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    minArea?: number | null;
 }
 
 /**
@@ -46,6 +64,9 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
     return {
         
         'mode': json['mode'],
+        'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
+        'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
+        'minArea': json['min_area'] == null ? undefined : json['min_area'],
     };
 }
 
@@ -61,6 +82,9 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
     return {
         
         'mode': value['mode'],
+        'conf_threshold': value['confThreshold'],
+        'pixelcount_threshold': value['pixelcountThreshold'],
+        'min_area': value['minArea'],
     };
 }
 
