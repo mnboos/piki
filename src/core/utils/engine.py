@@ -1,3 +1,4 @@
+import atexit
 import logging
 import math
 import os
@@ -58,6 +59,25 @@ _tilt_pwm = None
 _gpio_initialised = False
 
 
+@atexit.register
+def _cleanup_gpio() -> None:
+    global _pan_pwm, _tilt_pwm  # noqa: PLW0603
+    for attr, pwm in (("_pan_pwm", _pan_pwm), ("_tilt_pwm", _tilt_pwm)):
+        if pwm is not None:
+            try:
+                pwm.stop()
+            except Exception:
+                pass
+    _pan_pwm = None
+    _tilt_pwm = None
+    if _gpio_initialised:
+        try:
+            import Hobot.GPIO as GPIO  # noqa: PLC0415
+            GPIO.cleanup([SERVO_PAN_PIN, SERVO_TILT_PIN])
+        except Exception:
+            pass
+
+
 def _init_gpio() -> bool:
     global _gpio_initialised  # noqa: PLW0603
     if _gpio_initialised:
@@ -66,6 +86,13 @@ def _init_gpio() -> bool:
         import Hobot.GPIO as GPIO  # noqa: PLC0415
         GPIO.setmode(GPIO.BOARD)
         GPIO.setwarnings(False)
+        # Best-effort release of stale hardware state from a previous (crashed/restarted)
+        # process so that GPIO.PWM() does not raise "This channel is in use".
+        # Hobot.GPIO raises KeyError if the pin was never setup(), so we ignore errors.
+        try:
+            GPIO.cleanup([SERVO_PAN_PIN, SERVO_TILT_PIN])
+        except Exception:
+            pass
         _gpio_initialised = True
         return True
     except Exception:
@@ -81,8 +108,8 @@ def _get_pan_pwm():
         return None
     try:
         import Hobot.GPIO as GPIO  # noqa: PLC0415
-        GPIO.setup(SERVO_PAN_PIN, GPIO.OUT)
         _pan_pwm = GPIO.PWM(SERVO_PAN_PIN, _SERVO_FREQ_HZ)
+        _pan_pwm.ChangeDutyCycle(_DC_CENTER)  # pre-populate sysfs duty so start() enables the channel
         _pan_pwm.start(_DC_CENTER)
         logger.info("Pan servo initialised on physical pin %d (hardware PWM)", SERVO_PAN_PIN)
     except Exception:
@@ -99,8 +126,8 @@ def _get_tilt_pwm():
         return None
     try:
         import Hobot.GPIO as GPIO  # noqa: PLC0415
-        GPIO.setup(SERVO_TILT_PIN, GPIO.OUT)
         _tilt_pwm = GPIO.PWM(SERVO_TILT_PIN, _SERVO_FREQ_HZ)
+        _tilt_pwm.ChangeDutyCycle(_DC_CENTER)  # pre-populate sysfs duty so start() enables the channel
         _tilt_pwm.start(_DC_CENTER)
         logger.info("Tilt servo initialised on physical pin %d (hardware PWM)", SERVO_TILT_PIN)
     except Exception:

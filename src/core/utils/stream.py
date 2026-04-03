@@ -189,6 +189,8 @@ class PikiVisionNode(Node):
             for d in detections
         ]
 
+        if not self.context.ok():
+            return
         msg = String()
         msg.data = json.dumps(data)
         self.target_pub.publish(msg)
