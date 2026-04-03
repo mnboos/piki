@@ -61,6 +61,32 @@ class CoreConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "core"
 
+    def _load_detection_config(self):
+        """Load persisted DetectionConfig from DB into shared memory."""
+        try:
+            from .models import DetectionConfig  # noqa: PLC0415
+            from .utils.shared import app_settings, mask_transparency, prob_threshold, settings  # noqa: PLC0415
+
+            config = DetectionConfig.load()
+            app_settings.debug_settings.mode = config.mode
+            app_settings.debug_settings.debug_enabled = config.mode in ("mask", "rois")
+            prob_threshold.value = config.conf_threshold
+            settings.foreground_mask_options.pixelcount_threshold.value = config.pixelcount_threshold
+            settings.foreground_mask_options.min_area.value = config.min_area
+            settings.foreground_mask_options.mog2_history.value = config.mog2_history
+            settings.foreground_mask_options.mog2_var_threshold.value = config.mog2_var_threshold
+            settings.foreground_mask_options.denoise_kernelsize.value = config.denoise_kernelsize
+            mask_transparency.value = config.mask_transparency
+            print(
+                f"[DJANGO STARTUP] Loaded detection config: mode={config.mode}, "
+                f"conf={config.conf_threshold}, mog2_history={config.mog2_history}",
+                flush=True,
+            )
+        except Exception:
+            import traceback  # noqa: PLC0415
+            print("[DJANGO STARTUP] Could not load DetectionConfig — using defaults.", flush=True)
+            traceback.print_exc()
+
     def _load_aim_config(self):
         """Load persisted AimConfig from DB into shared memory."""
         try:
@@ -90,7 +116,8 @@ class CoreConfig(AppConfig):
         print(f"[Django-{pid}, ppid={ppid}] RUN_MAIN:  ", is_running_main)
 
         if is_running_main:
-            # Load persisted aim settings from DB into shared memory.
+            # Load persisted settings from DB into shared memory.
+            self._load_detection_config()
             self._load_aim_config()
 
             # monkey_patch_reloader()

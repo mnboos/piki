@@ -57,6 +57,8 @@ ai_input_size = 640
 
 settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
+servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
+servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 

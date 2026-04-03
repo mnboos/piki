@@ -43,6 +43,30 @@ export interface PikiOptions {
      * @memberof PikiOptions
      */
     minArea?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    mog2History?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    mog2VarThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    denoiseKernelsize?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    maskTransparency?: number | null;
 }
 
 /**
@@ -67,6 +91,10 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
         'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
         'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
         'minArea': json['min_area'] == null ? undefined : json['min_area'],
+        'mog2History': json['mog2_history'] == null ? undefined : json['mog2_history'],
+        'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
+        'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
+        'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
     };
 }
 
@@ -85,6 +113,10 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
         'conf_threshold': value['confThreshold'],
         'pixelcount_threshold': value['pixelcountThreshold'],
         'min_area': value['minArea'],
+        'mog2_history': value['mog2History'],
+        'mog2_var_threshold': value['mog2VarThreshold'],
+        'denoise_kernelsize': value['denoiseKernelsize'],
+        'mask_transparency': value['maskTransparency'],
     };
 }
 

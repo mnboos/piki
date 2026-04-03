@@ -6,6 +6,31 @@ class User(AbstractUser):
     pass
 
 
+class DetectionConfig(models.Model):
+    """Singleton model for persisting detection/display tuning options."""
+
+    mode = models.CharField(max_length=20, default="boxes")
+    conf_threshold = models.FloatField(default=0.4)
+    pixelcount_threshold = models.IntegerField(default=500)
+    min_area = models.IntegerField(default=500)
+    mog2_history = models.IntegerField(default=500)
+    mog2_var_threshold = models.IntegerField(default=16)
+    denoise_kernelsize = models.IntegerField(default=7)
+    mask_transparency = models.FloatField(default=0.5)
+
+    class Meta:
+        verbose_name = "Detection Config"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls) -> "DetectionConfig":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 class AimConfig(models.Model):
     """Singleton model holding servo aim configuration."""
 

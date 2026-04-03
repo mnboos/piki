@@ -232,6 +232,50 @@
                             }
                         ],
                         "title": "Min Area"
+                    },
+                    "mog2_history": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mog2 History"
+                    },
+                    "mog2_var_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mog2 Var Threshold"
+                    },
+                    "denoise_kernelsize": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Denoise Kernelsize"
+                    },
+                    "mask_transparency": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mask Transparency"
                     }
                 },
                 "required": [
@@ -285,6 +329,50 @@
                             }
                         ],
                         "title": "Min Area"
+                    },
+                    "mog2_history": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mog2 History"
+                    },
+                    "mog2_var_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mog2 Var Threshold"
+                    },
+                    "denoise_kernelsize": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Denoise Kernelsize"
+                    },
+                    "mask_transparency": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Mask Transparency"
                     }
                 },
                 "title": "PikiOptionsPatch",

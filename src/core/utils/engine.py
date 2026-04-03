@@ -233,6 +233,10 @@ def aim_at(
         except Exception:
             logger.exception("Failed to move tilt servo")
 
+    from ..utils.shared import servo_pan, servo_tilt  # noqa: PLC0415
+    servo_pan.value = pan_clamped
+    servo_tilt.value = tilt_clamped
+
     return pan_angle, tilt_angle
 
 
@@ -266,5 +270,9 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
             tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_clamped))
         except Exception:
             logger.exception("Failed to move tilt servo")
+
+    from ..utils.shared import servo_pan, servo_tilt  # noqa: PLC0415
+    servo_pan.value = pan_clamped
+    servo_tilt.value = tilt_clamped
 
     return pan_clamped, tilt_clamped

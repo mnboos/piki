@@ -5,14 +5,23 @@ import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiO
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
+import Tab from "primevue/tab";
+import TabList from "primevue/tablist";
+import TabPanel from "primevue/tabpanel";
+import TabPanels from "primevue/tabpanels";
+import Tabs from "primevue/tabs";
 
 const api = new DefaultApi();
 
 const options = ref<PikiOptions>({
     mode: "boxes",
-    confThreshold: 0.5,
+    confThreshold: 0.4,
     pixelcountThreshold: 500,
     minArea: 500,
+    mog2History: 500,
+    mog2VarThreshold: 16,
+    denoiseKernelsize: 7,
+    maskTransparency: 0.5,
 });
 
 const aimConfig = ref<AimConfigSchema>({
@@ -47,9 +56,13 @@ onMounted(async () => {
         const current = await api.coreApiGetOptions();
         options.value = {
             mode: current.mode,
-            confThreshold: current.confThreshold ?? 0.5,
+            confThreshold: current.confThreshold ?? 0.4,
             pixelcountThreshold: current.pixelcountThreshold ?? 500,
             minArea: current.minArea ?? 500,
+            mog2History: current.mog2History ?? 500,
+            mog2VarThreshold: current.mog2VarThreshold ?? 16,
+            denoiseKernelsize: current.denoiseKernelsize ?? 7,
+            maskTransparency: current.maskTransparency ?? 0.5,
         };
     } catch { /* use defaults */ }
 
@@ -69,23 +82,37 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
 
 <template>
     <div class="page">
-        <DetectionControls v-model="options" @reset-background="resetBackground()" />
+        <Tabs value="camera">
+            <TabList>
+                <Tab value="camera">Camera</Tab>
+                <Tab value="detection">Detection</Tab>
+                <Tab value="servo">Servo</Tab>
+            </TabList>
+            <TabPanels>
+                <TabPanel value="camera">
+                    <div class="feed-wrapper">
+                        <img id="camera-feed" :src="feedUrl" alt="camera feed" />
+                    </div>
+                </TabPanel>
 
-        <div class="feed-wrapper">
-            <img id="camera-feed" :src="feedUrl" alt="camera feed" />
-        </div>
+                <TabPanel value="detection">
+                    <div class="feed-wrapper">
+                        <img id="camera-feed-detection" :src="feedUrl" alt="camera feed" />
+                    </div>
+                    <DetectionControls v-model="options" @reset-background="resetBackground()" />
+                </TabPanel>
 
-        <ServoAimPanel v-model="aimConfig" :classes="allClasses" />
-
-        <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
+                <TabPanel value="servo">
+                    <ServoAimPanel v-model="aimConfig" :classes="allClasses" />
+                    <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
+                </TabPanel>
+            </TabPanels>
+        </Tabs>
     </div>
 </template>
 
 <style scoped>
 .page {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
     padding: 1rem;
     max-width: 900px;
     margin: 0 auto;
@@ -96,7 +123,8 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
     overflow: hidden;
     line-height: 0;
 }
-#camera-feed {
+#camera-feed,
+#camera-feed-detection {
     width: 100%;
     display: block;
 }

@@ -1,4 +1,5 @@
 import asyncio
+import math
 from typing import Optional
 
 import numpy as np
@@ -11,8 +12,11 @@ from .utils.shared import (
     cv2,
     is_object_detection_disabled,
     latest_frame,
+    mask_transparency,
     motion_detector,
     prob_threshold,
+    servo_pan,
+    servo_tilt,
     settings,
     streaming_active,
 )
@@ -94,6 +98,27 @@ async def stream_camera():
                     cv2.LINE_AA,
                 )
 
+            # Draw servo crosshair using camera intrinsics from engine.py.
+            # angle→pixel: px = cx + fx*tan(pan), py = cy + fy*tan(tilt)
+            from .utils.engine import CAM_CX, CAM_CY, CAM_FX, CAM_FY, FRAME_H, FRAME_W  # noqa: PLC0415
+            fh, fw = draw_frame.shape[:2]
+            scale_x = fw / FRAME_W
+            scale_y = fh / FRAME_H
+            ch_x = int((CAM_CX + CAM_FX * math.tan(math.radians(servo_pan.value))) * scale_x)
+            ch_y = int((CAM_CY + CAM_FY * math.tan(math.radians(servo_tilt.value))) * scale_y)
+            ch_x = max(0, min(fw - 1, ch_x))
+            ch_y = max(0, min(fh - 1, ch_y))
+            _CROSSHAIR_COLOR = (0, 200, 255)  # orange
+            _CROSSHAIR_RADIUS = 14
+            _CROSSHAIR_GAP = 4
+            _CROSSHAIR_THICKNESS = 2
+            # Four line segments around the centre with a gap
+            cv2.line(draw_frame, (ch_x, ch_y - _CROSSHAIR_GAP), (ch_x, ch_y - _CROSSHAIR_RADIUS), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.line(draw_frame, (ch_x, ch_y + _CROSSHAIR_GAP), (ch_x, ch_y + _CROSSHAIR_RADIUS), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.line(draw_frame, (ch_x - _CROSSHAIR_GAP, ch_y), (ch_x - _CROSSHAIR_RADIUS, ch_y), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.line(draw_frame, (ch_x + _CROSSHAIR_GAP, ch_y), (ch_x + _CROSSHAIR_RADIUS, ch_y), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.circle(draw_frame, (ch_x, ch_y), _CROSSHAIR_GAP, _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
+
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
             success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
             if success:
@@ -126,10 +151,16 @@ class PikiOptions(Schema):
     conf_threshold: Optional[float] = None
     pixelcount_threshold: Optional[int] = None
     min_area: Optional[int] = None
+    mog2_history: Optional[int] = None
+    mog2_var_threshold: Optional[int] = None
+    denoise_kernelsize: Optional[int] = None
+    mask_transparency: Optional[float] = None
 
 
 @api.patch("/update_options", response=PikiOptions)
 def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
+    from .models import DetectionConfig  # noqa: PLC0415
+
     mode = options.get("mode", app_settings.debug_settings.mode)
     app_settings.debug_settings.mode = mode
     # debug_enabled gates the mask/rois branch in process_frame
@@ -144,11 +175,39 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     if (v := options.get("min_area")) is not None:
         settings.foreground_mask_options.min_area.value = int(v)
 
+    if (v := options.get("mog2_history")) is not None:
+        settings.foreground_mask_options.mog2_history.value = int(v)
+
+    if (v := options.get("mog2_var_threshold")) is not None:
+        settings.foreground_mask_options.mog2_var_threshold.value = int(v)
+
+    if (v := options.get("denoise_kernelsize")) is not None:
+        settings.foreground_mask_options.denoise_kernelsize.value = int(v)
+
+    if (v := options.get("mask_transparency")) is not None:
+        mask_transparency.value = float(v)
+
+    # Persist all current values to DB so they survive restarts.
+    config = DetectionConfig.load()
+    config.mode = mode
+    config.conf_threshold = prob_threshold.value
+    config.pixelcount_threshold = settings.foreground_mask_options.pixelcount_threshold.value
+    config.min_area = settings.foreground_mask_options.min_area.value
+    config.mog2_history = settings.foreground_mask_options.mog2_history.value
+    config.mog2_var_threshold = settings.foreground_mask_options.mog2_var_threshold.value
+    config.denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
+    config.mask_transparency = mask_transparency.value
+    config.save()
+
     return PikiOptions(
         mode=mode,
         conf_threshold=prob_threshold.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
+        mog2_history=settings.foreground_mask_options.mog2_history.value,
+        mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
+        denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
+        mask_transparency=mask_transparency.value,
     )
 
 
@@ -167,6 +226,10 @@ def get_options(request: HttpRequest):
         conf_threshold=prob_threshold.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
+        mog2_history=settings.foreground_mask_options.mog2_history.value,
+        mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
+        denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
+        mask_transparency=mask_transparency.value,
     )
 
 
