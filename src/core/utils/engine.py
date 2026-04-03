@@ -220,7 +220,7 @@ def aim_at(
     pan_pwm = _get_pan_pwm()
     if pan_pwm is not None:
         try:
-            pan_pwm.ChangeDutyCycle(_angle_to_dc(pan_clamped))
+            pan_pwm.ChangeDutyCycle(_angle_to_dc(-pan_clamped))
             logger.info("Pan servo → %.1f°", pan_clamped)
         except Exception:
             logger.exception("Failed to move pan servo")
@@ -256,7 +256,7 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
     pan_pwm = _get_pan_pwm()
     if pan_pwm is not None:
         try:
-            pan_pwm.ChangeDutyCycle(_angle_to_dc(pan_clamped))
+            pan_pwm.ChangeDutyCycle(_angle_to_dc(-pan_clamped))
         except Exception:
             logger.exception("Failed to move pan servo")
 
