@@ -61,6 +61,25 @@ class CoreConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "core"
 
+    def _load_aim_config(self):
+        """Load persisted AimConfig from DB into shared memory."""
+        try:
+            from .models import AimConfig  # noqa: PLC0415
+            from .utils.shared import app_settings  # noqa: PLC0415
+
+            config = AimConfig.load()
+            app_settings.aim_settings.target_classes = config.target_classes
+            app_settings.aim_settings.servo_enabled = config.servo_enabled
+            print(
+                f"[DJANGO STARTUP] Loaded aim config: servo_enabled={config.servo_enabled}, "
+                f"classes={config.target_classes}",
+                flush=True,
+            )
+        except Exception:
+            import traceback  # noqa: PLC0415
+            print("[DJANGO STARTUP] Could not load AimConfig — using defaults.", flush=True)
+            traceback.print_exc()
+
     def ready(self):
         # The `runserver` command runs this method twice. We use an environment
         # variable to ensure our setup code only runs in the main process.
@@ -71,6 +90,9 @@ class CoreConfig(AppConfig):
         print(f"[Django-{pid}, ppid={ppid}] RUN_MAIN:  ", is_running_main)
 
         if is_running_main:
+            # Load persisted aim settings from DB into shared memory.
+            self._load_aim_config()
+
             # monkey_patch_reloader()
 
             # print("environ: ", os.environ, flush=True)

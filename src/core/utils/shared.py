@@ -9,7 +9,7 @@ from multiprocessing import Event
 from typing import NamedTuple, Optional
 
 from .interfaces import TuningSettings
-from .settings import AppSettings, DebugSettings
+from .settings import AppSettings, AimSettings, DebugSettings
 
 # Those most be set BEFORE importing cv2
 # https://docs.opencv.org/4.x/d6/dea/tutorial_env_reference.html#autotoc_md974
@@ -30,7 +30,10 @@ from .func import (
 logger = logging.getLogger(__name__)
 logger.info("Setup shared module...")
 
-app_settings = AppSettings(debug_settings=DebugSettings(render_bboxes=True))
+app_settings = AppSettings(
+    debug_settings=DebugSettings(render_bboxes=True),
+    aim_settings=AimSettings(target_classes=[], servo_enabled=False),
+)
 
 
 has_opencl = cv2.ocl.haveOpenCL()

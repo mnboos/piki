@@ -6,7 +6,7 @@
 Neighborhood cats frequently enter our garden, using it as a litter box. This creates an unsanitary environment and poses a significant health risk, especially for babies and small children who play in the garden. Cat feces can transmit harmful parasites and bacteria, making a clean and safe outdoor space a top priority.
 
 ### Our Solution
-**Piki** is an autonomous, humane, and cost-effective system designed to solve this problem. Using a low-cost single-board computer and a camera, Piki employs real-time object detection to identify cats as soon as they enter a monitored area. Upon detection, the system is designed to trigger a harmless deterrent, such as a brief spray from a water sprinkler or an ultrasonic sound, effectively training cats to avoid the area without causing them any harm. This "do-it-yourself" project provides a complete blueprint for building an intelligent and reliable cat deterrent, managed through a simple web interface.
+**Piki** is an autonomous, humane, and cost-effective system designed to solve this problem. Using a **D-Robotics RDK X5** single-board computer and a 180° stereo fisheye camera, Piki employs real-time object detection to identify animals (or any user-selected YOLO class) as soon as they enter a monitored area. Upon detection, pan/tilt servos aim at the target and the system can trigger a harmless deterrent such as a brief water spray or ultrasonic tone. The whole system is managed through a simple web interface.
 
 ---
 
@@ -14,111 +14,124 @@ Neighborhood cats frequently enter our garden, using it as a litter box. This cr
 
 ### Hardware Setup
 
-The system is built with accessible and affordable components. Please note the specific processor requirement for full performance.
-
 **Core Components:**
-*   **Single-Board Computer (SBC):** The core of the system. For full performance with Neural Processing Unit (NPU) acceleration, a board with a **Rockchip RK3566 or RK3568** processor is required. This is because the provided AI model has been specifically converted to the `.rknn` format for this hardware target.
-    *   *Recommended boards:* Orange Pi 3B, Radxa Zero 3W.
-    *   Other SBCs like the Raspberry Pi can run the system in a CPU-only mode, but without the performance benefits of NPU acceleration.
-*   **Camera Module:** A compatible camera (e.g., Raspberry Pi Camera Module) to provide the video feed for detection.
-*   **Servo Motor:** An angular servo to allow the camera to pan and cover a wider area of the garden.
-*   **Power Supply:** A stable power source for the SBC and connected components.
-*   **(Optional) Deterrent Mechanism:** A relay-controlled water valve, ultrasonic speaker, or other device to be triggered upon detection.
+- **Single-Board Computer:** [D-Robotics RDK X5](https://developer.d-robotics.cc/rdk_doc/en/) — Sunrise X5 SoC with a dedicated BPU (Brain Processing Unit) NPU for hardware-accelerated YOLOv8 inference.
+- **Camera:** Stereo 180° fisheye camera connected to the RDK X5's MIPI CSI port. The `hobot_stereonet` ROS2 node rectifies and undistorts the fisheye images before they reach the detection pipeline.
+- **Pan/Tilt Servos:** Two standard 50 Hz hobby servos (±90° range each) for aiming:
+  - **Pan servo** → physical pin **32** (PWM6)
+  - **Tilt servo** → physical pin **33** (PWM7)
 
-### Software Architecture & Dependencies
+  See [Section 3](#3-installation--setup) for wiring and enabling hardware PWM.
+- **Power Supply:** 5 V for the SBC; servo power from a separate 5–6 V supply is recommended for heavier loads.
+- **(Optional) Deterrent:** Relay-controlled water valve, ultrasonic speaker, etc.
 
-The project relies on a lightweight yet powerful software stack, optimized for performance on resource-constrained devices. The system is managed through a built-in web application.
+### Software Architecture
 
-**Key Dependencies:**
-*   **gpiozero & pigpio:** Python libraries for easy and precise control of the servo motor.
-*   **numpy:** A fundamental package for numerical computation, used for handling image data.
-*   **opencv-contrib-python-headless:** Provides computer vision algorithms for image processing.
-*   **rich:** A library for beautiful formatting in the terminal for logging and status updates.
-*   **rknn-toolkit-lite2:** Enables hardware acceleration for the AI model on Rockchip NPUs.
-*   **django / flask:** Web frameworks used to build the web-based graphical user interface (GUI).
+| Layer | Technology |
+|---|---|
+| AI inference | YOLOv8 on Horizon BPU via `hobot_dnn` |
+| Camera / depth | `hobot_stereonet` ROS2 node (tros.b, humble) |
+| Backend | Django 5 + django-ninja REST API |
+| Frontend | Vue 3 + Vite + TailwindCSS |
+| Servo control | `Hobot.GPIO` hardware PWM (RPi.GPIO-compatible) |
+| Persistence | SQLite (Django ORM) |
 
-### Visual Workflow
+**Key Python dependencies:**
+- `Hobot.GPIO` — GPIO/PWM control (pre-installed on RDK X5)
+- `numpy`, `opencv-contrib-python-headless` — image processing
+- `django`, `django-ninja` — web server and REST API
+- `rknn-toolkit-lite2` — NPU model runtime (aarch64 only)
+- `rich` — terminal logging
 
-The operational flow of the Piki system is straightforward: capture, analyze, and act. The following diagram illustrates the complete operational sequence.
+### Web Interface Features
+- **Live camera feed** with bounding box / mask / ROI overlays
+- **Servo Aiming** — enable/disable auto-aim and select which YOLO classes trigger the servos (any of the 80 COCO classes)
+- **Manual Servo Debug** — 3×3 preset grid (top-left … bottom-right), pan/tilt sliders (−90° to +90°), and a Move button for calibration
+- Confidence threshold, motion sensitivity, and min-area sliders
+- Background reset button
 
-```mermaid
-graph TD
-    subgraph "Piki Operational Flow"
-        A[Start: Capture Video Frame] --> B[Analyze Frame with AI Model];
-        B --> C{Is a Cat Detected?};
-        C -- No --> A;
-        C -- Yes --> D[Aim Servo at Cat];
-        D --> E[Activate Sprinkler: Splash Water];
-        E --> A;
-    end
+### Angle Calculation
+The stereonet node removes fisheye distortion. Angles are computed with the pinhole `atan2` model using calibrated intrinsics (`fx=fy≈258`, `cx≈314`, `cy≈160` for 640×352 output), giving an effective HFOV ≈ 102° and VFOV ≈ 68°.
+
 ```
+pan_angle  = degrees(atan2(pixel_x − cx, fx))
+tilt_angle = degrees(atan2(pixel_y − cy, fy))
+```
+
+Intrinsics can be overridden via env vars `CAMERA_FX`, `CAMERA_FY`, `CAMERA_CX`, `CAMERA_CY`, `CAMERA_FRAME_W`, `CAMERA_FRAME_H`.
 
 ---
 
 ## 3. Installation & Setup
 
-This project supports multiple hardware platforms. Please follow the instructions relevant to your device.
+### A. D-Robotics RDK X5 (primary target)
 
-### A. Raspberry Pi Setup (CPU-Only)
+#### Enable Hardware PWM for Servos
 
-#### Servo Control
-1.  **Install Dependencies:**
-    ```bash
-    sudo apt install pigpio python3-pigpio
-    uv add gpiozero pigpio
-    ```
-2.  **Start GPIO Daemon:**
-    ```bash
-    sudo gpiod
-    ```
+Pins 32 and 33 support hardware PWM but require a device-tree overlay. This only needs to be done once:
 
-#### Camera (Picamera2)
-1.  **Install System Packages:**
-    ```bash
-    sudo apt update
-    sudo apt install -y python3-picamera2 rpicam-apps-lite libcamera-dev python3-libcamera --no-install-recommends
-    ```
-2.  **Add to your Python environment:**
-    ```bash
-    # Make sure to use a virtual environment with --system-site-packages
-    uv venv --system-site-packages
-    source .venv/bin/activate
-    uv add picamera2
-    ```
-3.  **Enable Camera:** For specific camera modules (like the OV5647), you may need to edit `/boot/firmware/config.txt`:
-    ```ini
-    camera_auto_detect=0
-    dtoverlay=ov5647
-    ```
+```bash
+# Enable the PWM3 overlay (pins 32 + 33 = PWM6 + PWM7)
+echo -e 'dtoverlay=dtoverlay_pwm3\n' | sudo tee /boot/config.txt
+sudo reboot
+```
 
-### B. Orange Pi / Radxa Zero Setup (with NPU Acceleration)
+> **Note:** This overlay disables the I2C bus that shares those pins (`340c0000`). If you need that I2C bus, use a different PWM pair — see `/boot/overlays/README.txt` for the full list.
 
-For leveraging the NPU on boards with a Rockchip RK3566/RK3568 processor, the setup is more involved and requires installing specific drivers and libraries (like RKNN).
+After rebooting, verify the PWM chip appears:
+```bash
+ls /sys/class/pwm/   # should show pwmchip0 and pwmchip1 (or similar)
+```
 
-*Detailed instructions for **Orange Pi 3B** and **Radxa Zero 3W** are available in the repository's full documentation.*
+#### Servo Wiring
+
+| Servo wire | Connect to |
+|---|---|
+| Signal (yellow/white) | Physical pin **32** (pan) or **33** (tilt) |
+| Power (red) | 5 V — physical pin 2 or 4 |
+| Ground (black/brown) | GND — physical pin 6, 9, 14, 20, 25, … |
+
+Override pins via env vars: `SERVO_PAN_PIN=32 SERVO_TILT_PIN=33` (physical/BOARD numbering).
+
+#### Install Python Dependencies
+
+```bash
+uv sync
+```
+
+`Hobot.GPIO` is pre-installed system-wide on the RDK X5 image — no extra install needed.
+
+#### Run
+
+```bash
+./run.sh
+```
+
+Access the web UI at `http://<board-ip>/`.
 
 ---
 
 ## 4. Usage: The Web Interface
 
-The entire Piki system is designed to be controlled and monitored through a simple web-based Graphical User Interface (GUI).
-
 ### Starting the Application
-1.  Navigate to the source directory:
-    ```bash
-    cd src/piki
-    ```
-2.  Execute the run script. This will start the web server and the object detection service.
-    ```bash
-    ./run.sh
-    ```
+
+```bash
+cd /path/to/piki
+./run.sh
+```
 
 ### Accessing the GUI
-1.  Once the server is running, open a web browser on any device connected to the same network (your computer, phone, or tablet).
-2.  Navigate to the IP address of your board. For example: `http://192.168.1.123`
 
-From the web interface, you can:
-*   **View the live camera feed** to ensure it's aimed correctly.
-*   **Monitor system status** and see logs of recent detections.
-*   **Fine-tune settings** for detection sensitivity and deterrent activation.
-*   **Manually control** the system components for testing.
+Open `http://<board-ip>/` in any browser on the same network.
+
+### Controls
+
+| Section | What it does |
+|---|---|
+| **Mode** | Switch between Boxes, Mask, and ROI visualisation |
+| **Confidence** | YOLOv8 detection confidence threshold |
+| **Motion sensitivity / Min area** | Background-subtraction filter tuning |
+| **Reset background** | Clear the motion-detection baseline |
+| **Servo Aiming → Enable** | Toggle auto-aim on/off |
+| **Servo Aiming → Classes** | Pick which detected YOLO classes move the servos |
+| **Manual Servo Debug** | Preset grid + sliders to aim servos manually for calibration |

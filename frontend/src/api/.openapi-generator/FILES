@@ -1,7 +1,11 @@
 apis/DefaultApi.ts
 apis/index.ts
 index.ts
+models/AimConfigSchema.ts
+models/AimConfigSchemaPatch.ts
 models/PikiOptions.ts
 models/PikiOptionsPatch.ts
+models/ServoMoveSchema.ts
+models/ServoPositionSchema.ts
 models/index.ts
 runtime.ts

@@ -372,12 +372,17 @@ def on_done(future: Future[InferenceOutput]):
             max_output_timestamp = timestamp
 
             # --- Production work: always run regardless of streaming state ---
-            for label, confidence, bbox_normalized in detections:
-                if label.strip().lower() == "cat":
+            aim_enabled = app_settings.aim_settings.servo_enabled
+            if aim_enabled:
+                target_classes = {c.strip().lower() for c in (app_settings.aim_settings.target_classes or [])}
+                if target_classes:
                     from .engine import aim_at  # noqa: PLC0415
                     with latest_depth_lock:
                         depth_snap = latest_depth_map
-                    aim_at(bbox_normalized=bbox_normalized, depth_map=depth_snap)
+                    for label, confidence, bbox_normalized in detections:
+                        if label.strip().lower() in target_classes:
+                            aim_at(bbox_normalized=bbox_normalized, depth_map=depth_snap)
+                            break  # aim at the first matching detection per frame
 
             dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 

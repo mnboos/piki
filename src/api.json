@@ -88,6 +88,108 @@
                 },
                 "description": "Return current tuning values so the frontend can initialise its controls."
             }
+        },
+        "/api/aim_config": {
+            "get": {
+                "operationId": "core_api_get_aim_config",
+                "summary": "Get Aim Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AimConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return current servo aim configuration."
+            },
+            "patch": {
+                "operationId": "core_api_update_aim_config",
+                "summary": "Update Aim Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AimConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Update servo aim configuration and persist to database.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AimConfigSchemaPatch"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
+        },
+        "/api/yolo_classes": {
+            "get": {
+                "operationId": "core_api_get_yolo_classes",
+                "summary": "Get Yolo Classes",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "title": "Response",
+                                    "type": "array"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return the list of all detectable YOLO class names."
+            }
+        },
+        "/api/servo/move": {
+            "post": {
+                "operationId": "core_api_servo_move",
+                "summary": "Servo Move",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ServoPositionSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Manually command both servos to explicit angles (debug / calibration mode).",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ServoMoveSchema"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
         }
     },
     "components": {
@@ -186,6 +288,94 @@
                     }
                 },
                 "title": "PikiOptionsPatch",
+                "type": "object"
+            },
+            "AimConfigSchema": {
+                "properties": {
+                    "target_classes": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "title": "Target Classes",
+                        "type": "array"
+                    },
+                    "servo_enabled": {
+                        "title": "Servo Enabled",
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "target_classes",
+                    "servo_enabled"
+                ],
+                "title": "AimConfigSchema",
+                "type": "object"
+            },
+            "AimConfigSchemaPatch": {
+                "properties": {
+                    "target_classes": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "type": "string"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Target Classes"
+                    },
+                    "servo_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Enabled"
+                    }
+                },
+                "title": "AimConfigSchemaPatch",
+                "type": "object"
+            },
+            "ServoPositionSchema": {
+                "properties": {
+                    "pan_angle": {
+                        "title": "Pan Angle",
+                        "type": "number"
+                    },
+                    "tilt_angle": {
+                        "title": "Tilt Angle",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "pan_angle",
+                    "tilt_angle"
+                ],
+                "title": "ServoPositionSchema",
+                "type": "object"
+            },
+            "ServoMoveSchema": {
+                "properties": {
+                    "pan_angle": {
+                        "title": "Pan Angle",
+                        "type": "number"
+                    },
+                    "tilt_angle": {
+                        "title": "Tilt Angle",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "pan_angle",
+                    "tilt_angle"
+                ],
+                "title": "ServoMoveSchema",
                 "type": "object"
             }
         }

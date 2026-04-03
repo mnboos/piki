@@ -20,6 +20,23 @@ from .utils.shared import (
 # api = NinjaAPI(csrf=True, auth=django_auth)
 api = NinjaAPI()
 
+# All 80 trimmed COCO class names (same order as ai.py CLASSES tuple).
+_YOLO_CLASSES: list[str] = [
+    "person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train",
+    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag",
+    "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite",
+    "baseball bat", "baseball glove", "skateboard", "surfboard",
+    "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon",
+    "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot",
+    "hot dog", "pizza", "donut", "cake", "chair", "sofa", "pottedplant",
+    "bed", "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote",
+    "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+    "hair drier", "toothbrush",
+]
+
 
 async def stream_camera():
     """Video streaming generator function with corrected drawing logic."""
@@ -151,3 +168,67 @@ def get_options(request: HttpRequest):
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
     )
+
+
+class AimConfigSchema(Schema):
+    target_classes: list[str]
+    servo_enabled: bool
+
+
+@api.get("/aim_config", response=AimConfigSchema)
+def get_aim_config(request: HttpRequest):
+    """Return current servo aim configuration."""
+    return AimConfigSchema(
+        target_classes=list(app_settings.aim_settings.target_classes or []),
+        servo_enabled=bool(app_settings.aim_settings.servo_enabled),
+    )
+
+
+@api.patch("/aim_config", response=AimConfigSchema)
+def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema]):
+    """Update servo aim configuration and persist to database."""
+    from .models import AimConfig  # noqa: PLC0415
+
+    config = AimConfig.load()
+
+    if (classes := payload.get("target_classes")) is not None:
+        validated = [str(c).strip() for c in classes if str(c).strip() in _YOLO_CLASSES]
+        app_settings.aim_settings.target_classes = validated
+        config.target_classes = validated
+
+    if (enabled := payload.get("servo_enabled")) is not None:
+        app_settings.aim_settings.servo_enabled = bool(enabled)
+        config.servo_enabled = bool(enabled)
+
+    config.save()
+
+    return AimConfigSchema(
+        target_classes=list(app_settings.aim_settings.target_classes or []),
+        servo_enabled=bool(app_settings.aim_settings.servo_enabled),
+    )
+
+
+@api.get("/yolo_classes", response=list[str])
+def get_yolo_classes(request: HttpRequest):
+    """Return the list of all detectable YOLO class names."""
+    return _YOLO_CLASSES
+
+
+class ServoMoveSchema(Schema):
+    pan_angle: float   # degrees, -90 (left) … +90 (right)
+    tilt_angle: float  # degrees, -90 (up)   … +90 (down)
+
+
+class ServoPositionSchema(Schema):
+    pan_angle: float
+    tilt_angle: float
+
+
+@api.post("/servo/move", response=ServoPositionSchema)
+def servo_move(request: HttpRequest, payload: ServoMoveSchema):
+    """Manually command both servos to explicit angles (debug / calibration mode)."""
+    from .utils.engine import move_to  # noqa: PLC0415
+
+    pan, tilt = move_to(payload.pan_angle, payload.tilt_angle)
+    return ServoPositionSchema(pan_angle=pan, tilt_angle=tilt)
+
