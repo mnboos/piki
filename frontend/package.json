@@ -20,7 +20,10 @@
     "api:update": "npm run api:generate:schema && npm run api:generate:client"
   },
   "dependencies": {
+    "@primevue/themes": "^4.5.4",
     "@tanstack/vue-query": "^5.85.5",
+    "primeicons": "^7.0.0",
+    "primevue": "^4.5.4",
     "vue": "3.5.20",
     "vue-router": "4.5.1"
   },
