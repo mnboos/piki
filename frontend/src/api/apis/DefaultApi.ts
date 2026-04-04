@@ -21,6 +21,7 @@ import type {
   PikiOptionsPatch,
   ServoMoveSchema,
   ServoPositionSchema,
+  TrackerStatus,
 } from '../models/index';
 import {
     AimConfigSchemaFromJSON,
@@ -35,6 +36,8 @@ import {
     ServoMoveSchemaToJSON,
     ServoPositionSchemaFromJSON,
     ServoPositionSchemaToJSON,
+    TrackerStatusFromJSON,
+    TrackerStatusToJSON,
 } from '../models/index';
 
 export interface CoreApiServoMoveRequest {
@@ -113,6 +116,37 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiGetOptions(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<PikiOptions> {
         const response = await this.coreApiGetOptionsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return current tracker state.
+     * Get Tracker Status
+     */
+    async coreApiGetTrackerStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<TrackerStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/tracker_status`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => TrackerStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current tracker state.
+     * Get Tracker Status
+     */
+    async coreApiGetTrackerStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<TrackerStatus> {
+        const response = await this.coreApiGetTrackerStatusRaw(initOverrides);
         return await response.value();
     }
 

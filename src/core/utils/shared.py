@@ -4,7 +4,7 @@ import os
 import random
 import threading
 from collections.abc import Sequence
-from ctypes import c_float
+from ctypes import c_char, c_float
 from multiprocessing import Event
 from typing import NamedTuple, Optional
 
@@ -59,6 +59,28 @@ settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
 servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
 servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
+servo_smooth_factor = mp.Value(c_float, 1.0)  # EMA alpha: 1.0 = instant (no smoothing), 0.0 = frozen
+servo_dead_zone = mp.Value(c_float, 1.5)      # degrees: changes smaller than this in both axes are ignored
+tracker_active = threading.Event()   # set while a tracker is running
+# Tracker algorithm: b"CSRT" or b"KCF". Use get/set helpers below.
+_tracker_type_buf = mp.Array(c_char, 8)
+_tracker_type_buf[:4] = b"CSRT"
+# Number of consecutive tracker failures required before the tracker is reset.
+tracker_lost_threshold = mp.Value("i", 5)
+# Set to disable tracker init and stop any active tracker immediately.
+tracking_enabled = threading.Event()
+tracking_enabled.set()  # enabled by default
+
+
+def get_tracker_type() -> str:
+    return _tracker_type_buf[:].rstrip(b"\x00").decode()
+
+
+def set_tracker_type(value: str) -> None:
+    encoded = value.upper().encode()[:8]
+    with _tracker_type_buf.get_lock():
+        _tracker_type_buf[:len(encoded)] = encoded
+        _tracker_type_buf[len(encoded):] = b"\x00" * (8 - len(encoded))
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
@@ -110,6 +132,7 @@ class LatestFrame:
 
 
 latest_frame = LatestFrame()
+latest_debug_frame = LatestFrame()  # raw/distorted frame for the debug video feed
 prob_threshold = mp.Value(c_float, 0.4)
 
 

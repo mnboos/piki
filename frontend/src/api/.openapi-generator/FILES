@@ -7,5 +7,6 @@ models/PikiOptions.ts
 models/PikiOptionsPatch.ts
 models/ServoMoveSchema.ts
 models/ServoPositionSchema.ts
+models/TrackerStatus.ts
 models/index.ts
 runtime.ts

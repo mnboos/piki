@@ -6,3 +6,4 @@ export * from './PikiOptions';
 export * from './PikiOptionsPatch';
 export * from './ServoMoveSchema';
 export * from './ServoPositionSchema';
+export * from './TrackerStatus';

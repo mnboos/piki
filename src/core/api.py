@@ -1,5 +1,4 @@
 import asyncio
-import math
 from typing import Optional
 
 import numpy as np
@@ -10,15 +9,23 @@ from ninja import NinjaAPI, PatchDict, Schema
 from .utils.shared import (
     app_settings,
     cv2,
+    get_tracker_type,
     is_object_detection_disabled,
+    latest_debug_frame,
     latest_frame,
     mask_transparency,
     motion_detector,
     prob_threshold,
+    servo_dead_zone,
     servo_pan,
+    servo_smooth_factor,
     servo_tilt,
+    set_tracker_type,
     settings,
     streaming_active,
+    tracker_active,
+    tracker_lost_threshold,
+    tracking_enabled,
 )
 
 # api = NinjaAPI(csrf=True, auth=django_auth)
@@ -98,14 +105,12 @@ async def stream_camera():
                     cv2.LINE_AA,
                 )
 
-            # Draw servo crosshair using camera intrinsics from engine.py.
-            # angle→pixel: px = cx + fx*tan(pan), py = cy + fy*tan(tilt)
-            from .utils.engine import CAM_CX, CAM_CY, CAM_FX, CAM_FY, FRAME_H, FRAME_W  # noqa: PLC0415
+            # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
+            # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
+            from .utils.engine import SERVO_HFOV, SERVO_VFOV  # noqa: PLC0415
             fh, fw = draw_frame.shape[:2]
-            scale_x = fw / FRAME_W
-            scale_y = fh / FRAME_H
-            ch_x = int((CAM_CX + CAM_FX * math.tan(math.radians(servo_pan.value))) * scale_x)
-            ch_y = int((CAM_CY + CAM_FY * math.tan(math.radians(servo_tilt.value))) * scale_y)
+            ch_x = int((servo_pan.value / SERVO_HFOV + 0.5) * fw)
+            ch_y = int((servo_tilt.value / SERVO_VFOV + 0.5) * fh)
             ch_x = max(0, min(fw - 1, ch_x))
             ch_y = max(0, min(fh - 1, ch_y))
             _CROSSHAIR_COLOR = (0, 200, 255)  # orange
@@ -146,6 +151,33 @@ async def video_feed(request: HttpRequest):
     return StreamingHttpResponse(stream_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
 
 
+async def stream_debug_camera():
+    """MJPEG stream of the raw/debug topic — no overlays, no detection boxes."""
+    last_ts = 0
+    try:
+        while True:
+            result = await asyncio.to_thread(latest_debug_frame.wait_for_frame, last_ts)
+            if result is None:
+                await asyncio.sleep(0.01)
+                continue
+            frame, _, last_ts = result
+            if frame is None or (hasattr(frame, "size") and frame.size == 0):
+                continue
+            draw_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR) if frame.ndim == 2 else np.array(frame)
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
+            success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
+            if success:
+                yield b"--frame\nContent-Type: image/jpeg\n\n" + buffer.tobytes() + b"\n"
+    finally:
+        pass
+
+
+@api.get("/video_feed_raw", openapi_extra=BIN_RESPONSE)
+async def video_feed_raw(request: HttpRequest):
+    """Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."""
+    return StreamingHttpResponse(stream_debug_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
+
+
 class PikiOptions(Schema):
     mode: str
     conf_threshold: Optional[float] = None
@@ -155,6 +187,11 @@ class PikiOptions(Schema):
     mog2_var_threshold: Optional[int] = None
     denoise_kernelsize: Optional[int] = None
     mask_transparency: Optional[float] = None
+    tracker_type: Optional[str] = None
+    tracker_lost_threshold: Optional[int] = None
+    tracking_enabled: Optional[bool] = None
+    servo_smooth_factor: Optional[float] = None
+    servo_dead_zone: Optional[float] = None
 
 
 @api.patch("/update_options", response=PikiOptions)
@@ -187,6 +224,25 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     if (v := options.get("mask_transparency")) is not None:
         mask_transparency.value = float(v)
 
+    if (v := options.get("tracker_type")) is not None:
+        if v in ("CSRT", "KCF"):
+            set_tracker_type(v)
+
+    if (v := options.get("tracker_lost_threshold")) is not None:
+        tracker_lost_threshold.value = max(1, int(v))
+
+    if (v := options.get("tracking_enabled")) is not None:
+        if v:
+            tracking_enabled.set()
+        else:
+            tracking_enabled.clear()
+
+    if (v := options.get("servo_smooth_factor")) is not None:
+        servo_smooth_factor.value = max(0.0, min(1.0, float(v)))
+
+    if (v := options.get("servo_dead_zone")) is not None:
+        servo_dead_zone.value = max(0.0, float(v))
+
     # Persist all current values to DB so they survive restarts.
     config = DetectionConfig.load()
     config.mode = mode
@@ -197,6 +253,11 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.mog2_var_threshold = settings.foreground_mask_options.mog2_var_threshold.value
     config.denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
     config.mask_transparency = mask_transparency.value
+    config.tracker_type = get_tracker_type()
+    config.tracker_lost_threshold = tracker_lost_threshold.value
+    config.tracking_enabled = tracking_enabled.is_set()
+    config.servo_smooth_factor = servo_smooth_factor.value
+    config.servo_dead_zone = servo_dead_zone.value
     config.save()
 
     return PikiOptions(
@@ -208,6 +269,11 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
         denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
         mask_transparency=mask_transparency.value,
+        tracker_type=get_tracker_type(),
+        tracker_lost_threshold=tracker_lost_threshold.value,
+        tracking_enabled=tracking_enabled.is_set(),
+        servo_smooth_factor=servo_smooth_factor.value,
+        servo_dead_zone=servo_dead_zone.value,
     )
 
 
@@ -230,6 +296,11 @@ def get_options(request: HttpRequest):
         mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
         denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
         mask_transparency=mask_transparency.value,
+        tracker_type=get_tracker_type(),
+        tracker_lost_threshold=tracker_lost_threshold.value,
+        tracking_enabled=tracking_enabled.is_set(),
+        servo_smooth_factor=servo_smooth_factor.value,
+        servo_dead_zone=servo_dead_zone.value,
     )
 
 
@@ -275,6 +346,17 @@ def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema])
 def get_yolo_classes(request: HttpRequest):
     """Return the list of all detectable YOLO class names."""
     return _YOLO_CLASSES
+
+
+class TrackerStatus(Schema):
+    tracking: bool
+    tracker_type: str
+
+
+@api.get("/tracker_status", response=TrackerStatus)
+def get_tracker_status(request: HttpRequest):
+    """Return current tracker state."""
+    return TrackerStatus(tracking=tracker_active.is_set(), tracker_type=get_tracker_type())
 
 
 class ServoMoveSchema(Schema):

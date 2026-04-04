@@ -17,6 +17,11 @@ class DetectionConfig(models.Model):
     mog2_var_threshold = models.IntegerField(default=16)
     denoise_kernelsize = models.IntegerField(default=7)
     mask_transparency = models.FloatField(default=0.5)
+    tracker_type = models.CharField(max_length=8, default="CSRT")
+    tracker_lost_threshold = models.IntegerField(default=5)
+    tracking_enabled = models.BooleanField(default=True)
+    servo_smooth_factor = models.FloatField(default=1.0)
+    servo_dead_zone = models.FloatField(default=1.5)
 
     class Meta:
         verbose_name = "Detection Config"

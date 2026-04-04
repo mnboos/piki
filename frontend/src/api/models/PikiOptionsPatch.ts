@@ -67,6 +67,36 @@ export interface PikiOptionsPatch {
      * @memberof PikiOptionsPatch
      */
     maskTransparency?: number | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof PikiOptionsPatch
+     */
+    trackerType?: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    trackerLostThreshold?: number | null;
+    /**
+     *
+     * @type {boolean}
+     * @memberof PikiOptionsPatch
+     */
+    trackingEnabled?: boolean | null;
+    /**
+     * EMA alpha: 1.0 = instant (no smoothing), lower = smoother
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoSmoothFactor?: number | null;
+    /**
+     * Dead zone in degrees: changes smaller than this in both axes are ignored
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoDeadZone?: number | null;
 }
 
 /**
@@ -94,6 +124,11 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
         'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
         'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
         'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
+        'trackerType': json['tracker_type'] == null ? undefined : json['tracker_type'],
+        'trackerLostThreshold': json['tracker_lost_threshold'] == null ? undefined : json['tracker_lost_threshold'],
+        'trackingEnabled': json['tracking_enabled'] == null ? undefined : json['tracking_enabled'],
+        'servoSmoothFactor': json['servo_smooth_factor'] == null ? undefined : json['servo_smooth_factor'],
+        'servoDeadZone': json['servo_dead_zone'] == null ? undefined : json['servo_dead_zone'],
     };
 }
 
@@ -116,6 +151,11 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
         'mog2_var_threshold': value['mog2VarThreshold'],
         'denoise_kernelsize': value['denoiseKernelsize'],
         'mask_transparency': value['maskTransparency'],
+        'tracker_type': value['trackerType'],
+        'tracker_lost_threshold': value['trackerLostThreshold'],
+        'tracking_enabled': value['trackingEnabled'],
+        'servo_smooth_factor': value['servoSmoothFactor'],
+        'servo_dead_zone': value['servoDeadZone'],
     };
 }
 

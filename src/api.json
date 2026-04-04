@@ -161,6 +161,26 @@
                 "description": "Return the list of all detectable YOLO class names."
             }
         },
+        "/api/tracker_status": {
+            "get": {
+                "operationId": "core_api_get_tracker_status",
+                "summary": "Get Tracker Status",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TrackerStatus"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return current tracker state."
+            }
+        },
         "/api/servo/move": {
             "post": {
                 "operationId": "core_api_servo_move",
@@ -276,6 +296,61 @@
                             }
                         ],
                         "title": "Mask Transparency"
+                    },
+                    "tracker_type": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Type"
+                    },
+                    "tracker_lost_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Lost Threshold"
+                    },
+                    "tracking_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracking Enabled"
+                    },
+                    "servo_smooth_factor": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Smooth Factor"
+                    },
+                    "servo_dead_zone": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Dead Zone"
                     }
                 },
                 "required": [
@@ -373,6 +448,61 @@
                             }
                         ],
                         "title": "Mask Transparency"
+                    },
+                    "tracker_type": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Type"
+                    },
+                    "tracker_lost_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Lost Threshold"
+                    },
+                    "tracking_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracking Enabled"
+                    },
+                    "servo_smooth_factor": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Smooth Factor"
+                    },
+                    "servo_dead_zone": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Dead Zone"
                     }
                 },
                 "title": "PikiOptionsPatch",
@@ -428,6 +558,24 @@
                     }
                 },
                 "title": "AimConfigSchemaPatch",
+                "type": "object"
+            },
+            "TrackerStatus": {
+                "properties": {
+                    "tracking": {
+                        "title": "Tracking",
+                        "type": "boolean"
+                    },
+                    "tracker_type": {
+                        "title": "Tracker Type",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "tracking",
+                    "tracker_type"
+                ],
+                "title": "TrackerStatus",
                 "type": "object"
             },
             "ServoPositionSchema": {
