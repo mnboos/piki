@@ -3,6 +3,8 @@ import multiprocessing as mp
 import os
 import random
 import threading
+import time
+from collections import deque
 from collections.abc import Sequence
 from ctypes import c_char, c_float
 from multiprocessing import Event
@@ -88,6 +90,34 @@ is_object_detection_disabled = Event()
 # display-only work (frame caching, bbox rendering, latest_frame updates)
 # is skipped so the inference/motion-detection loop runs at full speed.
 streaming_active = threading.Event()
+
+
+class FPSCounter:
+    """Rolling-window FPS counter (thread-safe)."""
+
+    def __init__(self, window: float = 2.0):
+        self._ts: deque[float] = deque()
+        self._window = window
+        self._lock = threading.Lock()
+
+    def tick(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._ts.append(now)
+            cutoff = now - self._window
+            while self._ts and self._ts[0] < cutoff:
+                self._ts.popleft()
+
+    @property
+    def fps(self) -> float:
+        with self._lock:
+            n = len(self._ts)
+            if n < 2:
+                return 0.0
+            return (n - 1) / (self._ts[-1] - self._ts[0])
+
+
+fps_counter = FPSCounter()
 
 # DJANGO_RELOAD_ISSUED = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)

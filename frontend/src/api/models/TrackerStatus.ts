@@ -20,17 +20,23 @@ import { mapValues } from '../runtime';
  */
 export interface TrackerStatus {
     /**
-     * 
+     *
      * @type {boolean}
      * @memberof TrackerStatus
      */
     tracking: boolean;
     /**
-     * 
+     *
      * @type {string}
      * @memberof TrackerStatus
      */
     trackerType: string;
+    /**
+     *
+     * @type {number}
+     * @memberof TrackerStatus
+     */
+    fps: number;
 }
 
 /**
@@ -39,6 +45,7 @@ export interface TrackerStatus {
 export function instanceOfTrackerStatus(value: object): value is TrackerStatus {
     if (!('tracking' in value) || value['tracking'] === undefined) return false;
     if (!('trackerType' in value) || value['trackerType'] === undefined) return false;
+    if (!('fps' in value) || value['fps'] === undefined) return false;
     return true;
 }
 
@@ -51,9 +58,10 @@ export function TrackerStatusFromJSONTyped(json: any, ignoreDiscriminator: boole
         return json;
     }
     return {
-        
+
         'tracking': json['tracking'],
         'trackerType': json['tracker_type'],
+        'fps': json['fps'],
     };
 }
 
@@ -67,9 +75,10 @@ export function TrackerStatusToJSONTyped(value?: TrackerStatus | null, ignoreDis
     }
 
     return {
-        
+
         'tracking': value['tracking'],
         'tracker_type': value['trackerType'],
+        'fps': value['fps'],
     };
 }
 

@@ -34,6 +34,7 @@ from .shared import (
     ai_input_size,
     app_settings,
     cv2,
+    fps_counter,
     is_object_detection_disabled,
     latest_debug_frame,
     latest_frame,
@@ -146,6 +147,7 @@ class PikiVisionNode(Node):
 
     def listener_callback_hbm(self, msg: Any):
         try:
+            fps_counter.tick()
             w, h = msg.width, msg.height
             stride = msg.step if msg.step > 0 else w
 

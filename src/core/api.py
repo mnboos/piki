@@ -9,6 +9,7 @@ from ninja import NinjaAPI, PatchDict, Schema
 from .utils.shared import (
     app_settings,
     cv2,
+    fps_counter,
     get_tracker_type,
     is_object_detection_disabled,
     latest_debug_frame,
@@ -359,12 +360,17 @@ def get_yolo_classes(request: HttpRequest):
 class TrackerStatus(Schema):
     tracking: bool
     tracker_type: str
+    fps: float
 
 
 @api.get("/tracker_status", response=TrackerStatus)
 def get_tracker_status(request: HttpRequest):
     """Return current tracker state."""
-    return TrackerStatus(tracking=tracker_active.is_set(), tracker_type=get_tracker_type())
+    return TrackerStatus(
+        tracking=tracker_active.is_set(),
+        tracker_type=get_tracker_type(),
+        fps=round(fps_counter.fps, 1),
+    )
 
 
 class ServoMoveSchema(Schema):

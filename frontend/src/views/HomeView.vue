@@ -43,6 +43,7 @@ const debugTopic = import.meta.env.VITE_ROS_DEBUG_TOPIC ?? "/image_right_raw";
 
 const isTracking = ref(false);
 const trackerType = ref("CSRT");
+const currentFps = ref(0);
 let statusInterval: ReturnType<typeof setInterval> | null = null;
 
 const { mutate: updateOptions } = useMutation({
@@ -68,6 +69,7 @@ async function pollTrackerStatus() {
         const s = await api.coreApiGetTrackerStatus();
         isTracking.value = s.tracking;
         trackerType.value = s.trackerType;
+        currentFps.value = s.fps;
     } catch { /* ignore */ }
 }
 
@@ -126,6 +128,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                         <div class="tracker-badge" :class="{ active: isTracking }">
                             {{ isTracking ? `TRACKING · ${trackerType}` : `IDLE · ${trackerType}` }}
                         </div>
+                        <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
                     </div>
                 </TabPanel>
 
@@ -201,6 +204,20 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
 .tracker-badge.active {
     background: rgba(0, 200, 100, 0.85);
     color: #000;
+}
+.fps-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-family: monospace;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    background: rgba(0, 0, 0, 0.55);
+    color: #aaa;
+    pointer-events: none;
 }
 .debug-feeds {
     display: flex;
