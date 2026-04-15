@@ -406,14 +406,23 @@ try:
     worker_ready.set()
 
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
-        t0 = time.perf_counter()
+        _profile = bool(os.environ.get("PIKI_PROFILE"))
+
+        t_fwd = time.perf_counter()
         outputs = model.forward(image)
+        if _profile:
+            logger.info("PERF stage=bpu_forward ms=%.2f", (time.perf_counter() - t_fwd) * 1000)
+
         conf = prob_threshold.value
+        t_dec = time.perf_counter()
         if _USE_YOLOv8_DECODER:
             results = yolov8_post_process(outputs=outputs, conf_thres=conf)
         else:
             results = yolov10_post_process(outputs=outputs, score_threshold=conf)
-        tt = round((time.perf_counter() - t0) * 1000)
+        if _profile:
+            logger.info("PERF stage=yolov8_decode ms=%.2f", (time.perf_counter() - t_dec) * 1000)
+
+        tt = round((time.perf_counter() - t_fwd) * 1000)
         logger.debug(f"results: {results}")
         return tt, results
 except:

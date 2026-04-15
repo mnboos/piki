@@ -158,12 +158,8 @@ class MotionDetector:
         )
 
     def is_moving(self, frame: np.ndarray):
-        # motion_ms = get_measure("Detect motion")
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # lab = cv2.cvtColor(frame, cv2.COLOR_RGB2Lab)
-        # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
-        # frame = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+        import os, time  # noqa: PLC0415, E401
+        _t0 = time.perf_counter() if os.environ.get("PIKI_PROFILE") else None
 
         gray = frame if frame.ndim == 2 or frame.shape[2] == 1 else cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         frame = self.clahe.apply(gray)
@@ -178,11 +174,10 @@ class MotionDetector:
         cv2.dilate(fg_mask, self.morph_kernel, iterations=1, dst=fg_mask)
         cv2.erode(fg_mask, self.morph_kernel, iterations=2, dst=fg_mask)
         cv2.dilate(fg_mask, self.morph_kernel, iterations=1, dst=fg_mask)
-        # cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
-        # # Connect nearby regions (cat body parts)
-        # cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self.morph_kernel, fg_mask)
         is_moving = cv2.countNonZero(fg_mask) >= settings.foreground_mask_options.pixelcount_threshold.value
-        # motion_ms()
+
+        if _t0 is not None:
+            logger.info("PERF stage=motion_detect ms=%.2f", (time.perf_counter() - _t0) * 1000)
         return is_moving, fg_mask
 
     def create_rois(self, *, mask: np.ndarray) -> list:
@@ -195,13 +190,15 @@ class MotionDetector:
             list: A list of the final, fully optimized ROIs.
 
         """
+        import os, time  # noqa: PLC0415, E401
+        _t0 = time.perf_counter() if os.environ.get("PIKI_PROFILE") else None
+
         # 1. Find all individual blobs in the mask (Fast)
         num_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8, ltype=cv2.CV_32S)
 
         # 2. Filter small blobs and collect their initial bounding boxes
         initial_boxes = []
 
-        # if num_labels > 1:
         for i in range(1, num_labels):
             area = stats[i, cv2.CC_STAT_AREA]
             if area >= settings.foreground_mask_options.min_area.value:
@@ -209,13 +206,12 @@ class MotionDetector:
                 y = stats[i, cv2.CC_STAT_TOP]
                 w = stats[i, cv2.CC_STAT_WIDTH]
                 h = stats[i, cv2.CC_STAT_HEIGHT]
-                # fullness = area / (w * h)
                 initial_boxes.append((x, y, w, h))
 
         if not initial_boxes:
             return []
 
-        # # 3. Cluster the initial boxes with full constraints (Intelligent)
+        # 3. Cluster the initial boxes with full constraints (Intelligent)
         enable_clustering = True  # TODO(mnboos): make configurable
         if enable_clustering:
             clustered_rois = cluster_with_constraints(
@@ -228,28 +224,22 @@ class MotionDetector:
         # 4. Finalize ROIs to enforce minimum size and handle edge cases (Format for AI)
         final_rois = []
         for roi_box in clustered_rois:
-            # Assumes self._expand_roi_to_min_size is your boundary-aware finalization function
             final_roi = expand_roi_to_min_size(min_roi_size=self.min_roi_size, roi=roi_box, img_shape=mask.shape)
             final_rois.append(final_roi)
 
         # Optional: Sort final ROIs
         final_rois.sort(key=lambda roi: edge_distance(roi=roi, img_shape=mask.shape))
 
+        if _t0 is not None:
+            logger.info("PERF stage=roi_create ms=%.2f", (time.perf_counter() - _t0) * 1000)
         return final_rois
 
     def get_bounding_boxes(
         self,
         foreground_mask: np.ndarray,
     ):
-        # measure = get_measure("ROI retrieval")
-        # res = self.method1_connected_components(foreground_mask)
-        # res = self.method1_with_clustering(foreground_mask)
         res = self.create_rois(mask=foreground_mask)
         res = apply_non_max_suppression(boxes=res)
-        # res = self.method2_watershed_segmentation(foreground_mask)
-        # res = self.method3_mean_shift_clustering(foreground_mask)
-        # res = self.method4_adaptive_threshold_contours(foreground_mask)
-        # measure()
         return res
 
     def highlight_movement_on(

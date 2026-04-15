@@ -421,12 +421,15 @@ def run_object_detection(
     if is_object_detection_disabled.is_set():
         return InferenceOutput(worker_pid=worker_pid, timestamp=timestamp, avg_duration=0, detections=[])
 
+    _profile = bool(os.environ.get("PIKI_PROFILE"))
+
     try:
         frame_w = frame_hires.shape[1]
         frame_h = frame_hires.shape[0] * 2 // 3  # NV12: total rows = h * 1.5
 
         from .ai import MODEL_INPUT_TYPE, detect_objects  # noqa: PLC0415
 
+        _t = time.perf_counter()
         tiles = slice_roi_into_tiles(
             frame=frame_hires,
             rois=rois,
@@ -434,6 +437,8 @@ def run_object_detection(
             preview_downscale_factor=preview_downscale_factor,
             model_input_type=MODEL_INPUT_TYPE,
         )
+        if _profile:
+            logger.info("PERF stage=tile_slice ms=%.2f tiles=%d", (time.perf_counter() - _t) * 1000, len(tiles))
         logger.debug("Tiles to infer: %d", len(tiles))
 
         total_duration = 0
@@ -459,7 +464,11 @@ def run_object_detection(
                 ]
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
+        _t = time.perf_counter()
         all_detections = _nms_detections(all_detections, iou_threshold=0.45)
+        if _profile:
+            logger.info("PERF stage=cross_tile_nms ms=%.2f", (time.perf_counter() - _t) * 1000)
+
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
