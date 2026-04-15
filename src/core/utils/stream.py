@@ -46,6 +46,7 @@ from .shared import (
     tracker_lost_threshold,
     tracking_enabled,
 )
+from .tracker_safety import is_bbox_safe_for_update, sanitize_bbox_for_frame
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,49 @@ def _foreground_centroid(
         if xs.size > 0:
             return (float(xs.mean()) + x1) / fw, (float(ys.mean()) + y1) / fh
     return (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
+
+
+def _reset_tracker_state(*, clear_bbox: bool = False) -> None:
+    """Reset tracker runtime state to a consistent baseline."""
+    global tracker, untracked_frames_count, total_untracked_frames_count
+    global _tracker_lost_streak, _yolo_revalidate_counter, last_known_bbox
+    with tracker_lock:
+        tracker = None
+        tracking.clear()
+        untracked_frames_count = 0
+        total_untracked_frames_count = 0
+    tracker_active.clear()
+    _tracker_lost_streak = 0
+    _yolo_revalidate_counter = 0
+    if clear_bbox:
+        last_known_bbox = None
+
+
+def _try_recover_tracker(
+    *,
+    frame: np.ndarray,
+    bbox: tuple[int, int, int, int] | None,
+) -> tuple[bool, tuple[int, int, int, int] | None]:
+    """Try one recovery step by clamping/re-initialising tracker from bbox."""
+    global tracker, untracked_frames_count, total_untracked_frames_count
+    safe_bbox = sanitize_bbox_for_frame(bbox=bbox, frame_shape=frame.shape[:2], edge_margin=0)
+    if safe_bbox is None or not is_bbox_safe_for_update(bbox=safe_bbox, frame_shape=frame.shape[:2]):
+        return False, None
+
+    new_tracker = _make_tracker()
+    try:
+        new_tracker.init(frame, tuple(safe_bbox))
+    except cv2.error as e:
+        logger.warning("Tracker recovery init raised cv2.error (%s)", e)
+        return False, None
+
+    with tracker_lock:
+        tracker = new_tracker
+        tracking.set()
+        untracked_frames_count = 0
+        total_untracked_frames_count = 0
+    tracker_active.set()
+    return True, tuple(safe_bbox)
 
 
 
@@ -568,6 +612,7 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
     """
     global max_output_timestamp, tracker, untracked_frames_count, total_untracked_frames_count
     global _tracker_lost_streak, _locked_target_bbox, _locked_target_label, _locked_target_lost_since
+    global last_known_bbox
     active_futures.remove(future)
     try:
         worker_pid, timestamp, inference_time, detections = future.result()
@@ -665,11 +710,8 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
             if lores_frame is not None and tracking_enabled.is_set():
                 fh, fw = lores_frame.shape[:2]
                 x, y, w, h = denormalize(bbox_normalized=chosen_bbox, frame_shape=(fh, fw))
-                # Clamp to frame bounds: denormalize() may produce right/bottom == fw/fh
-                # when xmax/ymax == 1.0, which OpenCV trackers reject.
-                w = min(w, fw - x)
-                h = min(h, fh - y)
-                if w > 0 and h > 0:
+                safe_bbox = sanitize_bbox_for_frame(bbox=(x, y, w, h), frame_shape=(fh, fw), edge_margin=0)
+                if safe_bbox is not None:
                     # Keep grayscale for init: the camera outputs a Y-plane, so
                     # converting to BGR produces 3 identical channels which breaks
                     # KCF's colour-name features.  Grayscale works for both trackers.
@@ -680,7 +722,7 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
                     try:
                         # OpenCV 4.x init() returns None (void); older versions return
                         # bool True/False.  Assume success unless an exception is raised.
-                        new_tracker.init(frame_for_tracker, (x, y, w, h))
+                        new_tracker.init(frame_for_tracker, tuple(safe_bbox))
                     except cv2.error as e:
                         logger.warning("Tracker init raised cv2.error (%s), skipping.", e)
                     else:
@@ -689,10 +731,11 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
                             tracking.set()
                             untracked_frames_count = 0
                             total_untracked_frames_count = 0
+                        last_known_bbox = tuple(safe_bbox)
                         _tracker_lost_streak = 0
                         tracker_active.set()
                         logger.info("Tracker (re-)initialised at bbox (%d,%d,%d,%d) frame=%s type=%s",
-                                    x, y, w, h, lores_frame.shape, get_tracker_type())
+                                    *safe_bbox, lores_frame.shape, get_tracker_type())
 
         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
@@ -782,14 +825,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
 
     # If tracking has been disabled externally, stop any active tracker now.
     if is_tracking and not tracking_enabled.is_set():
-        with tracker_lock:
-            tracker = None
-            tracking.clear()
-            untracked_frames_count = 0
-            total_untracked_frames_count = 0
-        tracker_active.clear()
-        _tracker_lost_streak = 0
-        _yolo_revalidate_counter = 0
+        _reset_tracker_state(clear_bbox=False)
         is_tracking = False
 
     detections_to_show = []
@@ -802,26 +838,59 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
         if contiguous.ndim == 3:
             contiguous = cv2.cvtColor(contiguous, cv2.COLOR_BGR2GRAY)
         found = False
-        try:
-            found, raw_bbox = tracker.update(contiguous)
-        except cv2.error as e:
-            # cv2.error means the tracker's internal state is corrupt (e.g. ROI
-            # drifted off-frame).  This is not a transient "briefly lost" event —
-            # reset immediately rather than counting toward the lost streak.
-            logger.warning("Tracker update raised cv2.error (%s), resetting immediately.", e)
-            with tracker_lock:
-                tracker = None
-                tracking.clear()
-                untracked_frames_count = 0
-                total_untracked_frames_count = 0
-            tracker_active.clear()
-            _tracker_lost_streak = 0
-            _yolo_revalidate_counter = 0
+
+        fh, fw = contiguous.shape[:2]
+        safe_last_bbox = sanitize_bbox_for_frame(bbox=last_known_bbox, frame_shape=(fh, fw), edge_margin=0)
+        if contiguous.size == 0:
+            logger.warning("Tracker reset: frame=%s is empty.", contiguous.shape)
+            _reset_tracker_state(clear_bbox=True)
             is_tracking = False
+        elif safe_last_bbox is None or not is_bbox_safe_for_update(bbox=safe_last_bbox, frame_shape=(fh, fw)):
+            logger.warning(
+                "Tracker state unsafe before update: frame=%s last_bbox=%s safe_bbox=%s. Trying one recovery.",
+                contiguous.shape,
+                last_known_bbox,
+                safe_last_bbox,
+            )
+            recovered, recovered_bbox = _try_recover_tracker(frame=contiguous, bbox=safe_last_bbox)
+            if recovered and recovered_bbox is not None:
+                last_known_bbox = recovered_bbox
+                rx, ry, rw, rh = recovered_bbox
+                found = True
+                raw_bbox = recovered_bbox
+            else:
+                _reset_tracker_state(clear_bbox=True)
+                is_tracking = False
+        else:
+            last_known_bbox = tuple(safe_last_bbox)
+            try:
+                found, raw_bbox = tracker.update(contiguous)
+            except cv2.error as e:
+                # cv2.error means the tracker's internal state is corrupt (e.g. ROI
+                # drifted off-frame).  This is not a transient "briefly lost" event —
+                # reset immediately rather than counting toward the lost streak.
+                logger.warning("Tracker update raised cv2.error (%s), resetting immediately.", e)
+                _reset_tracker_state(clear_bbox=True)
+                is_tracking = False
 
         if is_tracking and found:
+            rx, ry, rw, rh = (int(v) for v in raw_bbox)
+            safe_tracked_bbox = sanitize_bbox_for_frame(bbox=(rx, ry, rw, rh), frame_shape=(fh, fw), edge_margin=0)
+            if safe_tracked_bbox is None or not is_bbox_safe_for_update(bbox=safe_tracked_bbox, frame_shape=(fh, fw)):
+                # Tracker drifted bbox out of frame — KCF will raise on the next
+                # update if we keep this position.  Reset now while the frame is still valid.
+                logger.debug(
+                    "Tracker bbox unsafe after update: raw=%s safe=%s frame=(%dx%d), resetting.",
+                    (rx, ry, rw, rh), safe_tracked_bbox, fw, fh,
+                )
+                _reset_tracker_state(clear_bbox=True)
+                is_tracking = False
+                found = False
+            else:
+                rx, ry, rw, rh = safe_tracked_bbox
+        if is_tracking and found:
             _tracker_lost_streak = 0
-            x, y, w, h = (int(v) for v in raw_bbox)
+            x, y, w, h = rx, ry, rw, rh
             last_known_bbox = (x, y, w, h)
             detections_to_show = [Detection(label="tracker", confidence=1.0, bbox=(x, y, w, h))]
 
@@ -871,14 +940,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
             else:
                 # Confirmed loss — reset and let motion detection take over.
                 logger.info("Tracker lost target after %d consecutive failures, resetting.", _tracker_lost_streak)
-                _tracker_lost_streak = 0
-                with tracker_lock:
-                    tracker = None
-                    tracking.clear()
-                    untracked_frames_count = 0
-                    total_untracked_frames_count = 0
-                tracker_active.clear()
-                _yolo_revalidate_counter = 0
+                _reset_tracker_state(clear_bbox=True)
                 # Immediately try motion-based YOLO on this same frame.
                 if has_movement and not active_futures:
                     rois = motion_detector.create_rois(mask=mask)
