@@ -28,17 +28,11 @@ mkdir -p "${SCRIPT_DIR}/logs"
 export ROS_LOG_DIR=/userdata/.roslog
 
 # ── Start hobot_stereonet ─────────────────────────────────────────────────────
-# Owns the MIPI hardware exclusively. Handles:
-#   SC230AI sensors → ISP (noise reduction, WDR) → rectification → NV12
-# Publishes:
-#   /hbmem_img          — rectified left image, 640x352 NV12, zero-copy shared mem
-#   /depth_map          — disparity/depth map from stereonet BPU model
-#   /hobot_stereonet_visual — colourised depth visualisation (for debugging)
-#
-# NOTE: need_rectify:=False because the camera EEPROM already contains the
-# calibration matrices (Kl, Kr, Dl, Dr, R, t) — stereonet loads them
-# automatically and rectifies internally regardless of this flag.
-# Set to True only if you provide an external calibration_file_path override.
+# Owns the MIPI hardware exclusively and provides HBM zero-copy transport.
+# Publishes /image_left_raw and /image_right_raw (used by Django).
+# Also publishes /depth_map — currently unused; will be replaced by ToF later.
+# NOTE: plain mipi_cam_dual_channel does not support mipi_io_method:=shared_mem
+# (segfaults on zero-copy init), so stereonet is kept as the camera driver for now.
 # CRITICAL for Shared Memory (HBM) to work with Django
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/tros/humble/lib/hobot_shm/config/shm_fastdds.xml
@@ -91,13 +85,8 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 #STEREONET_PID=$!
 #
 
-# SC230AI dual stereo: 1280x640 combined (two 640x640 eyes side by side).
-# stereo_combine_mode=1: images are packed left|right in one frame.
-# need_rectify=True: stereonet rectifies using the built-in stereo.yaml calibration.
-# The published /StereoNetNode/rectified_image will be the left eye at 1280x640.
 # setsid puts the launch process in its own process group so that
-# `kill -- -$STEREONET_PID` in cleanup() reaches all child nodes
-# (mipi_cam, stereonet_model_node, etc.) in one shot.
+# `kill -- -$STEREONET_PID` in cleanup() reaches all child nodes in one shot.
 setsid ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
 mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
 stereo_combine_mode:=1 need_rectify:=True \
