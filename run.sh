@@ -18,7 +18,6 @@ source /opt/tros/humble/setup.bash
 # prior run the new instance will fail with "rcl node's context is invalid".
 echo "[piki] Cleaning up stale ROS2 nodes..."
 pkill -x mipi_cam 2>/dev/null || true
-pkill -x stereonet_model_node 2>/dev/null || true
 
 # ── Fix tros.b runtime directories ───────────────────────────────────────────
 # tros.b nodes write logs to /userdata/.roslog — create it if absent.
@@ -27,16 +26,14 @@ mkdir -p /userdata/.roslog
 mkdir -p "${SCRIPT_DIR}/logs"
 export ROS_LOG_DIR=/userdata/.roslog
 
-# ── Start hobot_stereonet ─────────────────────────────────────────────────────
-# Owns the MIPI hardware exclusively and provides HBM zero-copy transport.
-# Publishes /image_left_raw and /image_right_raw (used by Django).
-# Also publishes /depth_map — currently unused; will be replaced by ToF later.
-# NOTE: plain mipi_cam_dual_channel does not support mipi_io_method:=shared_mem
-# (segfaults on zero-copy init), so stereonet is kept as the camera driver for now.
-# CRITICAL for Shared Memory (HBM) to work with Django
+# ── Start MIPI camera ─────────────────────────────────────────────────────────
+# Publishes /image_left_raw and /image_right_raw.
+# mipi_io_method:=shared_mem segfaults (HBM DMA driver bug in tros 2.5.2 — filed upstream).
+# Using ros transport; ROS loaned-messages zero-copy is still active via FastDDS XML profile.
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/tros/humble/lib/hobot_shm/config/shm_fastdds.xml
 export RMW_FASTRTPS_USE_QOS_FROM_XML=1
+export ROS_DISABLE_LOANED_MESSAGES=0
 
 ## ── 2. Start MIPI Camera (Shared Memory Mode) ────────────────────────────────
 #echo "[piki] Starting mipi_cam (Stereo Capture)..."
@@ -86,15 +83,14 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 #
 
 # setsid puts the launch process in its own process group so that
-# `kill -- -$STEREONET_PID` in cleanup() reaches all child nodes in one shot.
-setsid ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
-mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
-stereo_combine_mode:=1 need_rectify:=True \
-height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
-uncertainty_th:=0.1 &
-STEREONET_PID=$!
+# `kill -- -$CAM_PID` in cleanup() reaches all child nodes in one shot.
+setsid ros2 launch mipi_cam mipi_cam_dual_channel.launch.py \
+mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=true mipi_image_framerate:=20.0 \
+mipi_io_method:=ros \
+mipi_camera_calibration_file_path:=/opt/tros/humble/lib/mipi_cam/config/SC230ai_dual_calibration.yaml &
+CAM_PID=$!
 
-sleep 5
+sleep 2
 
 # ── Start Django ──────────────────────────────────────────────────────────────
 echo "[piki] Starting Django..."
@@ -124,16 +120,16 @@ cleanup() {
     kill $DJANGO_PID 2>/dev/null
     # Negative PID kills the entire process group started by setsid above,
     # ensuring mipi_cam and all other child nodes are terminated together.
-    kill -- -$STEREONET_PID 2>/dev/null
+    kill -- -$CAM_PID 2>/dev/null
     wait $DJANGO_PID 2>/dev/null
-    wait $STEREONET_PID 2>/dev/null
+    wait $CAM_PID 2>/dev/null
     echo "[piki] Done."
 }
 trap cleanup SIGINT SIGTERM
 
 # ── Wait ──────────────────────────────────────────────────────────────────────
 # Unblocks if either process exits — then shut both down.
-wait -n $DJANGO_PID $STEREONET_PID
+wait -n $DJANGO_PID $CAM_PID
 EXIT_CODE=$?
 echo "[piki] A process exited (code: $EXIT_CODE), shutting down..."
 cleanup
