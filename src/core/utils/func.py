@@ -190,8 +190,39 @@ def _slice_bgr_tile(frame: np.ndarray, tx: int, ty: int, tile_size: int) -> np.n
     tile = frame[ty : ty + tile_size, tx : tx + tile_size]
     return tile if tile.flags["C_CONTIGUOUS"] else np.ascontiguousarray(tile)
 
+# Pre-allocate this buffer ONCE during initialization
+# tile_size * tile_size (Y) + (tile_size * tile_size // 2) (UV)
+tile_size = 640
+buffer_size = (tile_size * tile_size * 3) // 2
+inference_buffer = np.zeros(buffer_size, dtype=np.uint8)
 
-def _slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:
+def _slice_nv12_tile(*, nv12, buffer_h, tx, ty, tile_size):
+    # 1. Reset the buffer to zero (only if you expect padding)
+    # If padding is rare, it's faster to only zero the edges
+    inference_buffer.fill(0)
+    
+    # 2. Define the Y-plane destination view (shaped as 2D for easy copying)
+    y_dest = inference_buffer[:tile_size*tile_size].reshape(tile_size, tile_size)
+    
+    # 3. Slice and copy Y (NumPy handles the truncation via shape matching)
+    y_src = nv12[ty : ty + tile_size, tx : tx + tile_size]
+    h, w = y_src.shape
+    y_dest[:h, :w] = y_src
+    
+    # 4. Define the UV-plane destination view
+    uv_start = tile_size * tile_size
+    uv_dest = inference_buffer[uv_start:].reshape(tile_size // 2, tile_size)
+    
+    # 5. Slice and copy UV
+    uv_y = buffer_h + (ty // 2)
+    uv_src = nv12[uv_y : uv_y + (tile_size // 2), tx : tx + tile_size]
+    h_uv, w_uv = uv_src.shape
+    uv_dest[:h_uv, :w_uv] = uv_src
+
+    return inference_buffer # This is a 1D view of the pre-allocated memory
+
+
+def OLD_slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:
     # ── Y plane ──────────────────────────────────────────────────────────────
     # Rows are the actual luminance rows [ty, ty+tile_size).  When the source
     # image is shorter than tile_size (e.g. 640×352 fed into a 640-tile model)
