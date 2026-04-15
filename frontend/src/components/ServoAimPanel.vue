@@ -79,7 +79,15 @@ const initialPreset = findMatchingPreset(
     options.value.servoPidKd,
     options.value.servoDeadZone,
 );
-const isDisabled = !options.value.servoPidKp && !options.value.servoPidKi && !options.value.servoPidKd;
+const isDisabled = (options.value.servoPidKp ?? 1) === 1.0
+    && !(options.value.servoPidKi)
+    && !(options.value.servoPidKd)
+    && !findMatchingPreset(
+        options.value.servoPidKp,
+        options.value.servoPidKi,
+        options.value.servoPidKd,
+        options.value.servoDeadZone,
+    );
 const pidMode = ref<"disabled" | "auto" | "manual">(
     isDisabled ? "disabled" : initialPreset ? "auto" : "manual"
 );
@@ -103,7 +111,9 @@ watch(pidMode, mode => {
         options.value.servoPidKd = selectedPreset.value.kd;
         options.value.servoDeadZone = selectedPreset.value.deadZone;
     } else if (mode === "disabled") {
-        options.value.servoPidKp = 0;
+        // Kp=1, Ki=0, Kd=0 → servo snaps directly to target (no PID correction).
+        // The engine comment documents this as "instant-snap behaviour".
+        options.value.servoPidKp = 1.0;
         options.value.servoPidKi = 0;
         options.value.servoPidKd = 0;
     }

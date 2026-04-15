@@ -223,6 +223,7 @@ def bbox_to_angles(bbox_normalized: list[float]) -> tuple[float, float]:
 
 def aim_at(
     bbox_normalized: list[float],
+    aim_center: "tuple[float, float] | None" = None,
     depth_map: "Optional[object]" = None,
 ) -> tuple[float, float]:
     """Aim both pan and tilt servos at a detected object.
@@ -230,12 +231,23 @@ def aim_at(
     Args:
         bbox_normalized: Detection bounding box as ``[ymin, xmin, ymax, xmax]``
                          normalised to ``[0, 1]`` relative to the actual frame.
+        aim_center:      Optional ``(cx_n, cy_n)`` override for the aim point,
+                         both normalised to ``[0, 1]``.  When provided (e.g. a
+                         foreground-mask centroid), this is used instead of the
+                         geometric bbox centre to reduce jitter caused by bbox
+                         edge noise.
         depth_map:       Ignored — kept for call-site compatibility.
 
     Returns:
         ``(pan_angle, tilt_angle)`` in degrees (positive = right / down).
     """
-    pan_angle, tilt_angle = bbox_to_angles(bbox_normalized)
+    if aim_center is not None:
+        cx_n, cy_n = aim_center
+        pan_angle = (cx_n - 0.5) * SERVO_HFOV
+        tilt_angle = (cy_n - 0.5) * SERVO_VFOV
+        logger.debug("Aim override: centroid (%.3f, %.3f) → pan=%.1f° tilt=%.1f°", cx_n, cy_n, pan_angle, tilt_angle)
+    else:
+        pan_angle, tilt_angle = bbox_to_angles(bbox_normalized)
     logger.debug("Target at pan=%.1f° tilt=%.1f°", pan_angle, tilt_angle)
 
     # -----------------------------------------------------------------------

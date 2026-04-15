@@ -86,6 +86,38 @@ cache_lock = Lock()
 latest_ai_detections = []
 latest_ai_lock = threading.Lock()
 
+# Latest foreground motion mask — updated every frame in process_frame() and used
+# by on_done() to compute a foreground-weighted aim centroid within the detection
+# bbox.  Written and read by the same streaming thread, so no locking is needed.
+_latest_mask: "Optional[np.ndarray]" = None
+_latest_mask_shape: "tuple[int, int]" = (1, 1)
+
+
+def _foreground_centroid(
+    bbox_normalized: "list[float]",
+    mask: "np.ndarray",
+    frame_shape: "tuple[int, ...]",
+) -> "tuple[float, float]":
+    """Return the foreground-weighted centroid (cx_n, cy_n) within a bbox.
+
+    Crops the binary motion mask to the bbox region and returns the mean x/y
+    of all foreground pixels, normalised to ``[0, 1]``.  Falls back to the
+    geometric bbox centre when no foreground pixels exist inside the region
+    (e.g. the target is stationary, or the mask is stale).
+    """
+    ymin, xmin, ymax, xmax = bbox_normalized
+    fh, fw = frame_shape[:2]
+    y1 = max(0, int(ymin * fh))
+    y2 = min(fh, int(ymax * fh))
+    x1 = max(0, int(xmin * fw))
+    x2 = min(fw, int(xmax * fw))
+    if y2 > y1 and x2 > x1:
+        roi = mask[y1:y2, x1:x2]
+        ys, xs = np.where(roi > 0)
+        if xs.size > 0:
+            return (float(xs.mean()) + x1) / fw, (float(ys.mean()) + y1) / fh
+    return (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
+
 
 
 def init_worker():
@@ -622,7 +654,10 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
             # Aim servo at chosen detection.
             if aim_enabled and target_classes:
                 from .engine import aim_at  # noqa: PLC0415
-                aim_at(bbox_normalized=chosen_bbox)
+                _aim_center = None
+                if _latest_mask is not None:
+                    _aim_center = _foreground_centroid(chosen_bbox, _latest_mask, _latest_mask_shape)
+                aim_at(bbox_normalized=chosen_bbox, aim_center=_aim_center)
 
             # Re-init tracker with this YOLO detection (corrects any drift).
             # Use the lores_frame bound at submission time — reading any shared
@@ -728,6 +763,7 @@ def _submit_yolo(*, nv12_frame: np.ndarray, frame_lores: np.ndarray, rois: list,
 def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     global tracker, untracked_frames_count, total_untracked_frames_count
     global last_known_bbox, latest_ai_detections, _yolo_revalidate_counter, _tracker_lost_streak
+    global _latest_mask, _latest_mask_shape
 
     current_time = time.time_ns()
 
@@ -738,6 +774,8 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     step = preview_downscale_factor
     frame_lores = y_plane[::step, ::step]
     has_movement, mask = motion_detector.is_moving(frame_lores)
+    _latest_mask = mask
+    _latest_mask_shape = mask.shape[:2] if mask is not None else (1, 1)
 
     with tracker_lock:
         is_tracking = tracking.is_set()
@@ -794,7 +832,8 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                 fh, fw = contiguous.shape[:2]
                 bbox_norm = [y / fh, x / fw, (y + h) / fh, (x + w) / fw]
                 from .engine import aim_at  # noqa: PLC0415
-                aim_at(bbox_normalized=bbox_norm)
+                aim_center = _foreground_centroid(bbox_norm, mask, contiguous.shape)
+                aim_at(bbox_normalized=bbox_norm, aim_center=aim_center)
 
             if ros_node is not None:
                 ros_node.publish_detections(detections_to_show)
