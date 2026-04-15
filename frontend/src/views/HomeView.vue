@@ -5,6 +5,7 @@ import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiO
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
+import CameraFeed from "@/components/CameraFeed.vue";
 import Tab from "primevue/tab";
 import TabList from "primevue/tablist";
 import TabPanel from "primevue/tabpanel";
@@ -25,6 +26,10 @@ const options = ref<PikiOptions>({
     trackerType: "CSRT",
     trackerLostThreshold: 5,
     trackingEnabled: true,
+    servoPidKp: 1.0,
+    servoPidKi: 0.0,
+    servoPidKd: 0.0,
+    servoDeadZone: 1.5,
 });
 
 const aimConfig = ref<AimConfigSchema>({
@@ -97,7 +102,7 @@ onMounted(async () => {
 
     try {
         const aim = await api.coreApiGetAimConfig();
-        aimConfig.value = { targetClasses: aim.targetClasses, servoEnabled: aim.servoEnabled };
+        aimConfig.value = { targetClasses: aim.targetClasses, servoEnabled: aim.servoEnabled, targetLockDuration: aim.targetLockDuration ?? 3.0 };
     } catch { /* ignore */ }
 
     await pollTrackerStatus();
@@ -124,7 +129,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
             <TabPanels>
                 <TabPanel value="camera">
                     <div class="feed-wrapper">
-                        <img id="camera-feed" :src="feedUrl" alt="camera feed" />
+                        <CameraFeed :src="feedUrl" alt="camera feed" />
                         <div class="tracker-badge" :class="{ active: isTracking }">
                             {{ isTracking ? `TRACKING · ${trackerType}` : `IDLE · ${trackerType}` }}
                         </div>
@@ -136,22 +141,18 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                     <div class="debug-feeds">
                         <div class="debug-feed-item">
                             <p class="feed-label">{{ mainTopic }}</p>
-                            <div class="feed-wrapper">
-                                <img class="debug-img" :src="feedUrl" alt="main feed" />
-                            </div>
+                            <CameraFeed :src="feedUrl" alt="main feed" />
                         </div>
                         <div class="debug-feed-item">
                             <p class="feed-label">{{ debugTopic }}</p>
-                            <div class="feed-wrapper">
-                                <img class="debug-img" :src="debugFeedUrl" alt="raw feed" />
-                            </div>
+                            <CameraFeed :src="debugFeedUrl" alt="raw feed" />
                         </div>
                     </div>
                 </TabPanel>
 
                 <TabPanel value="detection">
                     <div class="feed-wrapper">
-                        <img id="camera-feed-detection" :src="feedUrl" alt="camera feed" />
+                        <CameraFeed :src="feedUrl" alt="camera feed" />
                         <div class="tracker-badge" :class="{ active: isTracking }">
                             {{ isTracking ? `TRACKING · ${trackerType}` : `IDLE · ${trackerType}` }}
                         </div>
@@ -160,7 +161,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 </TabPanel>
 
                 <TabPanel value="servo">
-                    <ServoAimPanel v-model="aimConfig" :classes="allClasses" />
+                    <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses" />
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
                 </TabPanel>
             </TabPanels>
@@ -180,11 +181,6 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
     border-radius: 5px;
     overflow: hidden;
     line-height: 0;
-}
-#camera-feed,
-#camera-feed-detection {
-    width: 100%;
-    display: block;
 }
 .tracker-badge {
     position: absolute;
@@ -228,10 +224,6 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-}
-.debug-img {
-    width: 100%;
-    display: block;
 }
 .feed-label {
     font-size: 0.75rem;

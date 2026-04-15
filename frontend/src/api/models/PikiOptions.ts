@@ -80,19 +80,31 @@ export interface PikiOptions {
      */
     trackerLostThreshold?: number | null;
     /**
-     *
+     * 
      * @type {boolean}
      * @memberof PikiOptions
      */
     trackingEnabled?: boolean | null;
     /**
-     * EMA alpha: 1.0 = instant (no smoothing), lower = smoother
+     * 
      * @type {number}
      * @memberof PikiOptions
      */
-    servoSmoothFactor?: number | null;
+    servoPidKp?: number | null;
     /**
-     * Dead zone in degrees: changes smaller than this in both axes are ignored
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    servoPidKi?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    servoPidKd?: number | null;
+    /**
+     * 
      * @type {number}
      * @memberof PikiOptions
      */
@@ -128,7 +140,9 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
         'trackerType': json['tracker_type'] == null ? undefined : json['tracker_type'],
         'trackerLostThreshold': json['tracker_lost_threshold'] == null ? undefined : json['tracker_lost_threshold'],
         'trackingEnabled': json['tracking_enabled'] == null ? undefined : json['tracking_enabled'],
-        'servoSmoothFactor': json['servo_smooth_factor'] == null ? undefined : json['servo_smooth_factor'],
+        'servoPidKp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
+        'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
+        'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
         'servoDeadZone': json['servo_dead_zone'] == null ? undefined : json['servo_dead_zone'],
     };
 }
@@ -155,7 +169,9 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
         'tracker_type': value['trackerType'],
         'tracker_lost_threshold': value['trackerLostThreshold'],
         'tracking_enabled': value['trackingEnabled'],
-        'servo_smooth_factor': value['servoSmoothFactor'],
+        'servo_pid_kp': value['servoPidKp'],
+        'servo_pid_ki': value['servoPidKi'],
+        'servo_pid_kd': value['servoPidKd'],
         'servo_dead_zone': value['servoDeadZone'],
     };
 }

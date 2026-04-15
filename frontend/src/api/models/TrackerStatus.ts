@@ -20,19 +20,19 @@ import { mapValues } from '../runtime';
  */
 export interface TrackerStatus {
     /**
-     *
+     * 
      * @type {boolean}
      * @memberof TrackerStatus
      */
     tracking: boolean;
     /**
-     *
+     * 
      * @type {string}
      * @memberof TrackerStatus
      */
     trackerType: string;
     /**
-     *
+     * 
      * @type {number}
      * @memberof TrackerStatus
      */
@@ -58,7 +58,7 @@ export function TrackerStatusFromJSONTyped(json: any, ignoreDiscriminator: boole
         return json;
     }
     return {
-
+        
         'tracking': json['tracking'],
         'trackerType': json['tracker_type'],
         'fps': json['fps'],
@@ -75,7 +75,7 @@ export function TrackerStatusToJSONTyped(value?: TrackerStatus | null, ignoreDis
     }
 
     return {
-
+        
         'tracking': value['tracking'],
         'tracker_type': value['trackerType'],
         'fps': value['fps'],

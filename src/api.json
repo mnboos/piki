@@ -27,6 +27,27 @@
                 "description": "Video streaming route."
             }
         },
+        "/api/video_feed_raw": {
+            "get": {
+                "operationId": "video_feed_debug",
+                "summary": "Video Feed Raw",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "multipart/x-mixed-replace; boundary=frame": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."
+            }
+        },
         "/api/update_options": {
             "patch": {
                 "operationId": "core_api_update_options",
@@ -330,7 +351,7 @@
                         ],
                         "title": "Tracking Enabled"
                     },
-                    "servo_smooth_factor": {
+                    "servo_pid_kp": {
                         "anyOf": [
                             {
                                 "type": "number"
@@ -339,7 +360,29 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Servo Smooth Factor"
+                        "title": "Servo Pid Kp"
+                    },
+                    "servo_pid_ki": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Pid Ki"
+                    },
+                    "servo_pid_kd": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Pid Kd"
                     },
                     "servo_dead_zone": {
                         "anyOf": [
@@ -482,7 +525,7 @@
                         ],
                         "title": "Tracking Enabled"
                     },
-                    "servo_smooth_factor": {
+                    "servo_pid_kp": {
                         "anyOf": [
                             {
                                 "type": "number"
@@ -491,7 +534,29 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Servo Smooth Factor"
+                        "title": "Servo Pid Kp"
+                    },
+                    "servo_pid_ki": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Pid Ki"
+                    },
+                    "servo_pid_kd": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Pid Kd"
                     },
                     "servo_dead_zone": {
                         "anyOf": [
@@ -520,11 +585,16 @@
                     "servo_enabled": {
                         "title": "Servo Enabled",
                         "type": "boolean"
+                    },
+                    "target_lock_duration": {
+                        "title": "Target Lock Duration",
+                        "type": "number"
                     }
                 },
                 "required": [
                     "target_classes",
-                    "servo_enabled"
+                    "servo_enabled",
+                    "target_lock_duration"
                 ],
                 "title": "AimConfigSchema",
                 "type": "object"
@@ -555,6 +625,17 @@
                             }
                         ],
                         "title": "Servo Enabled"
+                    },
+                    "target_lock_duration": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Target Lock Duration"
                     }
                 },
                 "title": "AimConfigSchemaPatch",
@@ -569,11 +650,16 @@
                     "tracker_type": {
                         "title": "Tracker Type",
                         "type": "string"
+                    },
+                    "fps": {
+                        "title": "Fps",
+                        "type": "number"
                     }
                 },
                 "required": [
                     "tracking",
-                    "tracker_type"
+                    "tracker_type",
+                    "fps"
                 ],
                 "title": "TrackerStatus",
                 "type": "object"

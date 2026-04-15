@@ -53,15 +53,7 @@ const trackerLostThreshold = computed({
     set: (v: number) => { model.value.trackerLostThreshold = v; },
 });
 
-// Servo smoothing
-const servoSmoothFactor = computed({
-    get: () => model.value.servoSmoothFactor ?? 0.3,
-    set: (v: number) => { model.value.servoSmoothFactor = v; },
-});
-const servoDeadZone = computed({
-    get: () => model.value.servoDeadZone ?? 1.5,
-    set: (v: number) => { model.value.servoDeadZone = v; },
-});
+// Servo smoothing — removed (PID controls moved to ServoAimPanel)
 
 // Display
 const maskTransparency = computed({
@@ -148,22 +140,6 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                     <label class="control-label">Tracker Lost Threshold: {{ trackerLostThreshold }}</label>
                     <Slider v-model="trackerLostThreshold" :min="1" :max="30" :step="1" class="slider" :disabled="!trackingEnabled" />
                     <p class="help-text">How many consecutive frames the tracker must fail before tracking is reset. Higher values keep tracking alive through brief occlusions or low-contrast frames; lower values make the tracker give up faster when the object is genuinely gone.</p>
-                </div>
-            </div>
-        </Fieldset>
-
-        <Fieldset legend="Servo Smoothing" :toggleable="true">
-            <div class="controls-grid">
-                <div class="control-item">
-                    <label class="control-label">Dead Zone: {{ servoDeadZone.toFixed(1) }}°</label>
-                    <Slider v-model="servoDeadZone" :min="0" :max="10" :step="0.5" class="slider" />
-                    <p class="help-text">Minimum angle change (in both axes) required to move the servo. Ignores tiny detection fluctuations. Raise to suppress jitter from noisy detections; set to 0 to disable.</p>
-                </div>
-
-                <div class="control-item">
-                    <label class="control-label">Smoothing (α): {{ servoSmoothFactor.toFixed(2) }}</label>
-                    <Slider v-model="servoSmoothFactor" :min="0.05" :max="1.0" :step="0.05" class="slider" />
-                    <p class="help-text">EMA factor: how much of the new target angle to blend in each update. 1.0 = snap instantly (no smoothing); 0.3 = glide smoothly toward the target. Lower values reduce jitter but increase tracking lag.</p>
                 </div>
             </div>
         </Fieldset>

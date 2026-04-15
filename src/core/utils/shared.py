@@ -61,7 +61,9 @@ settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
 servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
 servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
-servo_smooth_factor = mp.Value(c_float, 1.0)  # EMA alpha: 1.0 = instant (no smoothing), 0.0 = frozen
+servo_pid_kp = mp.Value(c_float, 1.0)  # proportional gain (1.0 = instant, like previous default)
+servo_pid_ki = mp.Value(c_float, 0.0)  # integral gain
+servo_pid_kd = mp.Value(c_float, 0.0)  # derivative gain (raise to reduce jitter)
 servo_dead_zone = mp.Value(c_float, 1.5)      # degrees: changes smaller than this in both axes are ignored
 tracker_active = threading.Event()   # set while a tracker is running
 # Tracker algorithm: b"CSRT" or b"KCF". Use get/set helpers below.

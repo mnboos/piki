@@ -85,7 +85,7 @@ export ROS_DISABLE_LOANED_MESSAGES=0
 # setsid puts the launch process in its own process group so that
 # `kill -- -$CAM_PID` in cleanup() reaches all child nodes in one shot.
 setsid ros2 launch mipi_cam mipi_cam_dual_channel.launch.py \
-mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=true mipi_image_framerate:=20.0 \
+mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=true mipi_image_framerate:=30.0 \
 mipi_io_method:=ros \
 mipi_camera_calibration_file_path:=/opt/tros/humble/lib/mipi_cam/config/SC230ai_dual_calibration.yaml &
 CAM_PID=$!

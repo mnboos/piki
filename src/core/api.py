@@ -19,7 +19,9 @@ from .utils.shared import (
     prob_threshold,
     servo_dead_zone,
     servo_pan,
-    servo_smooth_factor,
+    servo_pid_kd,
+    servo_pid_ki,
+    servo_pid_kp,
     servo_tilt,
     set_tracker_type,
     settings,
@@ -173,7 +175,7 @@ async def stream_debug_camera():
         pass
 
 
-@api.get("/video_feed_raw", openapi_extra=BIN_RESPONSE)
+@api.get("/video_feed_raw", openapi_extra=BIN_RESPONSE, operation_id="video_feed_debug")
 async def video_feed_raw(request: HttpRequest):
     """Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."""
     return StreamingHttpResponse(stream_debug_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
@@ -191,7 +193,9 @@ class PikiOptions(Schema):
     tracker_type: Optional[str] = None
     tracker_lost_threshold: Optional[int] = None
     tracking_enabled: Optional[bool] = None
-    servo_smooth_factor: Optional[float] = None
+    servo_pid_kp: Optional[float] = None
+    servo_pid_ki: Optional[float] = None
+    servo_pid_kd: Optional[float] = None
     servo_dead_zone: Optional[float] = None
 
 
@@ -238,8 +242,14 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         else:
             tracking_enabled.clear()
 
-    if (v := options.get("servo_smooth_factor")) is not None:
-        servo_smooth_factor.value = max(0.0, min(1.0, float(v)))
+    if (v := options.get("servo_pid_kp")) is not None:
+        servo_pid_kp.value = max(0.0, float(v))
+
+    if (v := options.get("servo_pid_ki")) is not None:
+        servo_pid_ki.value = max(0.0, float(v))
+
+    if (v := options.get("servo_pid_kd")) is not None:
+        servo_pid_kd.value = max(0.0, float(v))
 
     if (v := options.get("servo_dead_zone")) is not None:
         servo_dead_zone.value = max(0.0, float(v))
@@ -257,7 +267,9 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.tracker_type = get_tracker_type()
     config.tracker_lost_threshold = tracker_lost_threshold.value
     config.tracking_enabled = tracking_enabled.is_set()
-    config.servo_smooth_factor = servo_smooth_factor.value
+    config.servo_pid_kp = servo_pid_kp.value
+    config.servo_pid_ki = servo_pid_ki.value
+    config.servo_pid_kd = servo_pid_kd.value
     config.servo_dead_zone = servo_dead_zone.value
     config.save()
 
@@ -273,7 +285,9 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         tracker_type=get_tracker_type(),
         tracker_lost_threshold=tracker_lost_threshold.value,
         tracking_enabled=tracking_enabled.is_set(),
-        servo_smooth_factor=servo_smooth_factor.value,
+        servo_pid_kp=servo_pid_kp.value,
+        servo_pid_ki=servo_pid_ki.value,
+        servo_pid_kd=servo_pid_kd.value,
         servo_dead_zone=servo_dead_zone.value,
     )
 
@@ -300,7 +314,9 @@ def get_options(request: HttpRequest):
         tracker_type=get_tracker_type(),
         tracker_lost_threshold=tracker_lost_threshold.value,
         tracking_enabled=tracking_enabled.is_set(),
-        servo_smooth_factor=servo_smooth_factor.value,
+        servo_pid_kp=servo_pid_kp.value,
+        servo_pid_ki=servo_pid_ki.value,
+        servo_pid_kd=servo_pid_kd.value,
         servo_dead_zone=servo_dead_zone.value,
     )
 

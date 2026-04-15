@@ -20,19 +20,19 @@ import { mapValues } from '../runtime';
  */
 export interface AimConfigSchema {
     /**
-     *
+     * 
      * @type {Array<string>}
      * @memberof AimConfigSchema
      */
     targetClasses: Array<string>;
     /**
-     *
+     * 
      * @type {boolean}
      * @memberof AimConfigSchema
      */
     servoEnabled: boolean;
     /**
-     * Seconds to hold the current target before switching to another detection.
+     * 
      * @type {number}
      * @memberof AimConfigSchema
      */
@@ -58,6 +58,7 @@ export function AimConfigSchemaFromJSONTyped(json: any, ignoreDiscriminator: boo
         return json;
     }
     return {
+        
         'targetClasses': json['target_classes'],
         'servoEnabled': json['servo_enabled'],
         'targetLockDuration': json['target_lock_duration'],
@@ -74,6 +75,7 @@ export function AimConfigSchemaToJSONTyped(value?: AimConfigSchema | null, ignor
     }
 
     return {
+        
         'target_classes': value['targetClasses'],
         'servo_enabled': value['servoEnabled'],
         'target_lock_duration': value['targetLockDuration'],

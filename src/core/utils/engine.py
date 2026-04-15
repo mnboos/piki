@@ -1,6 +1,9 @@
 import atexit
 import logging
 import os
+import threading
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,69 @@ _DC_RANGE = 5.0  # ±5% spans ±90°
 def _angle_to_dc(angle: float) -> float:
     """Convert servo angle (−90…+90°) to PWM duty cycle (2.5…12.5%)."""
     return _DC_CENTER + (angle / 90.0) * _DC_RANGE
+
+
+# ---------------------------------------------------------------------------
+# PID controller state — one set of accumulators for pan and tilt.
+# Both YOLO and tracker callers run in the same process, so a threading.Lock
+# is sufficient (no multiprocessing synchronisation needed here).
+# ---------------------------------------------------------------------------
+_INTEGRAL_LIMIT: float = 30.0   # °  — clamps per-axis integral wind-up
+_RESET_THRESHOLD: float = 15.0  # °  — error jump magnitude that resets integral
+
+
+@dataclass
+class _PidState:
+    integral_pan: float = 0.0
+    integral_tilt: float = 0.0
+    last_error_pan: float = 0.0
+    last_error_tilt: float = 0.0
+    last_time: float = field(default_factory=time.monotonic)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+_pid = _PidState()
+
+
+def _pid_step(
+    target_pan: float,
+    target_tilt: float,
+    current_pan: float,
+    current_tilt: float,
+    kp: float,
+    ki: float,
+    kd: float,
+) -> tuple[float, float]:
+    """Advance the PID controller by one step and return the new commanded angles."""
+    with _pid.lock:
+        now = time.monotonic()
+        dt = max(now - _pid.last_time, 1e-3)  # floor at 1 ms to avoid division by zero
+        _pid.last_time = now
+
+        new_pan = current_pan
+        new_tilt = current_tilt
+        for axis, (target, current, i_attr, le_attr) in enumerate([
+            (target_pan, current_pan, "integral_pan", "last_error_pan"),
+            (target_tilt, current_tilt, "integral_tilt", "last_error_tilt"),
+        ]):
+            error = target - current
+            # Large jump → new detection target; reset integral to avoid wind-up carry-over.
+            if abs(error) > _RESET_THRESHOLD:
+                setattr(_pid, i_attr, 0.0)
+            integral = getattr(_pid, i_attr) + error * dt
+            integral = max(-_INTEGRAL_LIMIT, min(_INTEGRAL_LIMIT, integral))
+            setattr(_pid, i_attr, integral)
+            last_error = getattr(_pid, le_attr)
+            derivative = (error - last_error) / dt
+            setattr(_pid, le_attr, error)
+            output = kp * error + ki * integral + kd * derivative
+            commanded = max(-90.0, min(90.0, current + output))
+            if axis == 0:
+                new_pan = commanded
+            else:
+                new_tilt = commanded
+
+    return new_pan, new_tilt
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +244,7 @@ def aim_at(
     pan_clamped = max(-90.0, min(90.0, pan_angle))
     tilt_clamped = max(-90.0, min(90.0, tilt_angle))
 
-    from ..utils.shared import servo_dead_zone, servo_pan, servo_smooth_factor, servo_tilt  # noqa: PLC0415
+    from ..utils.shared import servo_dead_zone, servo_pan, servo_pid_kd, servo_pid_ki, servo_pid_kp, servo_tilt  # noqa: PLC0415
 
     # Dead zone: skip updates where both axes haven't moved enough to matter.
     # This prevents micro-jitter caused by detection noise around a stable target.
@@ -192,31 +258,33 @@ def aim_at(
         )
         return pan_angle, tilt_angle
 
-    # EMA smoothing: blend the new target with the current position so the servo
-    # glides toward the target rather than snapping instantly.
-    # alpha=1.0 → instant (original behaviour); alpha≈0.3 → heavy smoothing.
-    alpha = servo_smooth_factor.value
-    pan_smoothed = alpha * pan_clamped + (1.0 - alpha) * servo_pan.value
-    tilt_smoothed = alpha * tilt_clamped + (1.0 - alpha) * servo_tilt.value
+    # PID controller: compute the next commanded angle for each axis.
+    # Kp=1, Ki=0, Kd=0 reproduces the previous instant-snap behaviour.
+    # Raise Kd (e.g. 0.1–0.2) to dampen detection-noise jitter.
+    pan_new, tilt_new = _pid_step(
+        pan_clamped, tilt_clamped,
+        servo_pan.value, servo_tilt.value,
+        servo_pid_kp.value, servo_pid_ki.value, servo_pid_kd.value,
+    )
 
     pan_pwm = _get_pan_pwm()
     if pan_pwm is not None:
         try:
-            pan_pwm.ChangeDutyCycle(_angle_to_dc(-pan_smoothed))
-            logger.info("Pan servo → %.1f° (target %.1f°)", pan_smoothed, pan_clamped)
+            pan_pwm.ChangeDutyCycle(_angle_to_dc(-pan_new))
+            logger.info("Pan servo → %.1f° (target %.1f°)", pan_new, pan_clamped)
         except Exception:
             logger.exception("Failed to move pan servo")
 
     tilt_pwm = _get_tilt_pwm()
     if tilt_pwm is not None:
         try:
-            tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_smoothed))
-            logger.info("Tilt servo → %.1f° (target %.1f°)", tilt_smoothed, tilt_clamped)
+            tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_new))
+            logger.info("Tilt servo → %.1f° (target %.1f°)", tilt_new, tilt_clamped)
         except Exception:
             logger.exception("Failed to move tilt servo")
 
-    servo_pan.value = pan_smoothed
-    servo_tilt.value = tilt_smoothed
+    servo_pan.value = pan_new
+    servo_tilt.value = tilt_new
 
     return pan_angle, tilt_angle
 

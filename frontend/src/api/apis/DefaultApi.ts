@@ -363,4 +363,35 @@ export class DefaultApi extends runtime.BaseAPI {
         return await response.value();
     }
 
+    /**
+     * Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays.
+     * Video Feed Raw
+     */
+    async videoFeedDebugRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/video_feed_raw`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.BlobApiResponse(response);
+    }
+
+    /**
+     * Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays.
+     * Video Feed Raw
+     */
+    async videoFeedDebug(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
+        const response = await this.videoFeedDebugRaw(initOverrides);
+        return await response.value();
+    }
+
 }
