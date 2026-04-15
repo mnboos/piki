@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import Skeleton from "primevue/skeleton";
+import ExclamationTriangleIcon from "@primevue/icons/exclamationtriangle";
 
 const props = defineProps<{ src: string; alt?: string }>();
 
@@ -18,7 +19,7 @@ watch(() => props.src, () => { status.value = "loading"; });
 
         <!-- Error state when the backend is unreachable -->
         <div v-else-if="status === 'error'" class="cf-error">
-            <i class="pi pi-video pi-spin cf-error-icon" />
+            <ExclamationTriangleIcon class="cf-error-icon" />
             <span class="cf-error-text">No feed — backend offline</span>
         </div>
 
@@ -64,7 +65,8 @@ watch(() => props.src, () => { status.value = "loading"; });
     color: var(--p-text-muted-color, #888);
 }
 .cf-error-icon {
-    font-size: 2rem;
+    width: 2rem;
+    height: 2rem;
 }
 .cf-error-text {
     font-size: 0.85rem;

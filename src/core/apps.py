@@ -65,7 +65,7 @@ class CoreConfig(AppConfig):
         """Load persisted DetectionConfig from DB into shared memory."""
         try:
             from .models import DetectionConfig  # noqa: PLC0415
-            from .utils.shared import app_settings, mask_transparency, prob_threshold, servo_dead_zone, servo_pid_kd, servo_pid_ki, servo_pid_kp, set_tracker_type, settings, tracker_lost_threshold, tracking_enabled  # noqa: PLC0415
+            from .utils.shared import app_settings, mask_transparency, prob_threshold, servo_dead_zone, servo_pid_kd, servo_pid_ki, servo_pid_kp, settings  # noqa: PLC0415
 
             config = DetectionConfig.load()
             app_settings.debug_settings.mode = config.mode
@@ -77,12 +77,6 @@ class CoreConfig(AppConfig):
             settings.foreground_mask_options.mog2_var_threshold.value = config.mog2_var_threshold
             settings.foreground_mask_options.denoise_kernelsize.value = config.denoise_kernelsize
             mask_transparency.value = config.mask_transparency
-            set_tracker_type(config.tracker_type)
-            tracker_lost_threshold.value = config.tracker_lost_threshold
-            if config.tracking_enabled:
-                tracking_enabled.set()
-            else:
-                tracking_enabled.clear()
             servo_pid_kp.value = config.servo_pid_kp
             servo_pid_ki.value = config.servo_pid_ki
             servo_pid_kd.value = config.servo_pid_kd

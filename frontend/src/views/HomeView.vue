@@ -23,9 +23,6 @@ const options = ref<PikiOptions>({
     mog2VarThreshold: 16,
     denoiseKernelsize: 7,
     maskTransparency: 0.5,
-    trackerType: "CSRT",
-    trackerLostThreshold: 5,
-    trackingEnabled: true,
     servoPidKp: 1.0,
     servoPidKi: 0.0,
     servoPidKd: 0.0,
@@ -46,8 +43,6 @@ const debugFeedUrl = "/api/video_feed_raw";
 const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
 const debugTopic = import.meta.env.VITE_ROS_DEBUG_TOPIC ?? "/image_right_raw";
 
-const isTracking = ref(false);
-const trackerType = ref("CSRT");
 const currentFps = ref(0);
 let statusInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -72,8 +67,6 @@ const { mutate: servoMove } = useMutation({
 async function pollTrackerStatus() {
     try {
         const s = await api.coreApiGetTrackerStatus();
-        isTracking.value = s.tracking;
-        trackerType.value = s.trackerType;
         currentFps.value = s.fps;
     } catch { /* ignore */ }
 }
@@ -90,9 +83,6 @@ onMounted(async () => {
             mog2VarThreshold: current.mog2VarThreshold ?? 16,
             denoiseKernelsize: current.denoiseKernelsize ?? 7,
             maskTransparency: current.maskTransparency ?? 0.5,
-            trackerType: current.trackerType ?? "CSRT",
-            trackerLostThreshold: current.trackerLostThreshold ?? 5,
-            trackingEnabled: current.trackingEnabled ?? true,
         };
     } catch { /* use defaults */ }
 
@@ -130,9 +120,6 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 <TabPanel value="camera">
                     <div class="feed-wrapper">
                         <CameraFeed :src="feedUrl" alt="camera feed" />
-                        <div class="tracker-badge" :class="{ active: isTracking }">
-                            {{ isTracking ? `TRACKING · ${trackerType}` : `IDLE · ${trackerType}` }}
-                        </div>
                         <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
                     </div>
                 </TabPanel>
@@ -153,9 +140,6 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 <TabPanel value="detection">
                     <div class="feed-wrapper">
                         <CameraFeed :src="feedUrl" alt="camera feed" />
-                        <div class="tracker-badge" :class="{ active: isTracking }">
-                            {{ isTracking ? `TRACKING · ${trackerType}` : `IDLE · ${trackerType}` }}
-                        </div>
                     </div>
                     <DetectionControls v-model="options" @reset-background="resetBackground()" />
                 </TabPanel>
@@ -181,25 +165,6 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
     border-radius: 5px;
     overflow: hidden;
     line-height: 0;
-}
-.tracker-badge {
-    position: absolute;
-    top: 0.5rem;
-    left: 0.5rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    font-family: monospace;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    background: rgba(0, 0, 0, 0.55);
-    color: #aaa;
-    transition: background 0.3s, color 0.3s;
-    pointer-events: none;
-}
-.tracker-badge.active {
-    background: rgba(0, 200, 100, 0.85);
-    color: #000;
 }
 .fps-badge {
     position: absolute;

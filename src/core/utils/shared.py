@@ -6,7 +6,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Sequence
-from ctypes import c_char, c_float
+from ctypes import c_float
 from multiprocessing import Event
 from typing import NamedTuple, Optional
 
@@ -61,30 +61,15 @@ settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
 servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
 servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
+servo_kalman_pan = mp.Value(c_float, 0.0)   # Kalman predicted pan (lookahead target)
+servo_kalman_tilt = mp.Value(c_float, 0.0)  # Kalman predicted tilt (lookahead target)
 servo_pid_kp = mp.Value(c_float, 1.0)  # proportional gain (1.0 = instant, like previous default)
 servo_pid_ki = mp.Value(c_float, 0.0)  # integral gain
 servo_pid_kd = mp.Value(c_float, 0.0)  # derivative gain (raise to reduce jitter)
 servo_dead_zone = mp.Value(c_float, 1.5)      # degrees: changes smaller than this in both axes are ignored
-tracker_active = threading.Event()   # set while a tracker is running
-# Tracker algorithm: b"CSRT" or b"KCF". Use get/set helpers below.
-_tracker_type_buf = mp.Array(c_char, 8)
-_tracker_type_buf[:4] = b"CSRT"
-# Number of consecutive tracker failures required before the tracker is reset.
-tracker_lost_threshold = mp.Value("i", 5)
-# Set to disable tracker init and stop any active tracker immediately.
-tracking_enabled = threading.Event()
-tracking_enabled.set()  # enabled by default
-
-
-def get_tracker_type() -> str:
-    return _tracker_type_buf[:].rstrip(b"\x00").decode()
-
-
-def set_tracker_type(value: str) -> None:
-    encoded = value.upper().encode()[:8]
-    with _tracker_type_buf.get_lock():
-        _tracker_type_buf[:len(encoded)] = encoded
-        _tracker_type_buf[len(encoded):] = b"\x00" * (8 - len(encoded))
+servo_kalman_process_noise = mp.Value(c_float, 10.0)   # deg/s² — how quickly velocity may change
+servo_kalman_meas_noise = mp.Value(c_float, 5.0)       # deg   — position measurement uncertainty
+servo_kalman_lookahead_ms = mp.Value(c_float, 50.0)    # ms    — servo lag to compensate for (0 = off)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 

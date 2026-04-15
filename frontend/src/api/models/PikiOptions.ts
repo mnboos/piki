@@ -68,25 +68,7 @@ export interface PikiOptions {
      */
     maskTransparency?: number | null;
     /**
-     * 
-     * @type {string}
-     * @memberof PikiOptions
-     */
-    trackerType?: string | null;
-    /**
-     * 
-     * @type {number}
-     * @memberof PikiOptions
-     */
-    trackerLostThreshold?: number | null;
-    /**
-     * 
-     * @type {boolean}
-     * @memberof PikiOptions
-     */
-    trackingEnabled?: boolean | null;
-    /**
-     * 
+     *
      * @type {number}
      * @memberof PikiOptions
      */
@@ -137,9 +119,6 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
         'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
         'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
         'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
-        'trackerType': json['tracker_type'] == null ? undefined : json['tracker_type'],
-        'trackerLostThreshold': json['tracker_lost_threshold'] == null ? undefined : json['tracker_lost_threshold'],
-        'trackingEnabled': json['tracking_enabled'] == null ? undefined : json['tracking_enabled'],
         'servoPidKp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
         'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
         'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
@@ -166,9 +145,6 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
         'mog2_var_threshold': value['mog2VarThreshold'],
         'denoise_kernelsize': value['denoiseKernelsize'],
         'mask_transparency': value['maskTransparency'],
-        'tracker_type': value['trackerType'],
-        'tracker_lost_threshold': value['trackerLostThreshold'],
-        'tracking_enabled': value['trackingEnabled'],
         'servo_pid_kp': value['servoPidKp'],
         'servo_pid_ki': value['servoPidKi'],
         'servo_pid_kd': value['servoPidKd'],

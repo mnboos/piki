@@ -68,25 +68,7 @@ export interface PikiOptionsPatch {
      */
     maskTransparency?: number | null;
     /**
-     * 
-     * @type {string}
-     * @memberof PikiOptionsPatch
-     */
-    trackerType?: string | null;
-    /**
-     * 
-     * @type {number}
-     * @memberof PikiOptionsPatch
-     */
-    trackerLostThreshold?: number | null;
-    /**
-     * 
-     * @type {boolean}
-     * @memberof PikiOptionsPatch
-     */
-    trackingEnabled?: boolean | null;
-    /**
-     * 
+     *
      * @type {number}
      * @memberof PikiOptionsPatch
      */
@@ -136,9 +118,6 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
         'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
         'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
         'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
-        'trackerType': json['tracker_type'] == null ? undefined : json['tracker_type'],
-        'trackerLostThreshold': json['tracker_lost_threshold'] == null ? undefined : json['tracker_lost_threshold'],
-        'trackingEnabled': json['tracking_enabled'] == null ? undefined : json['tracking_enabled'],
         'servoPidKp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
         'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
         'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
@@ -165,9 +144,6 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
         'mog2_var_threshold': value['mog2VarThreshold'],
         'denoise_kernelsize': value['denoiseKernelsize'],
         'mask_transparency': value['maskTransparency'],
-        'tracker_type': value['trackerType'],
-        'tracker_lost_threshold': value['trackerLostThreshold'],
-        'tracking_enabled': value['trackingEnabled'],
         'servo_pid_kp': value['servoPidKp'],
         'servo_pid_ki': value['servoPidKi'],
         'servo_pid_kd': value['servoPidKd'],

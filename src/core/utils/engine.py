@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -70,6 +72,114 @@ class _PidState:
 
 
 _pid = _PidState()
+
+
+# ---------------------------------------------------------------------------
+# Kalman filter — constant-velocity model for ahead-of-time servo aiming.
+#
+# State: x = [pan, tilt, v_pan, v_tilt]  (degrees / degrees·s⁻¹)
+# Observation: z = [pan, tilt]
+#
+# The filter is updated on every aim_at() call.  After the update step the
+# state is projected forward by `lookahead_s` seconds so the servo is
+# commanded to where the object *will be* rather than where it *was*.
+#
+# Tuning parameters (all live-adjustable via shared.py mp.Value):
+#   servo_kalman_process_noise — governs how fast velocity may change (deg/s²)
+#   servo_kalman_meas_noise    — trust in each position measurement (deg)
+#   servo_kalman_lookahead_ms  — servo lag to compensate for (ms)
+# ---------------------------------------------------------------------------
+
+class KalmanAimer:
+    """Linear Kalman filter for predictive servo aiming."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._initialised = False
+        # State vector [pan, tilt, v_pan, v_tilt]; covariance matrix P (4×4)
+        self._x = np.zeros(4)
+        self._P = np.eye(4) * 1000.0  # large initial uncertainty
+
+    def reset(self) -> None:
+        with self._lock:
+            self._initialised = False
+            self._x = np.zeros(4)
+            self._P = np.eye(4) * 1000.0
+
+    def update(
+        self,
+        pan: float,
+        tilt: float,
+        dt: float,
+        process_noise: float,
+        measurement_noise: float,
+        lookahead_s: float,
+    ) -> tuple[float, float]:
+        """Feed one measurement and return the lookahead-predicted (pan, tilt).
+
+        On the very first call the filter is bootstrapped from the measurement
+        with zero velocity so the output equals the input.
+        """
+        dt = max(dt, 1e-3)
+
+        with self._lock:
+            if not self._initialised:
+                self._x = np.array([pan, tilt, 0.0, 0.0])
+                self._initialised = True
+                return pan, tilt
+
+            # --- Predict ---
+            F = np.array([
+                [1.0, 0.0, dt,  0.0],
+                [0.0, 1.0, 0.0, dt ],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ])
+            # Continuous white-noise acceleration model discretised to dt
+            dt2 = dt * dt
+            dt3 = dt2 * dt
+            dt4 = dt3 * dt
+            Q = process_noise * np.array([
+                [dt4 / 4, 0.0,     dt3 / 2, 0.0    ],
+                [0.0,     dt4 / 4, 0.0,     dt3 / 2],
+                [dt3 / 2, 0.0,     dt2,     0.0    ],
+                [0.0,     dt3 / 2, 0.0,     dt2    ],
+            ])
+
+            x_pred = F @ self._x
+            P_pred = F @ self._P @ F.T + Q
+
+            # --- Update ---
+            H = np.array([
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+            ])
+            R = np.eye(2) * (measurement_noise ** 2)
+
+            z = np.array([pan, tilt])
+            y = z - H @ x_pred                              # innovation
+            S = H @ P_pred @ H.T + R                       # innovation covariance
+            K = P_pred @ H.T @ np.linalg.inv(S)            # Kalman gain
+            self._x = x_pred + K @ y
+            self._P = (np.eye(4) - K @ H) @ P_pred
+
+            # --- Lookahead prediction ---
+            if lookahead_s > 0.0:
+                F_la = np.array([
+                    [1.0, 0.0, lookahead_s, 0.0       ],
+                    [0.0, 1.0, 0.0,         lookahead_s],
+                    [0.0, 0.0, 1.0,         0.0        ],
+                    [0.0, 0.0, 0.0,         1.0        ],
+                ])
+                x_ahead = F_la @ self._x
+            else:
+                x_ahead = self._x
+
+            return float(x_ahead[0]), float(x_ahead[1])
+
+
+_kalman = KalmanAimer()
+_last_aim_time: float = 0.0
 
 
 def _pid_step(
@@ -241,6 +351,8 @@ def aim_at(
     Returns:
         ``(pan_angle, tilt_angle)`` in degrees (positive = right / down).
     """
+    global _last_aim_time  # noqa: PLW0603
+
     if aim_center is not None:
         cx_n, cy_n = aim_center
         pan_angle = (cx_n - 0.5) * SERVO_HFOV
@@ -250,13 +362,53 @@ def aim_at(
         pan_angle, tilt_angle = bbox_to_angles(bbox_normalized)
     logger.debug("Target at pan=%.1f° tilt=%.1f°", pan_angle, tilt_angle)
 
+    from ..utils.shared import (  # noqa: PLC0415
+        servo_dead_zone,
+        servo_kalman_lookahead_ms,
+        servo_kalman_meas_noise,
+        servo_kalman_pan,
+        servo_kalman_process_noise,
+        servo_kalman_tilt,
+        servo_pan,
+        servo_pid_kd,
+        servo_pid_ki,
+        servo_pid_kp,
+        servo_tilt,
+    )
+
+    # -----------------------------------------------------------------------
+    # Kalman filter — predict where the target will be after servo lag.
+    # -----------------------------------------------------------------------
+    now = time.monotonic()
+    dt = now - _last_aim_time if _last_aim_time > 0.0 else 0.033  # assume ~30 fps on first call
+    _last_aim_time = now
+
+    lookahead_s = servo_kalman_lookahead_ms.value / 1000.0
+    predicted_pan, predicted_tilt = _kalman.update(
+        pan_angle, tilt_angle, dt,
+        process_noise=servo_kalman_process_noise.value,
+        measurement_noise=servo_kalman_meas_noise.value,
+        lookahead_s=lookahead_s,
+    )
+    logger.debug(
+        "Kalman: raw=(%.1f°, %.1f°) predicted=(%.1f°, %.1f°) lookahead=%.0fms",
+        pan_angle, tilt_angle, predicted_pan, predicted_tilt, lookahead_s * 1000,
+    )
+
+    # Reset Kalman on large jumps (new target or tracking lost), same threshold as PID.
+    if abs(pan_angle - servo_pan.value) > _RESET_THRESHOLD or abs(tilt_angle - servo_tilt.value) > _RESET_THRESHOLD:
+        _kalman.reset()
+        predicted_pan, predicted_tilt = pan_angle, tilt_angle
+
+    # Publish predicted position so the stream renderer can draw a crosshair.
+    servo_kalman_pan.value = predicted_pan
+    servo_kalman_tilt.value = predicted_tilt
+
     # -----------------------------------------------------------------------
     # Move servos via hardware PWM (Hobot.GPIO).
     # -----------------------------------------------------------------------
-    pan_clamped = max(-90.0, min(90.0, pan_angle))
-    tilt_clamped = max(-90.0, min(90.0, tilt_angle))
-
-    from ..utils.shared import servo_dead_zone, servo_pan, servo_pid_kd, servo_pid_ki, servo_pid_kp, servo_tilt  # noqa: PLC0415
+    pan_clamped = max(-90.0, min(90.0, predicted_pan))
+    tilt_clamped = max(-90.0, min(90.0, predicted_tilt))
 
     # Dead zone: skip updates where both axes haven't moved enough to matter.
     # This prevents micro-jitter caused by detection noise around a stable target.

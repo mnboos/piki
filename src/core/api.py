@@ -10,7 +10,6 @@ from .utils.shared import (
     app_settings,
     cv2,
     fps_counter,
-    get_tracker_type,
     is_object_detection_disabled,
     latest_debug_frame,
     latest_frame,
@@ -23,12 +22,8 @@ from .utils.shared import (
     servo_pid_ki,
     servo_pid_kp,
     servo_tilt,
-    set_tracker_type,
     settings,
     streaming_active,
-    tracker_active,
-    tracker_lost_threshold,
-    tracking_enabled,
 )
 
 # api = NinjaAPI(csrf=True, auth=django_auth)
@@ -111,21 +106,39 @@ async def stream_camera():
             # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
             # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
             from .utils.engine import SERVO_HFOV, SERVO_VFOV  # noqa: PLC0415
+            from .utils.shared import servo_kalman_pan, servo_kalman_tilt  # noqa: PLC0415
             fh, fw = draw_frame.shape[:2]
-            ch_x = int((servo_pan.value / SERVO_HFOV + 0.5) * fw)
-            ch_y = int((servo_tilt.value / SERVO_VFOV + 0.5) * fh)
-            ch_x = max(0, min(fw - 1, ch_x))
-            ch_y = max(0, min(fh - 1, ch_y))
-            _CROSSHAIR_COLOR = (0, 200, 255)  # orange
+
+            def _angle_to_px(pan: float, tilt: float) -> tuple[int, int]:
+                x = max(0, min(fw - 1, int((pan / SERVO_HFOV + 0.5) * fw)))
+                y = max(0, min(fh - 1, int((tilt / SERVO_VFOV + 0.5) * fh)))
+                return x, y
+
             _CROSSHAIR_RADIUS = 14
             _CROSSHAIR_GAP = 4
             _CROSSHAIR_THICKNESS = 2
-            # Four line segments around the centre with a gap
+
+            # Kalman prediction crosshair (cyan, smaller, no gap circle — just tick marks)
+            kp_x, kp_y = _angle_to_px(servo_kalman_pan.value, servo_kalman_tilt.value)
+            _KP_COLOR = (255, 220, 0)  # cyan
+            _KP_RADIUS = 10
+            cv2.line(draw_frame, (kp_x, kp_y - _CROSSHAIR_GAP), (kp_x, kp_y - _KP_RADIUS), _KP_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.line(draw_frame, (kp_x, kp_y + _CROSSHAIR_GAP), (kp_x, kp_y + _KP_RADIUS), _KP_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.line(draw_frame, (kp_x - _CROSSHAIR_GAP, kp_y), (kp_x - _KP_RADIUS, kp_y), _KP_COLOR, _CROSSHAIR_THICKNESS)
+            cv2.line(draw_frame, (kp_x + _CROSSHAIR_GAP, kp_y), (kp_x + _KP_RADIUS, kp_y), _KP_COLOR, _CROSSHAIR_THICKNESS)
+
+            # Current servo position crosshair (orange, larger, with centre dot)
+            ch_x, ch_y = _angle_to_px(servo_pan.value, servo_tilt.value)
+            _CROSSHAIR_COLOR = (0, 200, 255)  # orange
             cv2.line(draw_frame, (ch_x, ch_y - _CROSSHAIR_GAP), (ch_x, ch_y - _CROSSHAIR_RADIUS), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
             cv2.line(draw_frame, (ch_x, ch_y + _CROSSHAIR_GAP), (ch_x, ch_y + _CROSSHAIR_RADIUS), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
             cv2.line(draw_frame, (ch_x - _CROSSHAIR_GAP, ch_y), (ch_x - _CROSSHAIR_RADIUS, ch_y), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
             cv2.line(draw_frame, (ch_x + _CROSSHAIR_GAP, ch_y), (ch_x + _CROSSHAIR_RADIUS, ch_y), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
             cv2.circle(draw_frame, (ch_x, ch_y), _CROSSHAIR_GAP, _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
+
+            # Line connecting servo position to Kalman prediction (shows lead distance)
+            if abs(kp_x - ch_x) > 3 or abs(kp_y - ch_y) > 3:
+                cv2.line(draw_frame, (ch_x, ch_y), (kp_x, kp_y), (180, 180, 180), 1, cv2.LINE_AA)
 
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
             success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
@@ -190,9 +203,6 @@ class PikiOptions(Schema):
     mog2_var_threshold: Optional[int] = None
     denoise_kernelsize: Optional[int] = None
     mask_transparency: Optional[float] = None
-    tracker_type: Optional[str] = None
-    tracker_lost_threshold: Optional[int] = None
-    tracking_enabled: Optional[bool] = None
     servo_pid_kp: Optional[float] = None
     servo_pid_ki: Optional[float] = None
     servo_pid_kd: Optional[float] = None
@@ -229,19 +239,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     if (v := options.get("mask_transparency")) is not None:
         mask_transparency.value = float(v)
 
-    if (v := options.get("tracker_type")) is not None:
-        if v in ("CSRT", "KCF"):
-            set_tracker_type(v)
-
-    if (v := options.get("tracker_lost_threshold")) is not None:
-        tracker_lost_threshold.value = max(1, int(v))
-
-    if (v := options.get("tracking_enabled")) is not None:
-        if v:
-            tracking_enabled.set()
-        else:
-            tracking_enabled.clear()
-
     if (v := options.get("servo_pid_kp")) is not None:
         servo_pid_kp.value = max(0.0, float(v))
 
@@ -264,9 +261,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.mog2_var_threshold = settings.foreground_mask_options.mog2_var_threshold.value
     config.denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
     config.mask_transparency = mask_transparency.value
-    config.tracker_type = get_tracker_type()
-    config.tracker_lost_threshold = tracker_lost_threshold.value
-    config.tracking_enabled = tracking_enabled.is_set()
     config.servo_pid_kp = servo_pid_kp.value
     config.servo_pid_ki = servo_pid_ki.value
     config.servo_pid_kd = servo_pid_kd.value
@@ -282,9 +276,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
         denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
         mask_transparency=mask_transparency.value,
-        tracker_type=get_tracker_type(),
-        tracker_lost_threshold=tracker_lost_threshold.value,
-        tracking_enabled=tracking_enabled.is_set(),
         servo_pid_kp=servo_pid_kp.value,
         servo_pid_ki=servo_pid_ki.value,
         servo_pid_kd=servo_pid_kd.value,
@@ -311,9 +302,6 @@ def get_options(request: HttpRequest):
         mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
         denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
         mask_transparency=mask_transparency.value,
-        tracker_type=get_tracker_type(),
-        tracker_lost_threshold=tracker_lost_threshold.value,
-        tracking_enabled=tracking_enabled.is_set(),
         servo_pid_kp=servo_pid_kp.value,
         servo_pid_ki=servo_pid_ki.value,
         servo_pid_kd=servo_pid_kd.value,
@@ -373,20 +361,14 @@ def get_yolo_classes(request: HttpRequest):
     return _YOLO_CLASSES
 
 
-class TrackerStatus(Schema):
-    tracking: bool
-    tracker_type: str
+class SystemStatus(Schema):
     fps: float
 
 
-@api.get("/tracker_status", response=TrackerStatus)
+@api.get("/tracker_status", response=SystemStatus)
 def get_tracker_status(request: HttpRequest):
-    """Return current tracker state."""
-    return TrackerStatus(
-        tracking=tracker_active.is_set(),
-        tracker_type=get_tracker_type(),
-        fps=round(fps_counter.fps, 1),
-    )
+    """Return current system status."""
+    return SystemStatus(fps=round(fps_counter.fps, 1))
 
 
 class ServoMoveSchema(Schema):
