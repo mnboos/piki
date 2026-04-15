@@ -20,17 +20,23 @@ import { mapValues } from '../runtime';
  */
 export interface AimConfigSchema {
     /**
-     * 
+     *
      * @type {Array<string>}
      * @memberof AimConfigSchema
      */
     targetClasses: Array<string>;
     /**
-     * 
+     *
      * @type {boolean}
      * @memberof AimConfigSchema
      */
     servoEnabled: boolean;
+    /**
+     * Seconds to hold the current target before switching to another detection.
+     * @type {number}
+     * @memberof AimConfigSchema
+     */
+    targetLockDuration: number;
 }
 
 /**
@@ -39,6 +45,7 @@ export interface AimConfigSchema {
 export function instanceOfAimConfigSchema(value: object): value is AimConfigSchema {
     if (!('targetClasses' in value) || value['targetClasses'] === undefined) return false;
     if (!('servoEnabled' in value) || value['servoEnabled'] === undefined) return false;
+    if (!('targetLockDuration' in value) || value['targetLockDuration'] === undefined) return false;
     return true;
 }
 
@@ -51,9 +58,9 @@ export function AimConfigSchemaFromJSONTyped(json: any, ignoreDiscriminator: boo
         return json;
     }
     return {
-        
         'targetClasses': json['target_classes'],
         'servoEnabled': json['servo_enabled'],
+        'targetLockDuration': json['target_lock_duration'],
     };
 }
 
@@ -67,9 +74,9 @@ export function AimConfigSchemaToJSONTyped(value?: AimConfigSchema | null, ignor
     }
 
     return {
-        
         'target_classes': value['targetClasses'],
         'servo_enabled': value['servoEnabled'],
+        'target_lock_duration': value['targetLockDuration'],
     };
 }
 

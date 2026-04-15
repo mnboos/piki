@@ -20,17 +20,23 @@ import { mapValues } from '../runtime';
  */
 export interface AimConfigSchemaPatch {
     /**
-     * 
+     *
      * @type {Array<string>}
      * @memberof AimConfigSchemaPatch
      */
     targetClasses?: Array<string> | null;
     /**
-     * 
+     *
      * @type {boolean}
      * @memberof AimConfigSchemaPatch
      */
     servoEnabled?: boolean | null;
+    /**
+     * Seconds to hold the current target before switching to another detection.
+     * @type {number}
+     * @memberof AimConfigSchemaPatch
+     */
+    targetLockDuration?: number | null;
 }
 
 /**
@@ -49,9 +55,9 @@ export function AimConfigSchemaPatchFromJSONTyped(json: any, ignoreDiscriminator
         return json;
     }
     return {
-        
         'targetClasses': json['target_classes'] == null ? undefined : json['target_classes'],
         'servoEnabled': json['servo_enabled'] == null ? undefined : json['servo_enabled'],
+        'targetLockDuration': json['target_lock_duration'] == null ? undefined : json['target_lock_duration'],
     };
 }
 
@@ -65,9 +71,9 @@ export function AimConfigSchemaPatchToJSONTyped(value?: AimConfigSchemaPatch | n
     }
 
     return {
-        
         'target_classes': value['targetClasses'],
         'servo_enabled': value['servoEnabled'],
+        'target_lock_duration': value['targetLockDuration'],
     };
 }
 

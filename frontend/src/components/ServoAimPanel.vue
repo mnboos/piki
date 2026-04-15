@@ -3,6 +3,7 @@ import { type AimConfigSchema } from "@/api";
 import Panel from "primevue/panel";
 import ToggleSwitch from "primevue/toggleswitch";
 import Checkbox from "primevue/checkbox";
+import InputNumber from "primevue/inputnumber";
 
 const model = defineModel<AimConfigSchema>({ required: true });
 defineProps<{ classes: string[] }>();
@@ -51,6 +52,20 @@ function toggleClass(cls: string) {
                 />
                 <label :for="`cls-${cls}`" class="class-label">{{ cls }}</label>
             </div>
+        </div>
+
+        <div class="lock-row">
+            <label for="target-lock-duration" class="lock-label">Target lock duration (s)</label>
+            <InputNumber
+                input-id="target-lock-duration"
+                v-model="model.targetLockDuration"
+                :min="0"
+                :max="60"
+                :step="0.5"
+                :min-fraction-digits="1"
+                :max-fraction-digits="1"
+                class="lock-input"
+            />
         </div>
     </Panel>
 </template>
@@ -105,5 +120,19 @@ function toggleClass(cls: string) {
     font-size: 0.875rem;
     cursor: pointer;
     user-select: none;
+}
+.lock-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+.lock-label {
+    font-size: 0.875rem;
+    color: var(--p-text-muted-color);
+    white-space: nowrap;
+}
+.lock-input {
+    width: 5rem;
 }
 </style>

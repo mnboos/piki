@@ -30,6 +30,7 @@ const options = ref<PikiOptions>({
 const aimConfig = ref<AimConfigSchema>({
     targetClasses: [],
     servoEnabled: false,
+    targetLockDuration: 3.0,
 });
 
 const allClasses = ref<string[]>([]);

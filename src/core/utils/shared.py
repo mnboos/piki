@@ -32,7 +32,7 @@ logger.info("Setup shared module...")
 
 app_settings = AppSettings(
     debug_settings=DebugSettings(render_bboxes=True),
-    aim_settings=AimSettings(target_classes=[], servo_enabled=False),
+    aim_settings=AimSettings(target_classes=[], servo_enabled=False, target_lock_duration=3.0),
 )
 
 

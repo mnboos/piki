@@ -307,6 +307,7 @@ def get_options(request: HttpRequest):
 class AimConfigSchema(Schema):
     target_classes: list[str]
     servo_enabled: bool
+    target_lock_duration: float
 
 
 @api.get("/aim_config", response=AimConfigSchema)
@@ -315,6 +316,7 @@ def get_aim_config(request: HttpRequest):
     return AimConfigSchema(
         target_classes=list(app_settings.aim_settings.target_classes or []),
         servo_enabled=bool(app_settings.aim_settings.servo_enabled),
+        target_lock_duration=float(app_settings.aim_settings.target_lock_duration),
     )
 
 
@@ -334,11 +336,17 @@ def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema])
         app_settings.aim_settings.servo_enabled = bool(enabled)
         config.servo_enabled = bool(enabled)
 
+    if (duration := payload.get("target_lock_duration")) is not None:
+        clamped = max(0.0, float(duration))
+        app_settings.aim_settings.target_lock_duration = clamped
+        config.target_lock_duration = clamped
+
     config.save()
 
     return AimConfigSchema(
         target_classes=list(app_settings.aim_settings.target_classes or []),
         servo_enabled=bool(app_settings.aim_settings.servo_enabled),
+        target_lock_duration=float(app_settings.aim_settings.target_lock_duration),
     )
 
 

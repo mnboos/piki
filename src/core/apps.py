@@ -104,9 +104,10 @@ class CoreConfig(AppConfig):
             config = AimConfig.load()
             app_settings.aim_settings.target_classes = config.target_classes
             app_settings.aim_settings.servo_enabled = config.servo_enabled
+            app_settings.aim_settings.target_lock_duration = float(config.target_lock_duration)
             print(
                 f"[DJANGO STARTUP] Loaded aim config: servo_enabled={config.servo_enabled}, "
-                f"classes={config.target_classes}",
+                f"classes={config.target_classes}, target_lock_duration={config.target_lock_duration}s",
                 flush=True,
             )
         except Exception:
@@ -135,35 +136,27 @@ class CoreConfig(AppConfig):
             print("[DJANGO STARTUP] Initializing camera and AI workers...")
 
             if len(sys.argv) >= 2 and sys.argv[1] == "runserver":
-                # Import our shared objects and worker logic
+                import threading
+
                 from .utils.metrics import queue_manager, retrieve_queue
 
+                # queue_manager.start() forks a child process — must happen in the
+                # main thread before any other threads are spawned to avoid deadlock.
                 print("Starting queue manager.....")
-
                 queue_manager.start()
-
                 atexit.register(queue_manager.shutdown)
 
-                time.sleep(1)
-                manager_started = False
-                retries = 0
-                while not manager_started:
-                    try:
-                        manager_started = retrieve_queue()
-                        print("Queue manager started.")
-                    except EOFError:
-                        backoff = (2**retries) * 0.1
-                        print(
-                            f"Queue manager not yet started, retrying again in {backoff}..."
-                        )
-                        retries += 1
-                        time.sleep(backoff)
-                        continue
+                def _start_background():
+                    # stream.py has heavy ROS2 imports at module level — import it
+                    # here in the background thread so it never blocks the main thread.
+                    from .utils.stream import stream_nonblocking  # noqa: PLC0415
 
-                from .utils.stream import stream_nonblocking
+                    retrieve_queue()
+                    print("Queue manager started.")
+                    stream_nonblocking()
+                    print("Start streaming...")
 
-                stream_nonblocking()
-                print("Start streaming...")
+                threading.Thread(target=_start_background, daemon=True, name="piki-startup").start()
 
             # def cleanup():
             #     print("[DJANGO SHUTDOWN] Stopping processes...")

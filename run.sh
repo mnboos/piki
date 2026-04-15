@@ -12,6 +12,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # into the Python path. Activating the venv afterwards layers on top correctly.
 source /opt/tros/humble/setup.bash
 
+# ── Pre-start cleanup ─────────────────────────────────────────────────────────
+# Kill any stale ROS2 nodes from a previous crashed/unclean run.
+# mipi_cam holds the MIPI hardware exclusively — if it's still alive from a
+# prior run the new instance will fail with "rcl node's context is invalid".
+echo "[piki] Cleaning up stale ROS2 nodes..."
+pkill -x mipi_cam 2>/dev/null || true
+pkill -x stereonet_model_node 2>/dev/null || true
+
 # ── Fix tros.b runtime directories ───────────────────────────────────────────
 # tros.b nodes write logs to /userdata/.roslog — create it if absent.
 # nginx (websocket node) needs a logs/ dir relative to the working directory.
@@ -87,7 +95,10 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 # stereo_combine_mode=1: images are packed left|right in one frame.
 # need_rectify=True: stereonet rectifies using the built-in stereo.yaml calibration.
 # The published /StereoNetNode/rectified_image will be the left eye at 1280x640.
-ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
+# setsid puts the launch process in its own process group so that
+# `kill -- -$STEREONET_PID` in cleanup() reaches all child nodes
+# (mipi_cam, stereonet_model_node, etc.) in one shot.
+setsid ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
 mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
 stereo_combine_mode:=1 need_rectify:=True \
 height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
@@ -122,7 +133,9 @@ cleanup() {
     echo ""
     echo "[piki] Shutting down..."
     kill $DJANGO_PID 2>/dev/null
-    kill $STEREONET_PID 2>/dev/null
+    # Negative PID kills the entire process group started by setsid above,
+    # ensuring mipi_cam and all other child nodes are terminated together.
+    kill -- -$STEREONET_PID 2>/dev/null
     wait $DJANGO_PID 2>/dev/null
     wait $STEREONET_PID 2>/dev/null
     echo "[piki] Done."

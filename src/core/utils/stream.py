@@ -70,6 +70,12 @@ _yolo_revalidate_counter = 0
 # so it can be adjusted from the web UI without a restart.
 _tracker_lost_streak = 0
 
+# Target-lock state: tracks the currently locked detection across YOLO frames so
+# the servo doesn't jump when detection order changes or multiple targets exist.
+_locked_target_bbox: list[float] | None = None   # normalized [ymin, xmin, ymax, xmax]
+_locked_target_label: str | None = None
+_locked_target_lost_since: float | None = None   # time.time() when target was last seen
+
 double_buffer: DoubleBuffer | None = None
 worker_semaphore = Semaphore(NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
@@ -295,6 +301,109 @@ def get_measure(description: str):
     return measure
 
 
+def _compute_iou(a: Sequence[float], b: Sequence[float]) -> float:
+    """IoU of two normalized [ymin, xmin, ymax, xmax] boxes."""
+    inter_ymin = max(a[0], b[0])
+    inter_xmin = max(a[1], b[1])
+    inter_ymax = min(a[2], b[2])
+    inter_xmax = min(a[3], b[3])
+    inter_h = max(0.0, inter_ymax - inter_ymin)
+    inter_w = max(0.0, inter_xmax - inter_xmin)
+    inter = inter_h * inter_w
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _nms_detections(
+    detections: "list[Detection]",
+    iou_threshold: float = 0.45,
+    containment_threshold: float = 0.6,
+) -> "list[Detection]":
+    """Remove duplicate/overlapping detections after cross-tile aggregation.
+
+    Two suppression criteria are applied — a detection is suppressed if it
+    overlaps an already-kept higher-confidence detection by either:
+
+    * IoU ≥ ``iou_threshold``  (standard NMS — catches near-identical boxes)
+    * IoM ≥ ``containment_threshold``  (Intersection-over-Minimum — catches the
+      common tile-boundary case where the same object is fully detected in one tile
+      but only partially clipped in the adjacent tile, yielding a small box that
+      is almost entirely contained inside the larger one, yet their IoU is low)
+
+    Per-class first pass, then a cross-class containment pass so that a box of one
+    class that is almost entirely inside a box of another class is also removed.
+    """
+    if len(detections) <= 1:
+        return detections
+
+    def _overlap(a: Sequence[float], b: Sequence[float]) -> tuple[float, float]:
+        """Return (iou, iom) for two [ymin,xmin,ymax,xmax] boxes."""
+        inter_h = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+        inter_w = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+        inter = inter_h * inter_w
+        area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+        area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+        union = area_a + area_b - inter
+        iou = inter / union if union > 0 else 0.0
+        iom = inter / min(area_a, area_b) if min(area_a, area_b) > 0 else 0.0
+        return iou, iom
+
+    def _greedy_nms(indices: list[int]) -> list[int]:
+        """Greedy NMS: keep highest-confidence box, suppress overlapping ones."""
+        sorted_by_conf = sorted(indices, key=lambda i: detections[i].confidence, reverse=True)
+        suppressed: set[int] = set()
+        kept: list[int] = []
+        for i in sorted_by_conf:
+            if i in suppressed:
+                continue
+            kept.append(i)
+            for j in sorted_by_conf:
+                if j == i or j in suppressed:
+                    continue
+                iou, iom = _overlap(detections[i].bbox, detections[j].bbox)
+                if iou >= iou_threshold or iom >= containment_threshold:
+                    suppressed.add(j)
+        return kept
+
+    # Pass 1: per-class NMS — removes same-label duplicates (tile boundary artefacts,
+    # multiple grid cells firing on the same object, etc.)
+    from collections import defaultdict  # noqa: PLC0415
+    by_label: dict[str, list[int]] = defaultdict(list)
+    for i, det in enumerate(detections):
+        by_label[det.label].append(i)
+
+    after_per_class: list[int] = []
+    for indices in by_label.values():
+        if len(indices) == 1:
+            after_per_class.extend(indices)
+        else:
+            after_per_class.extend(_greedy_nms(indices))
+
+    if len(after_per_class) <= 1:
+        kept_set = set(after_per_class)
+        return [det for i, det in enumerate(detections) if i in kept_set]
+
+    # Pass 2: cross-class containment — removes a detection of one class that is
+    # almost entirely inside a detection of a different class (IoM only, not IoU,
+    # so legitimate separate objects at similar positions are kept).
+    sorted_all = sorted(after_per_class, key=lambda i: detections[i].confidence, reverse=True)
+    suppressed: set[int] = set()
+    for idx, i in enumerate(sorted_all):
+        if i in suppressed:
+            continue
+        for j in sorted_all[idx + 1:]:
+            if j in suppressed:
+                continue
+            _, iom = _overlap(detections[i].bbox, detections[j].bbox)
+            if iom >= containment_threshold:
+                suppressed.add(j)
+
+    final_kept = set(i for i in after_per_class if i not in suppressed)
+    return [det for i, det in enumerate(detections) if i in final_kept]
+
+
 def run_object_detection(
     frame_hires: np.ndarray,
     rois: list[Box],
@@ -350,6 +459,7 @@ def run_object_detection(
                 ]
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
+        all_detections = _nms_detections(all_detections, iou_threshold=0.45)
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
@@ -414,7 +524,7 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
     init code.
     """
     global max_output_timestamp, tracker, untracked_frames_count, total_untracked_frames_count
-    global _tracker_lost_streak
+    global _tracker_lost_streak, _locked_target_bbox, _locked_target_label, _locked_target_lost_since
     active_futures.remove(future)
     try:
         worker_pid, timestamp, inference_time, detections = future.result()
@@ -429,25 +539,86 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
 
         aim_enabled = app_settings.aim_settings.servo_enabled
         target_classes = {c.strip().lower() for c in (app_settings.aim_settings.target_classes or [])}
+        target_lock_duration = float(app_settings.aim_settings.target_lock_duration)
 
         # --- Servo aiming + tracker init/re-init from YOLO result ---
         # Always process regardless of streaming state so servo and tracker work
         # even when no browser is watching.
-        for label, confidence, bbox_normalized in detections:
-            if target_classes and label.strip().lower() not in target_classes:
-                continue
+        #
+        # Target-lock: instead of blindly picking the first matching detection each
+        # frame (which causes the servo to jump when detection order changes), we
+        # maintain a locked target bbox.  We look for the matching detection with the
+        # highest IoU vs. the lock.  If found, we update the lock and aim.  If not
+        # found for longer than `target_lock_duration` seconds, we allow a switch.
 
-            # Aim servo at first matching detection.
+        # Collect all matching detections for this frame.
+        matching: list[tuple[str, float, list[float]]] = [
+            (label, confidence, bbox_normalized)
+            for label, confidence, bbox_normalized in detections
+            if not target_classes or label.strip().lower() in target_classes
+        ]
+
+        # Resolve which detection to use this frame.
+        chosen: tuple[str, float, list[float]] | None = None
+
+        if matching:
+            if _locked_target_bbox is None:
+                # No lock yet — take the first match and lock onto it.
+                chosen = matching[0]
+            else:
+                # Find the matching detection with highest IoU vs. current lock.
+                best_iou = 0.0
+                best = None
+                for det in matching:
+                    iou = _compute_iou(_locked_target_bbox, det[2])
+                    if iou > best_iou:
+                        best_iou = iou
+                        best = det
+                if best_iou >= 0.3:
+                    # Good match — update lock position, clear lost timer.
+                    chosen = best
+                    _locked_target_lost_since = None
+                else:
+                    # Current lock not found among detections.
+                    if _locked_target_lost_since is None:
+                        _locked_target_lost_since = time.time()
+                    elapsed = time.time() - _locked_target_lost_since
+                    if elapsed >= target_lock_duration:
+                        # Lock expired — switch to the new first matching detection.
+                        logger.info(
+                            "Target lock expired after %.1fs, switching to new target.", elapsed
+                        )
+                        chosen = matching[0]
+                        _locked_target_lost_since = None
+                    # else: hold lock position; skip servo update this cycle.
+        else:
+            # No matching detections at all.
+            if _locked_target_bbox is not None:
+                if _locked_target_lost_since is None:
+                    _locked_target_lost_since = time.time()
+                elapsed = time.time() - _locked_target_lost_since
+                if elapsed >= target_lock_duration:
+                    logger.info("Target lock expired after %.1fs (no detections), clearing lock.", elapsed)
+                    _locked_target_bbox = None
+                    _locked_target_label = None
+                    _locked_target_lost_since = None
+
+        if chosen is not None:
+            chosen_label, chosen_confidence, chosen_bbox = chosen
+            _locked_target_bbox = list(chosen_bbox)
+            _locked_target_label = chosen_label
+
+            # Aim servo at chosen detection.
             if aim_enabled and target_classes:
                 from .engine import aim_at  # noqa: PLC0415
-                aim_at(bbox_normalized=bbox_normalized)
+                aim_at(bbox_normalized=chosen_bbox)
 
             # Re-init tracker with this YOLO detection (corrects any drift).
             # Use the lores_frame bound at submission time — reading any shared
             # global here would race with _submit_yolo on the main thread.
             if lores_frame is not None and tracking_enabled.is_set():
                 fh, fw = lores_frame.shape[:2]
-                x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=(fh, fw))
+                x, y, w, h = denormalize(bbox_normalized=chosen_bbox, frame_shape=(fh, fw))
                 # Clamp to frame bounds: denormalize() may produce right/bottom == fw/fh
                 # when xmax/ymax == 1.0, which OpenCV trackers reject.
                 w = min(w, fw - x)
@@ -476,7 +647,6 @@ def on_done(future: Future[InferenceOutput], lores_frame: "np.ndarray | None" = 
                         tracker_active.set()
                         logger.info("Tracker (re-)initialised at bbox (%d,%d,%d,%d) frame=%s type=%s",
                                     x, y, w, h, lores_frame.shape, get_tracker_type())
-            break  # only init on first matching detection
 
         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
@@ -735,7 +905,7 @@ def stream_with_ros():
 
         # from cv_bridge import CvBridge
 
-        delay_seconds = 5
+        delay_seconds = 1
         logger.info(f"Starting ROS 2 videostream in {delay_seconds}s...")
         time.sleep(delay_seconds)
 

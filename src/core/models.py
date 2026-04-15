@@ -41,6 +41,7 @@ class AimConfig(models.Model):
 
     target_classes = models.JSONField(default=list)
     servo_enabled = models.BooleanField(default=False)
+    target_lock_duration = models.FloatField(default=3.0)
 
     class Meta:
         verbose_name = "Aim Config"

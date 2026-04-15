@@ -17,9 +17,10 @@ class AimSettings(SharedMemoryObject):
 
     target_classes: list   # list of YOLO class name strings (stripped)
     servo_enabled: bool
+    target_lock_duration: float  # seconds to hold target before allowing a switch
 
-    def __init__(self, *, target_classes: list, servo_enabled: bool = False, _dict_proxy=None):
-        super().__init__(target_classes=target_classes, servo_enabled=servo_enabled, _dict_proxy=_dict_proxy)
+    def __init__(self, *, target_classes: list, servo_enabled: bool = False, target_lock_duration: float = 3.0, _dict_proxy=None):
+        super().__init__(target_classes=target_classes, servo_enabled=servo_enabled, target_lock_duration=target_lock_duration, _dict_proxy=_dict_proxy)
 
 
 class AppSettings(SharedMemoryObject):
