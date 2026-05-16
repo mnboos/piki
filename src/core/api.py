@@ -16,6 +16,8 @@ from .utils.shared import (
     mask_transparency,
     motion_detector,
     prob_threshold,
+    recording_active,
+    replaying_active,
     servo_dead_zone,
     servo_pan,
     servo_pid_kd,
@@ -388,4 +390,213 @@ def servo_move(request: HttpRequest, payload: ServoMoveSchema):
 
     pan, tilt = move_to(payload.pan_angle, payload.tilt_angle)
     return ServoPositionSchema(pan_angle=pan, tilt_angle=tilt)
+
+
+# ---------------------------------------------------------------------------
+# Video recording / replay endpoints
+# ---------------------------------------------------------------------------
+
+from datetime import datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from django.conf import settings as django_settings  # noqa: E402
+from django.http import Http404, HttpResponse  # noqa: E402
+
+
+class RecordingStatus(Schema):
+    is_recording: bool
+    elapsed_seconds: float = 0.0
+    frame_count: int = 0
+    file_path: str = ""
+
+
+class VideoInfo(Schema):
+    id: int
+    filename: str
+    url: str
+    size_bytes: int
+    source: str
+    created_at: str
+
+
+class ReplayStatus(Schema):
+    is_replaying: bool
+    video_filename: str = ""
+    current_frame: int = 0
+    total_frames: int = 0
+    video_fps: float = 0.0
+
+
+@api.post("/recording/start", response={200: RecordingStatus, 409: dict})
+def recording_start(request: HttpRequest):
+    from .utils.recording import get_recording_stats, is_recording, start_recording  # noqa: PLC0415
+
+    if replaying_active.is_set():
+        return 409, {"detail": "Cannot record while replaying."}
+
+    if is_recording():
+        stats = get_recording_stats()
+        return RecordingStatus(is_recording=True, **stats)
+
+    videos_dir = Path(django_settings.MEDIA_ROOT) / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = str(videos_dir / f"recording_{timestamp}.mp4")
+
+    # frame_lores dimensions: determined later from first frame; use safe defaults
+    err = start_recording(path, fps=30.0)
+    if err:
+        return 409, {"detail": err}
+
+    recording_active.set()
+    stats = get_recording_stats()
+    return RecordingStatus(is_recording=True, **stats)
+
+
+@api.post("/recording/stop", response=RecordingStatus)
+def recording_stop(request: HttpRequest):
+    from .models import Video  # noqa: PLC0415
+    from .utils.recording import get_recording_stats, stop_recording  # noqa: PLC0415
+
+    recording_active.clear()
+    path, frame_count, error = stop_recording()
+
+    if path and frame_count > 0:
+        file_path = Path(path)
+        Video.objects.create(
+            filename=file_path.name,
+            file=str(file_path.relative_to(django_settings.MEDIA_ROOT)),
+            size_bytes=file_path.stat().st_size,
+            source="recorded",
+        )
+
+    return RecordingStatus(
+        is_recording=False,
+        elapsed_seconds=0.0,
+        frame_count=frame_count,
+        file_path=path,
+    )
+
+
+@api.get("/recording/status", response=RecordingStatus)
+def recording_status(request: HttpRequest):
+    from .utils.recording import get_recording_stats, is_recording  # noqa: PLC0415
+
+    if not is_recording():
+        return RecordingStatus(is_recording=False)
+    stats = get_recording_stats()
+    return RecordingStatus(is_recording=True, **stats)
+
+
+@api.get("/videos", response=list[VideoInfo])
+def videos_list(request: HttpRequest):
+    from .models import Video  # noqa: PLC0415
+
+    results = []
+    for v in Video.objects.all():
+        results.append(
+            VideoInfo(
+                id=v.pk,
+                filename=v.filename,
+                url=request.build_absolute_uri(v.file.url),
+                size_bytes=v.size_bytes,
+                source=v.source,
+                created_at=v.created_at.isoformat(),
+            )
+        )
+    return results
+
+
+@api.post("/videos/upload", response=VideoInfo)
+def videos_upload(request: HttpRequest):
+    from .models import Video  # noqa: PLC0415
+
+    uploaded = request.FILES.get("file")
+    if not uploaded:
+        raise Http404("No file provided")
+
+    video = Video.objects.create(
+        filename=uploaded.name,
+        size_bytes=uploaded.size,
+        source="uploaded",
+    )
+    video.file.save(uploaded.name, uploaded, save=True)
+
+    return VideoInfo(
+        id=video.pk,
+        filename=video.filename,
+        url=request.build_absolute_uri(video.file.url),
+        size_bytes=video.size_bytes,
+        source=video.source,
+        created_at=video.created_at.isoformat(),
+    )
+
+
+@api.delete("/videos/{video_id}", response={200: dict})
+def videos_delete(request: HttpRequest, video_id: int):
+    from .models import Video  # noqa: PLC0415
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        raise Http404("Video not found")
+
+    # Delete the file from disk.
+    file_path = Path(django_settings.MEDIA_ROOT) / video.file.name
+    if file_path.exists():
+        file_path.unlink()
+
+    video.delete()
+    return {"status": "deleted"}
+
+
+@api.post("/replay/start/{video_id}", response={200: ReplayStatus, 409: dict})
+def replay_start(request: HttpRequest, video_id: int):
+    from .models import Video  # noqa: PLC0415
+    from .utils.replay import start_replay, is_replaying, get_replay_stats  # noqa: PLC0415
+
+    if recording_active.is_set():
+        return 409, {"detail": "Cannot replay while recording."}
+
+    if is_replaying():
+        stop_replay()
+        replaying_active.clear()
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        raise Http404("Video not found")
+
+    file_path = Path(django_settings.MEDIA_ROOT) / video.file.name
+    if not file_path.exists():
+        raise Http404("Video file not found on disk")
+
+    streaming_active.set()
+    replaying_active.set()
+    start_replay(str(file_path), filename=video.filename)
+
+    import time  # noqa: PLC0415
+    time.sleep(0.1)
+
+    stats = get_replay_stats()
+    return ReplayStatus(is_replaying=True, **stats)
+
+
+@api.post("/replay/stop", response={200: dict})
+def replay_stop(request: HttpRequest):
+    from .utils.replay import stop_replay  # noqa: PLC0415
+
+    stop_replay()
+    replaying_active.clear()
+    return {"status": "stopped"}
+
+
+@api.get("/replay/status", response=ReplayStatus)
+def replay_status(request: HttpRequest):
+    from .utils.replay import get_replay_stats, is_replaying  # noqa: PLC0415
+
+    if not is_replaying():
+        return ReplayStatus(is_replaying=False)
+    stats = get_replay_stats()
+    return ReplayStatus(is_replaying=True, **stats)
 

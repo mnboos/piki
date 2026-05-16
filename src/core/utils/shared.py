@@ -78,6 +78,11 @@ is_object_detection_disabled = Event()
 # is skipped so the inference/motion-detection loop runs at full speed.
 streaming_active = threading.Event()
 
+# Set while recording pipeline frames to a video file.
+recording_active = threading.Event()
+# Set while replaying a video through the pipeline (replay thread owns latest_frame).
+replaying_active = threading.Event()
+
 
 class FPSCounter:
     """Rolling-window FPS counter (thread-safe)."""

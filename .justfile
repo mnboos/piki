@@ -1,3 +1,5 @@
+set dotenv-load
+
 # Run the full stack (mirrors run.sh)
 run:
     ./run.sh
@@ -25,3 +27,16 @@ profile-staged:
 # Parse the most recent profile log and print a p50/p95/p99 summary table.
 profile-report:
     uv run python benchmarks/parse_perf_log.py $(ls -t logs/profile_*.log | head -1)
+
+[env("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic")]
+[env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "deepseek-v4-flash")]
+[env("ANTHROPIC_DEFAULT_OPUS_MODEL", "deepseek-v4-pro[1m]")]
+[env("ANTHROPIC_DEFAULT_SONNET_MODEL", "deepseek-v4-pro[1m]")]
+[env("ANTHROPIC_MODEL", "deepseek-v4-pro[1m]")]
+[env("CLAUDE_CODE_EFFORT_LEVEL", "max")]
+[env("CLAUDE_CODE_SUBAGENT_MODEL", "deepseek-v4-pro[1m]")]
+[env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")]
+claude-deepseek:
+    claude --model opus --effort max
+
+alias claude := claude-deepseek

@@ -39,6 +39,8 @@ from .shared import (
     mask_transparency,
     motion_detector,
     preview_downscale_factor,
+    recording_active,
+    replaying_active,
     streaming_active,
 )
 
@@ -151,6 +153,10 @@ class PikiVisionNode(Node):
             logger.exception("Debug frame callback error")
 
     def listener_callback_hbm(self, msg: Any):
+        # During replay the replay thread feeds frames through process_frame()
+        # directly — skip the live camera callback to avoid pipeline contention.
+        if replaying_active.is_set():
+            return
         try:
             fps_counter.tick()
             w, h = msg.width, msg.height
@@ -674,6 +680,12 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     has_movement, mask = motion_detector.is_moving(frame_lores)
     _latest_mask = mask
     _latest_mask_shape = mask.shape[:2] if mask is not None else (1, 1)
+
+    # Recording: save raw pipeline frame before any overlay drawing.
+    if recording_active.is_set():
+        from .recording import write_frame  # noqa: PLC0415
+
+        write_frame(cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR))
 
     detections_to_show = []
 

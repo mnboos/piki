@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/vue-query";
 import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiOptions, type PikiOptionsPatch } from "@/api";
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
+import RecordingsPanel from "@/components/RecordingsPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
 import CameraFeed from "@/components/CameraFeed.vue";
 import Tab from "primevue/tab";
@@ -115,6 +116,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 <Tab value="detection">Detection</Tab>
                 <Tab value="servo">Servo</Tab>
                 <Tab value="debug">Debug</Tab>
+                <Tab value="recordings">Recordings</Tab>
             </TabList>
             <TabPanels>
                 <TabPanel value="camera">
@@ -147,6 +149,10 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 <TabPanel value="servo">
                     <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses" />
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
+                </TabPanel>
+
+                <TabPanel value="recordings">
+                    <RecordingsPanel />
                 </TabPanel>
             </TabPanels>
         </Tabs>

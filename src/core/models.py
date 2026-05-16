@@ -35,6 +35,20 @@ class DetectionConfig(models.Model):
         return obj
 
 
+class Video(models.Model):
+    filename = models.CharField(max_length=255)
+    file = models.FileField(upload_to="videos/")
+    size_bytes = models.PositiveIntegerField(default=0)
+    source = models.CharField(max_length=20, default="uploaded")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.filename
+
+
 class AimConfig(models.Model):
     """Singleton model holding servo aim configuration."""
 
