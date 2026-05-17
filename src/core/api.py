@@ -80,30 +80,31 @@ async def stream_camera():
                 draw_frame = np.array(frame)  # writable copy if already BGR
 
             # Draw detections on the frame
-            for detection in detections:
-                left, top, w, h = detection.bbox
-                left, top, w, h = int(left), int(top), int(w), int(h)
-                right = left + w
-                bottom = top + h
+            if app_settings.debug_settings.show_boxes:
+                for detection in detections:
+                    left, top, w, h = detection.bbox
+                    left, top, w, h = int(left), int(top), int(w), int(h)
+                    right = left + w
+                    bottom = top + h
 
-                cv2.rectangle(draw_frame, (left, top), (right, bottom), box_color, thickness)
+                    cv2.rectangle(draw_frame, (left, top), (right, bottom), box_color, thickness)
 
-                text_to_draw = f"{detection.label} ({detection.confidence:.1%})"
-                (text_w, text_h), _ = cv2.getTextSize(text_to_draw, font, font_scale, thickness)
-                text_bg_rect_start = (left, top - text_h - 7)
-                text_bg_rect_end = (left + text_w, top)
-                cv2.rectangle(draw_frame, text_bg_rect_start, text_bg_rect_end, box_color, -1)
+                    text_to_draw = f"{detection.label} ({detection.confidence:.1%})"
+                    (text_w, text_h), _ = cv2.getTextSize(text_to_draw, font, font_scale, thickness)
+                    text_bg_rect_start = (left, top - text_h - 7)
+                    text_bg_rect_end = (left + text_w, top)
+                    cv2.rectangle(draw_frame, text_bg_rect_start, text_bg_rect_end, box_color, -1)
 
-                cv2.putText(
-                    draw_frame,
-                    text_to_draw,
-                    (left, top - 5),
-                    font,
-                    font_scale,
-                    (0, 0, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
+                    cv2.putText(
+                        draw_frame,
+                        text_to_draw,
+                        (left, top - 5),
+                        font,
+                        font_scale,
+                        (0, 0, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
             # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
             # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
@@ -197,7 +198,9 @@ async def video_feed_raw(request: HttpRequest):
 
 
 class PikiOptions(Schema):
-    mode: str
+    show_boxes: bool = True
+    show_mask: bool = False
+    show_rois: bool = False
     conf_threshold: Optional[float] = None
     pixelcount_threshold: Optional[int] = None
     min_area: Optional[int] = None
@@ -215,10 +218,12 @@ class PikiOptions(Schema):
 def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     from .models import DetectionConfig  # noqa: PLC0415
 
-    mode = options.get("mode", app_settings.debug_settings.mode)
-    app_settings.debug_settings.mode = mode
-    # debug_enabled gates the mask/rois branch in process_frame
-    app_settings.debug_settings.debug_enabled = mode in ("mask", "rois")
+    if (v := options.get("show_boxes")) is not None:
+        app_settings.debug_settings.show_boxes = v
+    if (v := options.get("show_mask")) is not None:
+        app_settings.debug_settings.show_mask = v
+    if (v := options.get("show_rois")) is not None:
+        app_settings.debug_settings.show_rois = v
 
     if (v := options.get("conf_threshold")) is not None:
         prob_threshold.value = float(v)
@@ -255,7 +260,9 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
 
     # Persist all current values to DB so they survive restarts.
     config = DetectionConfig.load()
-    config.mode = mode
+    config.show_boxes = app_settings.debug_settings.show_boxes
+    config.show_mask = app_settings.debug_settings.show_mask
+    config.show_rois = app_settings.debug_settings.show_rois
     config.conf_threshold = prob_threshold.value
     config.pixelcount_threshold = settings.foreground_mask_options.pixelcount_threshold.value
     config.min_area = settings.foreground_mask_options.min_area.value
@@ -270,7 +277,9 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.save()
 
     return PikiOptions(
-        mode=mode,
+        show_boxes=app_settings.debug_settings.show_boxes,
+        show_mask=app_settings.debug_settings.show_mask,
+        show_rois=app_settings.debug_settings.show_rois,
         conf_threshold=prob_threshold.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
@@ -296,7 +305,9 @@ def reset_background(request: HttpRequest):
 def get_options(request: HttpRequest):
     """Return current tuning values so the frontend can initialise its controls."""
     return PikiOptions(
-        mode=app_settings.debug_settings.mode or "boxes",
+        show_boxes=app_settings.debug_settings.show_boxes,
+        show_mask=app_settings.debug_settings.show_mask,
+        show_rois=app_settings.debug_settings.show_rois,
         conf_threshold=prob_threshold.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,

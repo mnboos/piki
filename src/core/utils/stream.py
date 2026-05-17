@@ -472,12 +472,70 @@ def run_object_detection(
                 ]
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
+        # Collect tile origins and boundaries for edge-proximity check.
+        seen_origins: set[tuple[int, int]] = set()
+        tile_edges: list[tuple[int, int, int, int]] = []  # (left, top, right, bottom)
+        for _, tx, ty in tiles:
+            seen_origins.add((tx, ty))
+            tile_edges.append((tx, ty, tx + ai_input_size, ty + ai_input_size))
+
         _t = time.perf_counter()
         all_detections = _nms_detections(all_detections, iou_threshold=0.45)
         if _profile:
             logger.info("PERF stage=cross_tile_nms ms=%.2f", (time.perf_counter() - _t) * 1000)
 
-        avg_duration = 0 if not tiles else total_duration // len(tiles)
+        # --- Second pass: re-detect objects that touch a tile boundary ----------
+        EDGE_MARGIN = 32  # pixels — ~5 % of a 640 px tile
+
+        extra_tiles: list[tuple[int, int]] = []
+        for det in all_detections:
+            x1 = int(det.bbox[1] * frame_w)
+            y1 = int(det.bbox[0] * frame_h)
+            x2 = int(det.bbox[3] * frame_w)
+            y2 = int(det.bbox[2] * frame_h)
+
+            for left, top, right, bottom in tile_edges:
+                if (abs(x1 - left) <= EDGE_MARGIN
+                        or abs(x2 - right) <= EDGE_MARGIN
+                        or abs(y1 - top) <= EDGE_MARGIN
+                        or abs(y2 - bottom) <= EDGE_MARGIN):
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    new_tx = max(0, min(cx - ai_input_size // 2, frame_w - ai_input_size))
+                    new_ty = max(0, min(cy - ai_input_size // 2, frame_h - ai_input_size))
+                    if (new_tx, new_ty) not in seen_origins:
+                        extra_tiles.append((new_tx, new_ty))
+                        seen_origins.add((new_tx, new_ty))
+                    break  # one matching edge is enough
+
+        if extra_tiles:
+            from .func import _slice_nv12_tile  # noqa: PLC0415
+
+            for tx, ty in extra_tiles:
+                tile_img = _slice_nv12_tile(
+                    nv12=frame_hires, buffer_h=frame_h, tx=tx, ty=ty, tile_size=ai_input_size,
+                )
+                duration, detections = detect_objects(tile_img)
+                total_duration += duration
+
+                for label, confidence, local_pixel_bbox in detections:
+                    lx1, ly1, lx2, ly2 = local_pixel_bbox
+                    all_detections.append(Detection(
+                        label=label,
+                        confidence=confidence,
+                        bbox=[
+                            (ly1 + ty) / frame_h,
+                            (lx1 + tx) / frame_w,
+                            (ly2 + ty) / frame_h,
+                            (lx2 + tx) / frame_w,
+                        ],
+                    ))
+
+            all_detections = _nms_detections(all_detections, iou_threshold=0.45)
+
+        # -----------------------------------------------------------------------
+
+        avg_duration = 0 if not tiles else total_duration // (len(tiles) + len(extra_tiles))
         return InferenceOutput(
             worker_pid=worker_pid,
             timestamp=timestamp,
@@ -689,34 +747,26 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
 
     detections_to_show = []
 
-    if app_settings.debug_settings.debug_enabled or os.environ.get("DISABLE_AI"):
-        mode = app_settings.debug_settings.mode
-        gray = frame_lores if frame_lores.ndim == 2 else cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
-        frame_lores = cv2.merge((gray, gray, gray))
+    if os.environ.get("DISABLE_AI"):
+        # DISABLE_AI: skip YOLO entirely, only draw debug overlays.
+        if app_settings.debug_settings.show_mask or app_settings.debug_settings.show_rois:
+            gray = frame_lores if frame_lores.ndim == 2 else cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
+            frame_lores = cv2.merge((gray, gray, gray))
 
-        if mode == "rois":
-            # Draw the exact tile rectangles that will be sent to YOLO, so the user
-            # can see what motion detection selected.
-            rois = motion_detector.create_rois(mask=mask)
-            for roi in rois:
-                rx, ry, rw, rh = roi
-                cv2.rectangle(frame_lores, (rx, ry), (rx + rw, ry + rh), (0, 200, 255), 2)
-            frame_lores = motion_detector.highlight_movement_on(
-                frame=frame_lores,
-                mask=mask,
-                overlay_color_rgb=(147, 20, 255),
-                transparency_factor=mask_transparency.value,
-                draw_boxes=False,
-            )
-        else:
-            # "mask" mode — show motion blobs with bounding boxes
-            frame_lores = motion_detector.highlight_movement_on(
-                frame=frame_lores,
-                mask=mask,
-                overlay_color_rgb=(147, 20, 255),
-                transparency_factor=mask_transparency.value,
-                draw_boxes=True,
-            )
+            if app_settings.debug_settings.show_rois:
+                rois = motion_detector.create_rois(mask=mask)
+                for roi in rois:
+                    rx, ry, rw, rh = roi
+                    cv2.rectangle(frame_lores, (rx, ry), (rx + rw, ry + rh), (0, 200, 255), 2)
+
+            if app_settings.debug_settings.show_mask:
+                frame_lores = motion_detector.highlight_movement_on(
+                    frame=frame_lores,
+                    mask=mask,
+                    overlay_color_rgb=(147, 20, 255),
+                    transparency_factor=mask_transparency.value,
+                    draw_boxes=True,
+                )
     elif has_movement:
         try:
             if not active_futures:
@@ -729,6 +779,30 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
         if streaming_active.is_set():
             with latest_ai_lock:
                 detections_to_show = latest_ai_detections
+
+        # Draw mask / ROIs overlays independently of YOLO.
+        if app_settings.debug_settings.show_mask or app_settings.debug_settings.show_rois:
+            # frame_lores may be the 2-D Y-plane; make it a writable BGR copy.
+            if frame_lores.ndim == 2:
+                frame_lores = cv2.merge((frame_lores, frame_lores, frame_lores))
+            else:
+                frame_lores = frame_lores.copy()
+
+            if app_settings.debug_settings.show_rois:
+                # Re-create ROIs (same as what was submitted to YOLO above).
+                rois = motion_detector.create_rois(mask=mask)
+                for roi in rois:
+                    rx, ry, rw, rh = roi
+                    cv2.rectangle(frame_lores, (rx, ry), (rx + rw, ry + rh), (0, 200, 255), 2)
+
+            if app_settings.debug_settings.show_mask:
+                frame_lores = motion_detector.highlight_movement_on(
+                    frame=frame_lores,
+                    mask=mask,
+                    overlay_color_rgb=(147, 20, 255),
+                    transparency_factor=mask_transparency.value,
+                    draw_boxes=True,
+                )
     else:
         if streaming_active.is_set():
             # No movement — clear stale detections for the display.

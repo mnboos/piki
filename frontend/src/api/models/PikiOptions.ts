@@ -24,7 +24,9 @@ export interface PikiOptions {
      * @type {string}
      * @memberof PikiOptions
      */
-    mode: string;
+    showBoxes: boolean;
+    showMask: boolean;
+    showRois: boolean;
     /**
      * 
      * @type {number}
@@ -97,7 +99,7 @@ export interface PikiOptions {
  * Check if a given object implements the PikiOptions interface.
  */
 export function instanceOfPikiOptions(value: object): value is PikiOptions {
-    if (!('mode' in value) || value['mode'] === undefined) return false;
+    if (!('showBoxes' in value) || value['showBoxes'] === undefined) return false;
     return true;
 }
 
@@ -111,7 +113,9 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
     }
     return {
         
-        'mode': json['mode'],
+        'showBoxes': json['show_boxes'] === undefined ? true : json['show_boxes'],
+        'showMask': json['show_mask'] === undefined ? false : json['show_mask'],
+        'showRois': json['show_rois'] === undefined ? false : json['show_rois'],
         'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
         'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
         'minArea': json['min_area'] == null ? undefined : json['min_area'],
@@ -137,7 +141,9 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
 
     return {
         
-        'mode': value['mode'],
+        'show_boxes': value['showBoxes'],
+        'show_mask': value['showMask'],
+        'show_rois': value['showRois'],
         'conf_threshold': value['confThreshold'],
         'pixelcount_threshold': value['pixelcountThreshold'],
         'min_area': value['minArea'],

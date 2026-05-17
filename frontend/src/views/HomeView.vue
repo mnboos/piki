@@ -16,7 +16,9 @@ import Tabs from "primevue/tabs";
 const api = new DefaultApi();
 
 const options = ref<PikiOptions>({
-    mode: "boxes",
+    showBoxes: true,
+    showMask: false,
+    showRois: false,
     confThreshold: 0.4,
     pixelcountThreshold: 500,
     minArea: 500,
@@ -76,7 +78,9 @@ onMounted(async () => {
     try {
         const current = await api.coreApiGetOptions();
         options.value = {
-            mode: current.mode,
+            showBoxes: current.showBoxes,
+            showMask: current.showMask,
+            showRois: current.showRois,
             confThreshold: current.confThreshold ?? 0.4,
             pixelcountThreshold: current.pixelcountThreshold ?? 500,
             minArea: current.minArea ?? 500,
@@ -123,6 +127,14 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                     <div class="feed-wrapper">
                         <CameraFeed :src="feedUrl" alt="camera feed" />
                         <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
+                        <div class="overlay-toggles">
+                            <button :class="['ot-btn', { active: options.showBoxes }]"
+                                @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: options.showMask }]"
+                                @click="options.showMask = !options.showMask">Mask</button>
+                            <button :class="['ot-btn', { active: options.showRois }]"
+                                @click="options.showRois = !options.showRois">ROIs</button>
+                        </div>
                     </div>
                 </TabPanel>
 
@@ -142,6 +154,14 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 <TabPanel value="detection">
                     <div class="feed-wrapper">
                         <CameraFeed :src="feedUrl" alt="camera feed" />
+                        <div class="overlay-toggles">
+                            <button :class="['ot-btn', { active: options.showBoxes }]"
+                                @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: options.showMask }]"
+                                @click="options.showMask = !options.showMask">Mask</button>
+                            <button :class="['ot-btn', { active: options.showRois }]"
+                                @click="options.showRois = !options.showRois">ROIs</button>
+                        </div>
                     </div>
                     <DetectionControls v-model="options" @reset-background="resetBackground()" />
                 </TabPanel>
@@ -185,6 +205,35 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
     background: rgba(0, 0, 0, 0.55);
     color: #aaa;
     pointer-events: none;
+}
+.overlay-toggles {
+    position: absolute;
+    bottom: 0.5rem;
+    left: 0.5rem;
+    display: flex;
+    gap: 0.35rem;
+}
+.ot-btn {
+    padding: 0.25rem 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.5);
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.7rem;
+    font-family: monospace;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1.3;
+}
+.ot-btn:hover {
+    background: rgba(0, 0, 0, 0.7);
+    color: rgba(255, 255, 255, 0.9);
+}
+.ot-btn.active {
+    background: rgba(0, 200, 255, 0.25);
+    border-color: rgba(0, 200, 255, 0.6);
+    color: #fff;
 }
 .debug-feeds {
     display: flex;

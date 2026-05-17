@@ -68,8 +68,9 @@ class CoreConfig(AppConfig):
             from .utils.shared import app_settings, mask_transparency, prob_threshold, servo_dead_zone, servo_pid_kd, servo_pid_ki, servo_pid_kp, settings  # noqa: PLC0415
 
             config = DetectionConfig.load()
-            app_settings.debug_settings.mode = config.mode
-            app_settings.debug_settings.debug_enabled = config.mode in ("mask", "rois")
+            app_settings.debug_settings.show_boxes = config.show_boxes
+            app_settings.debug_settings.show_mask = config.show_mask
+            app_settings.debug_settings.show_rois = config.show_rois
             prob_threshold.value = config.conf_threshold
             settings.foreground_mask_options.pixelcount_threshold.value = config.pixelcount_threshold
             settings.foreground_mask_options.min_area.value = config.min_area
@@ -82,7 +83,8 @@ class CoreConfig(AppConfig):
             servo_pid_kd.value = config.servo_pid_kd
             servo_dead_zone.value = config.servo_dead_zone
             print(
-                f"[DJANGO STARTUP] Loaded detection config: mode={config.mode}, "
+                f"[DJANGO STARTUP] Loaded detection config: show_boxes={config.show_boxes}, "
+                f"show_mask={config.show_mask}, show_rois={config.show_rois}, "
                 f"conf={config.conf_threshold}, mog2_history={config.mog2_history}",
                 flush=True,
             )

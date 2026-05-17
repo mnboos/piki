@@ -24,7 +24,9 @@ export interface PikiOptionsPatch {
      * @type {string}
      * @memberof PikiOptionsPatch
      */
-    mode?: string | null;
+    showBoxes?: boolean | null;
+    showMask?: boolean | null;
+    showRois?: boolean | null;
     /**
      * 
      * @type {number}
@@ -110,7 +112,9 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
     }
     return {
         
-        'mode': json['mode'] == null ? undefined : json['mode'],
+        'showBoxes': json['show_boxes'] == null ? undefined : json['show_boxes'],
+        'showMask': json['show_mask'] == null ? undefined : json['show_mask'],
+        'showRois': json['show_rois'] == null ? undefined : json['show_rois'],
         'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
         'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
         'minArea': json['min_area'] == null ? undefined : json['min_area'],
@@ -136,7 +140,9 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
 
     return {
         
-        'mode': value['mode'],
+        'show_boxes': value['showBoxes'],
+        'show_mask': value['showMask'],
+        'show_rois': value['showRois'],
         'conf_threshold': value['confThreshold'],
         'pixelcount_threshold': value['pixelcountThreshold'],
         'min_area': value['minArea'],

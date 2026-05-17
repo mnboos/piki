@@ -4,6 +4,7 @@ import { type PikiOptions } from "@/api";
 import Button from "primevue/button";
 import Select from "primevue/select";
 import Slider from "primevue/slider";
+import ToggleButton from "primevue/togglebutton";
 import Tab from "primevue/tab";
 import TabList from "primevue/tablist";
 import TabPanel from "primevue/tabpanel";
@@ -48,12 +49,6 @@ const maskTransparency = computed({
     get: () => model.value.maskTransparency ?? 0.5,
     set: (v: number) => { model.value.maskTransparency = v; },
 });
-
-const modeOptions = [
-    { name: "Boxes", value: "boxes" },
-    { name: "Mask", value: "mask" },
-    { name: "ROIs", value: "rois" },
-];
 
 const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), value: v }));
 </script>
@@ -120,9 +115,13 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                 <TabPanel value="display">
                     <div class="controls-grid">
                         <div class="control-item">
-                            <label class="control-label">Mode</label>
-                            <Select v-model="model.mode" :options="modeOptions" option-label="name" option-value="value" class="mode-select" />
-                            <p class="help-text"><strong>boxes</strong>: draw bounding boxes around detections only. <strong>mask</strong>: show the motion foreground mask as a colour overlay. <strong>rois</strong>: show the motion-based region-of-interest rectangles sent to the detector.</p>
+                            <label class="control-label">Overlays</label>
+                            <div class="toggle-group">
+                                <ToggleButton v-model="model.showBoxes" on-label="Boxes" off-label="Boxes" class="tb-btn" />
+                                <ToggleButton v-model="model.showMask" on-label="Mask" off-label="Mask" class="tb-btn" />
+                                <ToggleButton v-model="model.showRois" on-label="ROIs" off-label="ROIs" class="tb-btn" />
+                            </div>
+                            <p class="help-text">Toggle overlays independently. <strong>Boxes</strong>: YOLO detection boxes. <strong>Mask</strong>: motion foreground mask. <strong>ROIs</strong>: tile rectangles sent to the detector.</p>
                         </div>
 
                         <div class="control-item">
@@ -168,6 +167,14 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
 .mode-select,
 .kernel-select {
     width: 10rem;
+}
+.toggle-group {
+    display: flex;
+    gap: 0.4rem;
+}
+.tb-btn {
+    font-size: 0.8rem !important;
+    padding: 0.3rem 0.7rem !important;
 }
 .help-text {
     font-size: 0.78rem;

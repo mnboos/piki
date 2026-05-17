@@ -235,6 +235,11 @@ _gpio_initialised = False
 @atexit.register
 def _cleanup_gpio() -> None:
     global _pan_pwm, _tilt_pwm  # noqa: PLW0603
+    try:
+        move_to(0.0, 0.0)
+        time.sleep(0.3)
+    except Exception:
+        pass
     for attr, pwm in (("_pan_pwm", _pan_pwm), ("_tilt_pwm", _tilt_pwm)):
         if pwm is not None:
             try:

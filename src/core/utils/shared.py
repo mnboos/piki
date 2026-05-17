@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 logger.info("Setup shared module...")
 
 app_settings = AppSettings(
-    debug_settings=DebugSettings(render_bboxes=True),
+    debug_settings=DebugSettings(show_boxes=True, show_mask=False, show_rois=False),
     aim_settings=AimSettings(target_classes=[], servo_enabled=False, target_lock_duration=3.0),
 )
 

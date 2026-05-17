@@ -9,7 +9,9 @@ class User(AbstractUser):
 class DetectionConfig(models.Model):
     """Singleton model for persisting detection/display tuning options."""
 
-    mode = models.CharField(max_length=20, default="boxes")
+    show_boxes = models.BooleanField(default=True)
+    show_mask = models.BooleanField(default=False)
+    show_rois = models.BooleanField(default=False)
     conf_threshold = models.FloatField(default=0.4)
     pixelcount_threshold = models.IntegerField(default=500)
     min_area = models.IntegerField(default=500)
