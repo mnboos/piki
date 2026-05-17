@@ -3,13 +3,15 @@ import multiprocessing as mp
 import os
 import random
 import threading
+import time
+from collections import deque
 from collections.abc import Sequence
 from ctypes import c_float
 from multiprocessing import Event
 from typing import NamedTuple, Optional
 
 from .interfaces import TuningSettings
-from .settings import AppSettings, DebugSettings
+from .settings import AppSettings, AimSettings, DebugSettings
 
 # Those most be set BEFORE importing cv2
 # https://docs.opencv.org/4.x/d6/dea/tutorial_env_reference.html#autotoc_md974
@@ -30,7 +32,10 @@ from .func import (
 logger = logging.getLogger(__name__)
 logger.info("Setup shared module...")
 
-app_settings = AppSettings(debug_settings=DebugSettings(render_bboxes=True))
+app_settings = AppSettings(
+    debug_settings=DebugSettings(render_bboxes=True),
+    aim_settings=AimSettings(target_classes=[], servo_enabled=False, target_lock_duration=3.0),
+)
 
 
 has_opencl = cv2.ocl.haveOpenCL()
@@ -54,6 +59,17 @@ ai_input_size = 640
 
 settings = TuningSettings()
 mask_transparency = mp.Value(c_float, 0.5)
+servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
+servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
+servo_kalman_pan = mp.Value(c_float, 0.0)   # Kalman predicted pan (lookahead target)
+servo_kalman_tilt = mp.Value(c_float, 0.0)  # Kalman predicted tilt (lookahead target)
+servo_pid_kp = mp.Value(c_float, 1.0)  # proportional gain (1.0 = instant, like previous default)
+servo_pid_ki = mp.Value(c_float, 0.0)  # integral gain
+servo_pid_kd = mp.Value(c_float, 0.0)  # derivative gain (raise to reduce jitter)
+servo_dead_zone = mp.Value(c_float, 1.5)      # degrees: changes smaller than this in both axes are ignored
+servo_kalman_process_noise = mp.Value(c_float, 10.0)   # deg/s² — how quickly velocity may change
+servo_kalman_meas_noise = mp.Value(c_float, 5.0)       # deg   — position measurement uncertainty
+servo_kalman_lookahead_ms = mp.Value(c_float, 50.0)    # ms    — servo lag to compensate for (0 = off)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
@@ -61,6 +77,39 @@ is_object_detection_disabled = Event()
 # display-only work (frame caching, bbox rendering, latest_frame updates)
 # is skipped so the inference/motion-detection loop runs at full speed.
 streaming_active = threading.Event()
+
+# Set while recording pipeline frames to a video file.
+recording_active = threading.Event()
+# Set while replaying a video through the pipeline (replay thread owns latest_frame).
+replaying_active = threading.Event()
+
+
+class FPSCounter:
+    """Rolling-window FPS counter (thread-safe)."""
+
+    def __init__(self, window: float = 2.0):
+        self._ts: deque[float] = deque()
+        self._window = window
+        self._lock = threading.Lock()
+
+    def tick(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._ts.append(now)
+            cutoff = now - self._window
+            while self._ts and self._ts[0] < cutoff:
+                self._ts.popleft()
+
+    @property
+    def fps(self) -> float:
+        with self._lock:
+            n = len(self._ts)
+            if n < 2:
+                return 0.0
+            return (n - 1) / (self._ts[-1] - self._ts[0])
+
+
+fps_counter = FPSCounter()
 
 # DJANGO_RELOAD_ISSUED = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)
@@ -105,6 +154,7 @@ class LatestFrame:
 
 
 latest_frame = LatestFrame()
+latest_debug_frame = LatestFrame()  # raw/distorted frame for the debug video feed
 prob_threshold = mp.Value(c_float, 0.4)
 
 
@@ -117,20 +167,21 @@ class MotionDetector:
         )
         self.morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         # self.morph_kernel = np.ones((3, 3), np.uint8)
-        self.pixelcount_threshold = 500
-
-        self.min_area = 500
         self.min_roi_size = int(ai_input_size / preview_downscale_factor)
         self.max_roi_size = int((ai_input_size + 100) / preview_downscale_factor)
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-    def is_moving(self, frame: np.ndarray):
-        # motion_ms = get_measure("Detect motion")
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    def reset(self):
+        """Discard the learned background model and start fresh."""
+        self.backSub = cv2.createBackgroundSubtractorMOG2(
+            detectShadows=False,
+            history=settings.foreground_mask_options.mog2_history.value,
+            varThreshold=settings.foreground_mask_options.mog2_var_threshold.value,
+        )
 
-        # lab = cv2.cvtColor(frame, cv2.COLOR_RGB2Lab)
-        # lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
-        # frame = cv2.cvtColor(lab, cv2.COLOR_Lab2RGB)
+    def is_moving(self, frame: np.ndarray):
+        import os, time  # noqa: PLC0415, E401
+        _t0 = time.perf_counter() if os.environ.get("PIKI_PROFILE") else None
 
         gray = frame if frame.ndim == 2 or frame.shape[2] == 1 else cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         frame = self.clahe.apply(gray)
@@ -145,11 +196,10 @@ class MotionDetector:
         cv2.dilate(fg_mask, self.morph_kernel, iterations=1, dst=fg_mask)
         cv2.erode(fg_mask, self.morph_kernel, iterations=2, dst=fg_mask)
         cv2.dilate(fg_mask, self.morph_kernel, iterations=1, dst=fg_mask)
-        # cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.morph_kernel, fg_mask)
-        # # Connect nearby regions (cat body parts)
-        # cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self.morph_kernel, fg_mask)
-        is_moving = cv2.countNonZero(fg_mask) >= self.pixelcount_threshold
-        # motion_ms()
+        is_moving = cv2.countNonZero(fg_mask) >= settings.foreground_mask_options.pixelcount_threshold.value
+
+        if _t0 is not None:
+            logger.info("PERF stage=motion_detect ms=%.2f", (time.perf_counter() - _t0) * 1000)
         return is_moving, fg_mask
 
     def create_rois(self, *, mask: np.ndarray) -> list:
@@ -162,27 +212,28 @@ class MotionDetector:
             list: A list of the final, fully optimized ROIs.
 
         """
+        import os, time  # noqa: PLC0415, E401
+        _t0 = time.perf_counter() if os.environ.get("PIKI_PROFILE") else None
+
         # 1. Find all individual blobs in the mask (Fast)
         num_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8, ltype=cv2.CV_32S)
 
         # 2. Filter small blobs and collect their initial bounding boxes
         initial_boxes = []
 
-        # if num_labels > 1:
         for i in range(1, num_labels):
             area = stats[i, cv2.CC_STAT_AREA]
-            if area >= self.min_area:
+            if area >= settings.foreground_mask_options.min_area.value:
                 x = stats[i, cv2.CC_STAT_LEFT]
                 y = stats[i, cv2.CC_STAT_TOP]
                 w = stats[i, cv2.CC_STAT_WIDTH]
                 h = stats[i, cv2.CC_STAT_HEIGHT]
-                # fullness = area / (w * h)
                 initial_boxes.append((x, y, w, h))
 
         if not initial_boxes:
             return []
 
-        # # 3. Cluster the initial boxes with full constraints (Intelligent)
+        # 3. Cluster the initial boxes with full constraints (Intelligent)
         enable_clustering = True  # TODO(mnboos): make configurable
         if enable_clustering:
             clustered_rois = cluster_with_constraints(
@@ -195,28 +246,22 @@ class MotionDetector:
         # 4. Finalize ROIs to enforce minimum size and handle edge cases (Format for AI)
         final_rois = []
         for roi_box in clustered_rois:
-            # Assumes self._expand_roi_to_min_size is your boundary-aware finalization function
             final_roi = expand_roi_to_min_size(min_roi_size=self.min_roi_size, roi=roi_box, img_shape=mask.shape)
             final_rois.append(final_roi)
 
         # Optional: Sort final ROIs
         final_rois.sort(key=lambda roi: edge_distance(roi=roi, img_shape=mask.shape))
 
+        if _t0 is not None:
+            logger.info("PERF stage=roi_create ms=%.2f", (time.perf_counter() - _t0) * 1000)
         return final_rois
 
     def get_bounding_boxes(
         self,
         foreground_mask: np.ndarray,
     ):
-        # measure = get_measure("ROI retrieval")
-        # res = self.method1_connected_components(foreground_mask)
-        # res = self.method1_with_clustering(foreground_mask)
         res = self.create_rois(mask=foreground_mask)
         res = apply_non_max_suppression(boxes=res)
-        # res = self.method2_watershed_segmentation(foreground_mask)
-        # res = self.method3_mean_shift_clustering(foreground_mask)
-        # res = self.method4_adaptive_threshold_contours(foreground_mask)
-        # measure()
         return res
 
     def highlight_movement_on(

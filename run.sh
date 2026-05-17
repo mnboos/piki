@@ -12,6 +12,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # into the Python path. Activating the venv afterwards layers on top correctly.
 source /opt/tros/humble/setup.bash
 
+# ── Pre-start cleanup ─────────────────────────────────────────────────────────
+# Kill any stale ROS2 nodes from a previous crashed/unclean run.
+# mipi_cam holds the MIPI hardware exclusively — if it's still alive from a
+# prior run the new instance will fail with "rcl node's context is invalid".
+echo "[piki] Cleaning up stale ROS2 nodes..."
+pkill -x mipi_cam 2>/dev/null || true
+
 # ── Fix tros.b runtime directories ───────────────────────────────────────────
 # tros.b nodes write logs to /userdata/.roslog — create it if absent.
 # nginx (websocket node) needs a logs/ dir relative to the working directory.
@@ -19,22 +26,14 @@ mkdir -p /userdata/.roslog
 mkdir -p "${SCRIPT_DIR}/logs"
 export ROS_LOG_DIR=/userdata/.roslog
 
-# ── Start hobot_stereonet ─────────────────────────────────────────────────────
-# Owns the MIPI hardware exclusively. Handles:
-#   SC230AI sensors → ISP (noise reduction, WDR) → rectification → NV12
-# Publishes:
-#   /hbmem_img          — rectified left image, 640x352 NV12, zero-copy shared mem
-#   /depth_map          — disparity/depth map from stereonet BPU model
-#   /hobot_stereonet_visual — colourised depth visualisation (for debugging)
-#
-# NOTE: need_rectify:=False because the camera EEPROM already contains the
-# calibration matrices (Kl, Kr, Dl, Dr, R, t) — stereonet loads them
-# automatically and rectifies internally regardless of this flag.
-# Set to True only if you provide an external calibration_file_path override.
-# CRITICAL for Shared Memory (HBM) to work with Django
+# ── Start MIPI camera ─────────────────────────────────────────────────────────
+# Publishes /image_left_raw and /image_right_raw.
+# mipi_io_method:=shared_mem segfaults (HBM DMA driver bug in tros 2.5.2 — filed upstream).
+# Using ros transport; ROS loaned-messages zero-copy is still active via FastDDS XML profile.
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/tros/humble/lib/hobot_shm/config/shm_fastdds.xml
 export RMW_FASTRTPS_USE_QOS_FROM_XML=1
+export ROS_DISABLE_LOANED_MESSAGES=0
 
 ## ── 2. Start MIPI Camera (Shared Memory Mode) ────────────────────────────────
 #echo "[piki] Starting mipi_cam (Stereo Capture)..."
@@ -83,18 +82,15 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 #STEREONET_PID=$!
 #
 
-# SC230AI dual stereo: 1280x640 combined (two 640x640 eyes side by side).
-# stereo_combine_mode=1: images are packed left|right in one frame.
-# need_rectify=True: stereonet rectifies using the built-in stereo.yaml calibration.
-# The published /StereoNetNode/rectified_image will be the left eye at 1280x640.
-ros2 launch hobot_stereonet stereonet_model_no_web.launch.py \
-mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=True mipi_image_framerate:=30.0 \
-stereo_combine_mode:=1 need_rectify:=True \
-height_min:=-10.0 height_max:=10.0 pc_max_depth:=5.0 \
-uncertainty_th:=0.1 &
-STEREONET_PID=$!
+# setsid puts the launch process in its own process group so that
+# `kill -- -$CAM_PID` in cleanup() reaches all child nodes in one shot.
+setsid ros2 launch mipi_cam mipi_cam_dual_channel.launch.py \
+mipi_image_width:=1280 mipi_image_height:=640 mipi_lpwm_enable:=true mipi_image_framerate:=30.0 \
+mipi_io_method:=ros \
+mipi_camera_calibration_file_path:=/opt/tros/humble/lib/mipi_cam/config/SC230ai_dual_calibration.yaml &
+CAM_PID=$!
 
-sleep 5
+sleep 2
 
 # ── Start Django ──────────────────────────────────────────────────────────────
 echo "[piki] Starting Django..."
@@ -122,16 +118,18 @@ cleanup() {
     echo ""
     echo "[piki] Shutting down..."
     kill $DJANGO_PID 2>/dev/null
-    kill $STEREONET_PID 2>/dev/null
+    # Negative PID kills the entire process group started by setsid above,
+    # ensuring mipi_cam and all other child nodes are terminated together.
+    kill -- -$CAM_PID 2>/dev/null
     wait $DJANGO_PID 2>/dev/null
-    wait $STEREONET_PID 2>/dev/null
+    wait $CAM_PID 2>/dev/null
     echo "[piki] Done."
 }
 trap cleanup SIGINT SIGTERM
 
 # ── Wait ──────────────────────────────────────────────────────────────────────
 # Unblocks if either process exits — then shut both down.
-wait -n $DJANGO_PID $STEREONET_PID
+wait -n $DJANGO_PID $CAM_PID
 EXIT_CODE=$?
 echo "[piki] A process exited (code: $EXIT_CODE), shutting down..."
 cleanup

@@ -15,15 +15,38 @@
 
 import * as runtime from '../runtime';
 import type {
+  AimConfigSchema,
+  AimConfigSchemaPatch,
   PikiOptions,
   PikiOptionsPatch,
+  ServoMoveSchema,
+  ServoPositionSchema,
+  TrackerStatus,
 } from '../models/index';
 import {
+    AimConfigSchemaFromJSON,
+    AimConfigSchemaToJSON,
+    AimConfigSchemaPatchFromJSON,
+    AimConfigSchemaPatchToJSON,
     PikiOptionsFromJSON,
     PikiOptionsToJSON,
     PikiOptionsPatchFromJSON,
     PikiOptionsPatchToJSON,
+    ServoMoveSchemaFromJSON,
+    ServoMoveSchemaToJSON,
+    ServoPositionSchemaFromJSON,
+    ServoPositionSchemaToJSON,
+    TrackerStatusFromJSON,
+    TrackerStatusToJSON,
 } from '../models/index';
+
+export interface CoreApiServoMoveRequest {
+    servoMoveSchema: ServoMoveSchema;
+}
+
+export interface CoreApiUpdateAimConfigRequest {
+    aimConfigSchemaPatch: AimConfigSchemaPatch;
+}
 
 export interface CoreApiUpdateOptionsRequest {
     pikiOptionsPatch: PikiOptionsPatch;
@@ -33,6 +56,242 @@ export interface CoreApiUpdateOptionsRequest {
  * 
  */
 export class DefaultApi extends runtime.BaseAPI {
+
+    /**
+     * Return current servo aim configuration.
+     * Get Aim Config
+     */
+    async coreApiGetAimConfigRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<AimConfigSchema>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/aim_config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => AimConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current servo aim configuration.
+     * Get Aim Config
+     */
+    async coreApiGetAimConfig(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<AimConfigSchema> {
+        const response = await this.coreApiGetAimConfigRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return current tuning values so the frontend can initialise its controls.
+     * Get Options
+     */
+    async coreApiGetOptionsRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PikiOptions>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/options`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => PikiOptionsFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current tuning values so the frontend can initialise its controls.
+     * Get Options
+     */
+    async coreApiGetOptions(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<PikiOptions> {
+        const response = await this.coreApiGetOptionsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return current tracker state.
+     * Get Tracker Status
+     */
+    async coreApiGetTrackerStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<TrackerStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/tracker_status`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => TrackerStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current tracker state.
+     * Get Tracker Status
+     */
+    async coreApiGetTrackerStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<TrackerStatus> {
+        const response = await this.coreApiGetTrackerStatusRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return the list of all detectable YOLO class names.
+     * Get Yolo Classes
+     */
+    async coreApiGetYoloClassesRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<string>>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/yolo_classes`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse<any>(response);
+    }
+
+    /**
+     * Return the list of all detectable YOLO class names.
+     * Get Yolo Classes
+     */
+    async coreApiGetYoloClasses(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<string>> {
+        const response = await this.coreApiGetYoloClassesRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Discard the MOG2 background model so it relearns the current scene.
+     * Reset Background
+     */
+    async coreApiResetBackgroundRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/reset_background`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     * Discard the MOG2 background model so it relearns the current scene.
+     * Reset Background
+     */
+    async coreApiResetBackground(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.coreApiResetBackgroundRaw(initOverrides);
+    }
+
+    /**
+     * Manually command both servos to explicit angles (debug / calibration mode).
+     * Servo Move
+     */
+    async coreApiServoMoveRaw(requestParameters: CoreApiServoMoveRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ServoPositionSchema>> {
+        if (requestParameters['servoMoveSchema'] == null) {
+            throw new runtime.RequiredError(
+                'servoMoveSchema',
+                'Required parameter "servoMoveSchema" was null or undefined when calling coreApiServoMove().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/servo/move`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ServoMoveSchemaToJSON(requestParameters['servoMoveSchema']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ServoPositionSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Manually command both servos to explicit angles (debug / calibration mode).
+     * Servo Move
+     */
+    async coreApiServoMove(requestParameters: CoreApiServoMoveRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ServoPositionSchema> {
+        const response = await this.coreApiServoMoveRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Update servo aim configuration and persist to database.
+     * Update Aim Config
+     */
+    async coreApiUpdateAimConfigRaw(requestParameters: CoreApiUpdateAimConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<AimConfigSchema>> {
+        if (requestParameters['aimConfigSchemaPatch'] == null) {
+            throw new runtime.RequiredError(
+                'aimConfigSchemaPatch',
+                'Required parameter "aimConfigSchemaPatch" was null or undefined when calling coreApiUpdateAimConfig().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/aim_config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PATCH',
+            headers: headerParameters,
+            query: queryParameters,
+            body: AimConfigSchemaPatchToJSON(requestParameters['aimConfigSchemaPatch']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => AimConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Update servo aim configuration and persist to database.
+     * Update Aim Config
+     */
+    async coreApiUpdateAimConfig(requestParameters: CoreApiUpdateAimConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<AimConfigSchema> {
+        const response = await this.coreApiUpdateAimConfigRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
 
     /**
      * Update Options
@@ -101,6 +360,37 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiVideoFeed(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
         const response = await this.coreApiVideoFeedRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays.
+     * Video Feed Raw
+     */
+    async videoFeedDebugRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/video_feed_raw`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.BlobApiResponse(response);
+    }
+
+    /**
+     * Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays.
+     * Video Feed Raw
+     */
+    async videoFeedDebug(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
+        const response = await this.videoFeedDebugRaw(initOverrides);
         return await response.value();
     }
 

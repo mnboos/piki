@@ -9,16 +9,15 @@ dependencies = [
     "django==5.2.11",
     "django-cors-headers>=4.9.0",
     "django-ninja==1.4.3",
-    "gpiozero==2.0.1",
     "numpy>=1,<2",
     "opencv-contrib-python-headless>=4.11.0.86",
-    "pigpio==1.78",
     "rich==14.2.0",
     "rknn-toolkit-lite2==2.3.2 ; platform_machine == 'aarch64'",
 ]
 
 [dependency-groups]
 dev = [
+    "py-spy==0.3.14",
     "ruff==0.14.0",
     "ty==0.0.1a19",
 ]

@@ -25,6 +25,72 @@ export interface PikiOptionsPatch {
      * @memberof PikiOptionsPatch
      */
     mode?: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    confThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    pixelcountThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    minArea?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    mog2History?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    mog2VarThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    denoiseKernelsize?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    maskTransparency?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoPidKp?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoPidKi?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoPidKd?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoDeadZone?: number | null;
 }
 
 /**
@@ -45,6 +111,17 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
     return {
         
         'mode': json['mode'] == null ? undefined : json['mode'],
+        'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
+        'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
+        'minArea': json['min_area'] == null ? undefined : json['min_area'],
+        'mog2History': json['mog2_history'] == null ? undefined : json['mog2_history'],
+        'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
+        'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
+        'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
+        'servoPidKp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
+        'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
+        'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
+        'servoDeadZone': json['servo_dead_zone'] == null ? undefined : json['servo_dead_zone'],
     };
 }
 
@@ -60,6 +137,17 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
     return {
         
         'mode': value['mode'],
+        'conf_threshold': value['confThreshold'],
+        'pixelcount_threshold': value['pixelcountThreshold'],
+        'min_area': value['minArea'],
+        'mog2_history': value['mog2History'],
+        'mog2_var_threshold': value['mog2VarThreshold'],
+        'denoise_kernelsize': value['denoiseKernelsize'],
+        'mask_transparency': value['maskTransparency'],
+        'servo_pid_kp': value['servoPidKp'],
+        'servo_pid_ki': value['servoPidKi'],
+        'servo_pid_kd': value['servoPidKd'],
+        'servo_dead_zone': value['servoDeadZone'],
     };
 }
 
