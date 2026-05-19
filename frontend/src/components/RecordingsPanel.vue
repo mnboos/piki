@@ -13,6 +13,8 @@ import {
   useStartReplayMutation,
   useStopReplayMutation,
   useYoloClassesQuery,
+  useUploadVideoMutation,
+  useDeleteVideoMutation,
 } from "@/queries/recordings";
 import Panel from "primevue/panel";
 import Button from "primevue/button";
@@ -37,7 +39,6 @@ const {
 } = useEventClipsQuery();
 const {
   data: videosRaw,
-  refetch: refetchVideos,
 } = useVideosQuery();
 const {
   data: replayStatus,
@@ -50,6 +51,8 @@ const { mutate: startRecording } = useStartRecordingMutation();
 const { mutate: stopRecording } = useStopRecordingMutation();
 const { mutate: startReplay } = useStartReplayMutation();
 const { mutate: stopReplay } = useStopReplayMutation();
+const { mutateAsync: uploadVideoMutation } = useUploadVideoMutation();
+const { mutate: deleteVideoMutation } = useDeleteVideoMutation();
 
 // ── Accumulated event clips (backend drains queue on each poll) ───────────
 
@@ -79,13 +82,7 @@ function toggleTriggerClass(cls: string) {
   }
 }
 
-// ── Upload ────────────────────────────────────────────────────────────────
-
-const CSRF_COOKIE = "csrftoken";
-function getCsrf(): string {
-  const match = document.cookie.match(new RegExp(`(?:^|; )${CSRF_COOKIE}=([^;]*)`));
-  return match ? match[1] : "";
-}
+// ── Upload / delete ───────────────────────────────────────────────────────
 
 const uploadMessage = ref("");
 
@@ -93,27 +90,13 @@ async function uploadVideo(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
-
-  const form = new FormData();
-  form.append("file", file);
-
-  const r = await fetch("/api/videos/upload", {
-    method: "POST",
-    headers: { "X-CSRFToken": getCsrf() },
-    body: form,
-  });
-  if (!r.ok) {
-    uploadMessage.value = "Upload failed";
-    return;
-  }
+  await uploadVideoMutation(file);
   uploadMessage.value = "Uploaded!";
   input.value = "";
-  await refetchVideos();
 }
 
-async function deleteVideo(id: number) {
-  await fetch(`/api/videos/${id}`, { method: "DELETE", headers: { "X-CSRFToken": getCsrf() } });
-  await refetchVideos();
+function deleteVideo(id: number) {
+  deleteVideoMutation(id);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

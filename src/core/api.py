@@ -486,8 +486,9 @@ def recording_start(request: HttpRequest):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = str(videos_dir / f"recording_{timestamp}.mp4")
 
-    # frame_lores dimensions: determined later from first frame; use safe defaults
-    err = start_recording(path, fps=30.0)
+    # Use actual pipeline FPS so playback speed matches real time.
+    actual_fps = fps_counter.fps if fps_counter.fps > 0 else 30.0
+    err = start_recording(path, fps=actual_fps)
     if err:
         return 409, {"detail": err}
 

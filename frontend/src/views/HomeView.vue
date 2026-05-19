@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from "vue";
+import { ref, watch, watchEffect, onMounted } from "vue";
 import { useMutation } from "@tanstack/vue-query";
 import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiOptions, type PikiOptionsPatch } from "@/api";
+import { useTrackerStatusQuery, useEventClipsQuery, useYoloClassesQuery } from "@/queries/recordings";
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import RecordingsPanel from "@/components/RecordingsPanel.vue";
@@ -40,17 +41,41 @@ const aimConfig = ref<AimConfigSchema>({
     targetLockDuration: 3.0,
 });
 
-const allClasses = ref<string[]>([]);
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
 const toast = useToast();
 const feedUrl = "/api/video_feed";
 const debugFeedUrl = "/api/video_feed_raw";
-// These match the env vars on the server — shown as labels only.
 const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
 const debugTopic = import.meta.env.VITE_ROS_DEBUG_TOPIC ?? "/image_right_raw";
 
+// ── Queries ───────────────────────────────────────────────────────────────
+
+const { data: trackerStatus } = useTrackerStatusQuery();
 const currentFps = ref(0);
-let statusInterval: ReturnType<typeof setInterval> | null = null;
+watchEffect(() => {
+  currentFps.value = trackerStatus.value?.fps ?? 0;
+});
+
+const { data: eventClips } = useEventClipsQuery();
+const toastedFiles = new Set<string>();
+watch(eventClips, (clips) => {
+  if (!clips) return;
+  for (const c of clips) {
+    if (!toastedFiles.has(c.file)) {
+      toastedFiles.add(c.file);
+      toast.add({
+        severity: "info",
+        summary: "Event clip saved",
+        detail: `${c.filename} (${c.frameCount} frames)`,
+        life: 8000,
+      });
+    }
+  }
+});
+
+const { data: allClasses } = useYoloClassesQuery();
+
+// ── Mutations ─────────────────────────────────────────────────────────────
 
 const { mutate: updateOptions } = useMutation({
     mutationFn: (opts: PikiOptionsPatch) => api.coreApiUpdateOptions({ pikiOptionsPatch: opts }),
@@ -70,61 +95,29 @@ const { mutate: servoMove } = useMutation({
     onSuccess: data => debugPanel.value?.setResult(data.panAngle, data.tiltAngle),
 });
 
-async function pollTrackerStatus() {
-
-        const s = await api.coreApiGetTrackerStatus();
-        currentFps.value = s.fps;
-
-}
-
-async function pollEventClips() {
-
-        const r = await fetch("/api/event_clips");
-        const clips: { filename: string; frame_count: number; time: string }[] = await r.json();
-        for (const clip of clips) {
-            toast.add({
-                severity: "info",
-                summary: "Event clip saved",
-                detail: `${clip.filename} (${clip.frame_count} frames)`,
-                life: 8000,
-            });
-        }
-
-}
+// ── Initial data load into mutable refs (needed for v-model) ──────────────
 
 onMounted(async () => {
+    const current = await api.coreApiGetOptions();
+    options.value = {
+        showBoxes: current.showBoxes,
+        showMask: current.showMask,
+        showRois: current.showRois,
+        confThreshold: current.confThreshold ?? 0.4,
+        pixelcountThreshold: current.pixelcountThreshold ?? 500,
+        minArea: current.minArea ?? 500,
+        mog2History: current.mog2History ?? 500,
+        mog2VarThreshold: current.mog2VarThreshold ?? 16,
+        denoiseKernelsize: current.denoiseKernelsize ?? 7,
+        maskTransparency: current.maskTransparency ?? 0.5,
+    };
 
-        const current = await api.coreApiGetOptions();
-        options.value = {
-            showBoxes: current.showBoxes,
-            showMask: current.showMask,
-            showRois: current.showRois,
-            confThreshold: current.confThreshold ?? 0.4,
-            pixelcountThreshold: current.pixelcountThreshold ?? 500,
-            minArea: current.minArea ?? 500,
-            mog2History: current.mog2History ?? 500,
-            mog2VarThreshold: current.mog2VarThreshold ?? 16,
-            denoiseKernelsize: current.denoiseKernelsize ?? 7,
-            maskTransparency: current.maskTransparency ?? 0.5,
-        };
-
-
-
-        allClasses.value = await api.coreApiGetYoloClasses();
-
-
-
-        const aim = await api.coreApiGetAimConfig();
-        aimConfig.value = { targetClasses: aim.targetClasses, servoEnabled: aim.servoEnabled, targetLockDuration: aim.targetLockDuration ?? 3.0 };
-
-
-    await pollTrackerStatus();
-    await pollEventClips();
-    statusInterval = setInterval(() => { pollTrackerStatus(); pollEventClips(); }, 1500);
-});
-
-onUnmounted(() => {
-    if (statusInterval !== null) clearInterval(statusInterval);
+    const aim = await api.coreApiGetAimConfig();
+    aimConfig.value = {
+        targetClasses: aim.targetClasses,
+        servoEnabled: aim.servoEnabled,
+        targetLockDuration: aim.targetLockDuration ?? 3.0,
+    };
 });
 
 watch(options, opts => updateOptions(opts), { deep: true });
@@ -187,7 +180,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                 </TabPanel>
 
                 <TabPanel value="servo">
-                    <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses" />
+                    <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses ?? []" />
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
                 </TabPanel>
 

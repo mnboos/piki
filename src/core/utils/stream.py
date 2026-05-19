@@ -762,8 +762,10 @@ def _start_event_recording() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = str(videos_dir / f"event_{ts}.mp4")
 
+    actual_fps = fps_counter.fps if fps_counter.fps > 0 else 30.0
+
     with _event_recorder_lock:
-        _event_recorder = EventClipRecorder(path, fps=30.0, pre_frames=pre_frames,
+        _event_recorder = EventClipRecorder(path, fps=actual_fps, pre_frames=pre_frames,
                                              frame_w=w, frame_h=h)
         _event_clip_until = time.monotonic() + event_post_trigger_seconds.value
         event_recording_active.set()

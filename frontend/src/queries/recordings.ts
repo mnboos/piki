@@ -3,7 +3,18 @@ import { DefaultApi, type EventRecordingConfigSchemaPatch } from "@/api";
 
 const api = new DefaultApi();
 
-// ── Event clips (polled) ──────────────────────────────────────────────────
+// ── Tracker status (polled) ────────────────────────────────────────────────
+
+export function useTrackerStatusQuery() {
+  return useQuery({
+    queryKey: ["trackerStatus"],
+    queryFn: () => api.coreApiGetTrackerStatus(),
+    refetchInterval: 1500,
+    staleTime: 0,
+  });
+}
+
+// ── Event clips (polled, shared by RecordingsPanel list + HomeView toast) ──
 
 export function useEventClipsQuery() {
   return useQuery({
@@ -118,4 +129,43 @@ export function useYoloClassesQuery() {
     queryFn: () => api.coreApiGetYoloClasses(),
     staleTime: Infinity,
   });
+}
+
+// ── Upload / delete videos ────────────────────────────────────────────────
+
+export function useUploadVideoMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return fetch("/api/videos/upload", {
+        method: "POST",
+        headers: { "X-CSRFToken": getCookie("csrftoken") },
+        body: form,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+    },
+  });
+}
+
+export function useDeleteVideoMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (videoId: number) =>
+      fetch(`/api/videos/${videoId}`, {
+        method: "DELETE",
+        headers: { "X-CSRFToken": getCookie("csrftoken") },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+    },
+  });
+}
+
+function getCookie(name: string): string {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? match[1] : "";
 }
