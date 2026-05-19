@@ -1,5 +1,6 @@
 import threading
 import time
+from collections import deque
 
 import numpy as np
 
@@ -13,6 +14,77 @@ _output_path: str = ""
 _error: str | None = None
 _pending_path: str = ""
 _pending_fps: float = 30.0
+
+# --- Pre-buffer (circular buffer of recent BGR frames) ---
+_pre_buffer: deque[np.ndarray] = deque()
+_pre_buffer_lock = threading.Lock()
+
+
+def pre_buffer_append(frame: np.ndarray, max_seconds: float, fps: float = 30.0) -> None:
+    max_frames = int(max_seconds * fps)
+    if max_frames <= 0:
+        return
+    with _pre_buffer_lock:
+        _pre_buffer.append(frame.copy())
+        while len(_pre_buffer) > max_frames:
+            _pre_buffer.popleft()
+
+
+def pre_buffer_snapshot() -> list[np.ndarray]:
+    """Return a snapshot of all buffered frames, oldest first."""
+    with _pre_buffer_lock:
+        return list(_pre_buffer)
+
+
+def pre_buffer_clear() -> None:
+    with _pre_buffer_lock:
+        _pre_buffer.clear()
+
+
+class EventClipRecorder:
+    """Independent VideoWriter for a single event-triggered clip.
+
+    Created with pre-buffer frames flushed first, then receives live frames
+    via write_frame().  Uses the same AVC1 / MJPG fallback as manual recording.
+    """
+
+    def __init__(self, output_path: str, fps: float,
+                 pre_frames: list[np.ndarray],
+                 frame_w: int, frame_h: int):
+        self._output_path = output_path
+        self._frame_count = 0
+        self._error: str | None = None
+
+        fourcc = cv2.VideoWriter_fourcc("a", "v", "c", "1")
+        self._writer = cv2.VideoWriter(output_path, fourcc, fps, (frame_w, frame_h), isColor=True)
+        if not self._writer.isOpened():
+            fallback = output_path.rsplit(".", 1)[0] + ".avi"
+            fourcc = cv2.VideoWriter_fourcc("M", "J", "P", "G")
+            self._writer = cv2.VideoWriter(fallback, fourcc, fps, (frame_w, frame_h), isColor=True)
+            if not self._writer.isOpened():
+                self._writer = None
+                self._error = "Failed to create event VideoWriter"
+                return
+            self._output_path = fallback
+
+        for frame in pre_frames:
+            fh, fw = frame.shape[:2]
+            if fw == frame_w and fh == frame_h:
+                self._writer.write(frame)
+            else:
+                self._writer.write(cv2.resize(frame, (frame_w, frame_h)))
+            self._frame_count += 1
+
+    def write_frame(self, frame: np.ndarray) -> None:
+        if self._writer is not None and self._writer.isOpened():
+            self._writer.write(frame)
+            self._frame_count += 1
+
+    def close(self) -> tuple[str, int, str | None]:
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+        return self._output_path, self._frame_count, self._error
 
 
 def start_recording(output_path: str, fps: float = 30.0) -> str | None:

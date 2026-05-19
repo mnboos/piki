@@ -21,11 +21,21 @@ import { mapValues } from '../runtime';
 export interface PikiOptionsPatch {
     /**
      * 
-     * @type {string}
+     * @type {boolean}
      * @memberof PikiOptionsPatch
      */
     showBoxes?: boolean | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof PikiOptionsPatch
+     */
     showMask?: boolean | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof PikiOptionsPatch
+     */
     showRois?: boolean | null;
     /**
      * 
@@ -70,7 +80,7 @@ export interface PikiOptionsPatch {
      */
     maskTransparency?: number | null;
     /**
-     *
+     * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */

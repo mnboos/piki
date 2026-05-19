@@ -12,6 +12,8 @@ import TabList from "primevue/tablist";
 import TabPanel from "primevue/tabpanel";
 import TabPanels from "primevue/tabpanels";
 import Tabs from "primevue/tabs";
+import Toast from "primevue/toast";
+import { useToast } from "primevue/usetoast";
 
 const api = new DefaultApi();
 
@@ -40,6 +42,7 @@ const aimConfig = ref<AimConfigSchema>({
 
 const allClasses = ref<string[]>([]);
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
+const toast = useToast();
 const feedUrl = "/api/video_feed";
 const debugFeedUrl = "/api/video_feed_raw";
 // These match the env vars on the server — shown as labels only.
@@ -68,14 +71,29 @@ const { mutate: servoMove } = useMutation({
 });
 
 async function pollTrackerStatus() {
-    try {
+
         const s = await api.coreApiGetTrackerStatus();
         currentFps.value = s.fps;
-    } catch { /* ignore */ }
+
+}
+
+async function pollEventClips() {
+
+        const r = await fetch("/api/event_clips");
+        const clips: { filename: string; frame_count: number; time: string }[] = await r.json();
+        for (const clip of clips) {
+            toast.add({
+                severity: "info",
+                summary: "Event clip saved",
+                detail: `${clip.filename} (${clip.frame_count} frames)`,
+                life: 8000,
+            });
+        }
+
 }
 
 onMounted(async () => {
-    try {
+
         const current = await api.coreApiGetOptions();
         options.value = {
             showBoxes: current.showBoxes,
@@ -89,19 +107,20 @@ onMounted(async () => {
             denoiseKernelsize: current.denoiseKernelsize ?? 7,
             maskTransparency: current.maskTransparency ?? 0.5,
         };
-    } catch { /* use defaults */ }
 
-    try {
+
+
         allClasses.value = await api.coreApiGetYoloClasses();
-    } catch { /* ignore */ }
 
-    try {
+
+
         const aim = await api.coreApiGetAimConfig();
         aimConfig.value = { targetClasses: aim.targetClasses, servoEnabled: aim.servoEnabled, targetLockDuration: aim.targetLockDuration ?? 3.0 };
-    } catch { /* ignore */ }
+
 
     await pollTrackerStatus();
-    statusInterval = setInterval(pollTrackerStatus, 1500);
+    await pollEventClips();
+    statusInterval = setInterval(() => { pollTrackerStatus(); pollEventClips(); }, 1500);
 });
 
 onUnmounted(() => {
@@ -114,6 +133,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
 
 <template>
     <div class="page">
+        <Toast position="top-right" />
         <Tabs value="camera">
             <TabList>
                 <Tab value="camera">Camera</Tab>

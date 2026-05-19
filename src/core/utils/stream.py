@@ -32,6 +32,16 @@ from .shared import (
     ai_input_size,
     app_settings,
     cv2,
+    event_clip_queue,
+    event_clip_queue_lock,
+    event_cooldown_seconds,
+    event_post_trigger_seconds,
+    event_pre_buffer_seconds,
+    event_recording_active,
+    event_recording_cooldown_until,
+    event_recording_enabled,
+    event_trigger_classes,
+    event_trigger_classes_lock,
     fps_counter,
     is_object_detection_disabled,
     latest_debug_frame,
@@ -39,6 +49,7 @@ from .shared import (
     mask_transparency,
     motion_detector,
     preview_downscale_factor,
+    prob_threshold,
     recording_active,
     replaying_active,
     streaming_active,
@@ -67,6 +78,11 @@ latest_ai_lock = threading.Lock()
 # bbox.  Written and read by the same streaming thread, so no locking is needed.
 _latest_mask: "Optional[np.ndarray]" = None
 _latest_mask_shape: "tuple[int, int]" = (1, 1)
+
+# Event-triggered recording runtime state.
+_event_recorder: "EventClipRecorder | None" = None
+_event_recorder_lock = threading.Lock()
+_event_clip_until: float = 0.0
 
 
 def _foreground_centroid(
@@ -704,11 +720,102 @@ def on_done(future: Future[InferenceOutput]):
                     for label, confidence, bbox in detections
                 ])
 
+        # --- Event-triggered recording: check if any detection matches trigger classes ---
+        if (event_recording_enabled.is_set()
+                and not event_recording_active.is_set()
+                and not recording_active.is_set()
+                and time.time() > event_recording_cooldown_until):
+            with event_trigger_classes_lock:
+                trigger_set = {c.strip().lower() for c in event_trigger_classes}
+            if trigger_set:
+                for label, confidence, bbox_normalized in detections:
+                    if confidence >= prob_threshold.value and label.strip().lower() in trigger_set:
+                        _start_event_recording()
+                        break
+
     except KeyboardInterrupt:
         logger.info("Shutting down on KeyboardInterrupt in on_done.")
     except:
         traceback.print_exc()
         raise
+
+
+def _start_event_recording() -> None:
+    """Begin event-triggered recording: flush pre-buffer, start live capture."""
+    global _event_recorder, _event_clip_until
+    from datetime import datetime  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from django.conf import settings as django_settings  # noqa: PLC0415
+
+    from .recording import EventClipRecorder, pre_buffer_snapshot  # noqa: PLC0415
+
+    pre_frames = pre_buffer_snapshot()
+
+    if pre_frames:
+        h, w = pre_frames[0].shape[:2]
+    else:
+        h, w = 360, 640
+
+    videos_dir = Path(django_settings.MEDIA_ROOT) / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = str(videos_dir / f"event_{ts}.mp4")
+
+    with _event_recorder_lock:
+        _event_recorder = EventClipRecorder(path, fps=30.0, pre_frames=pre_frames,
+                                             frame_w=w, frame_h=h)
+        _event_clip_until = time.monotonic() + event_post_trigger_seconds.value
+        event_recording_active.set()
+
+    logger.info("Event recording started: %s (%d pre-buffer frames, %ds post-trigger)",
+                path, len(pre_frames), event_post_trigger_seconds.value)
+
+
+def _finalize_event_recording() -> None:
+    """Stop event recording, save to DB, queue notification."""
+    global _event_recorder, _event_clip_until
+    from datetime import datetime  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from django.conf import settings as django_settings  # noqa: PLC0415
+
+    with _event_recorder_lock:
+        if _event_recorder is None:
+            event_recording_active.clear()
+            return
+        final_path, frame_count, error = _event_recorder.close()
+        _event_recorder = None
+
+    _event_clip_until = 0.0
+    event_recording_active.clear()
+    from . import shared as _s  # noqa: PLC0415
+    _s.event_recording_cooldown_until = time.time() + event_cooldown_seconds.value
+
+    if final_path and frame_count > 0:
+        file_path = Path(final_path)
+        try:
+            from ..models import Video  # noqa: PLC0415
+
+            video = Video.objects.create(
+                filename=file_path.name,
+                file=str(file_path.relative_to(django_settings.MEDIA_ROOT)),
+                size_bytes=file_path.stat().st_size,
+                source="event",
+            )
+            with event_clip_queue_lock:
+                event_clip_queue.append({
+                    "filename": file_path.name,
+                    "file": str(file_path.relative_to(django_settings.MEDIA_ROOT)),
+                    "frame_count": frame_count,
+                    "time": datetime.now().isoformat(),
+                    "video_id": video.id,
+                })
+            logger.info("Event clip saved: %s (%d frames)", file_path.name, frame_count)
+        except Exception:
+            logger.exception("Failed to save event clip to DB")
+    else:
+        logger.warning("Event recording produced no output: error=%s", error)
 
 
 def _submit_yolo(*, nv12_frame: np.ndarray, frame_lores: np.ndarray, rois: list, timestamp: int) -> None:
@@ -739,11 +846,29 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     _latest_mask = mask
     _latest_mask_shape = mask.shape[:2] if mask is not None else (1, 1)
 
-    # Recording: save raw pipeline frame before any overlay drawing.
+    # --- Recording: manual and event-triggered ---
+    frame_bgr = cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR)
+
+    # Pre-buffer: always append when event recording is enabled.
+    if event_recording_enabled.is_set():
+        from .recording import pre_buffer_append  # noqa: PLC0415
+
+        pre_buffer_append(frame_bgr, event_pre_buffer_seconds.value)
+
+    # Manual recording.
     if recording_active.is_set():
         from .recording import write_frame  # noqa: PLC0415
 
-        write_frame(cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR))
+        write_frame(frame_bgr)
+
+    # Event-triggered recording (post-trigger live capture).
+    if event_recording_active.is_set():
+        with _event_recorder_lock:
+            if _event_recorder is not None:
+                _event_recorder.write_frame(frame_bgr)
+        # Check if post-trigger duration has elapsed.
+        if time.monotonic() >= _event_clip_until:
+            _finalize_event_recording()
 
     detections_to_show = []
 

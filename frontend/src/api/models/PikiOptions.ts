@@ -21,12 +21,22 @@ import { mapValues } from '../runtime';
 export interface PikiOptions {
     /**
      * 
-     * @type {string}
+     * @type {boolean}
      * @memberof PikiOptions
      */
-    showBoxes: boolean;
-    showMask: boolean;
-    showRois: boolean;
+    showBoxes?: boolean;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof PikiOptions
+     */
+    showMask?: boolean;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof PikiOptions
+     */
+    showRois?: boolean;
     /**
      * 
      * @type {number}
@@ -70,7 +80,7 @@ export interface PikiOptions {
      */
     maskTransparency?: number | null;
     /**
-     *
+     * 
      * @type {number}
      * @memberof PikiOptions
      */
@@ -99,7 +109,6 @@ export interface PikiOptions {
  * Check if a given object implements the PikiOptions interface.
  */
 export function instanceOfPikiOptions(value: object): value is PikiOptions {
-    if (!('showBoxes' in value) || value['showBoxes'] === undefined) return false;
     return true;
 }
 
@@ -113,9 +122,9 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
     }
     return {
         
-        'showBoxes': json['show_boxes'] === undefined ? true : json['show_boxes'],
-        'showMask': json['show_mask'] === undefined ? false : json['show_mask'],
-        'showRois': json['show_rois'] === undefined ? false : json['show_rois'],
+        'showBoxes': json['show_boxes'] == null ? undefined : json['show_boxes'],
+        'showMask': json['show_mask'] == null ? undefined : json['show_mask'],
+        'showRois': json['show_rois'] == null ? undefined : json['show_rois'],
         'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
         'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
         'minArea': json['min_area'] == null ? undefined : json['min_area'],

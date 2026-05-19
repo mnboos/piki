@@ -51,6 +51,28 @@ class Video(models.Model):
         return self.filename
 
 
+class EventRecordingConfig(models.Model):
+    """Singleton model for event-triggered recording settings."""
+
+    enabled = models.BooleanField(default=False)
+    pre_buffer_seconds = models.IntegerField(default=5)
+    post_trigger_seconds = models.IntegerField(default=10)
+    trigger_classes = models.JSONField(default=list)
+    cooldown_seconds = models.IntegerField(default=30)
+
+    class Meta:
+        verbose_name = "Event Recording Config"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls) -> "EventRecordingConfig":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 class AimConfig(models.Model):
     """Singleton model holding servo aim configuration."""
 

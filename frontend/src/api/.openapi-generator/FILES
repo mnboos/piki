@@ -3,10 +3,16 @@ apis/index.ts
 index.ts
 models/AimConfigSchema.ts
 models/AimConfigSchemaPatch.ts
+models/EventClipSchema.ts
+models/EventRecordingConfigSchema.ts
+models/EventRecordingConfigSchemaPatch.ts
 models/PikiOptions.ts
 models/PikiOptionsPatch.ts
+models/RecordingStatus.ts
+models/ReplayStatus.ts
 models/ServoMoveSchema.ts
 models/ServoPositionSchema.ts
-models/TrackerStatus.ts
+models/SystemStatus.ts
+models/VideoInfo.ts
 models/index.ts
 runtime.ts

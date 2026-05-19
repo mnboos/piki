@@ -193,13 +193,13 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/TrackerStatus"
+                                    "$ref": "#/components/schemas/SystemStatus"
                                 }
                             }
                         }
                     }
                 },
-                "description": "Return current tracker state."
+                "description": "Return current system status."
             }
         },
         "/api/servo/move": {
@@ -231,15 +231,321 @@
                     "required": true
                 }
             }
+        },
+        "/api/recording/start": {
+            "post": {
+                "operationId": "core_api_recording_start",
+                "summary": "Recording Start",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecordingStatus"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "title": "Response",
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/recording/stop": {
+            "post": {
+                "operationId": "core_api_recording_stop",
+                "summary": "Recording Stop",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecordingStatus"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/recording/status": {
+            "get": {
+                "operationId": "core_api_recording_status",
+                "summary": "Recording Status",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecordingStatus"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/videos": {
+            "get": {
+                "operationId": "core_api_videos_list",
+                "summary": "Videos List",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/VideoInfo"
+                                    },
+                                    "title": "Response",
+                                    "type": "array"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/videos/upload": {
+            "post": {
+                "operationId": "core_api_videos_upload",
+                "summary": "Videos Upload",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VideoInfo"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/videos/{video_id}": {
+            "delete": {
+                "operationId": "core_api_videos_delete",
+                "summary": "Videos Delete",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "video_id",
+                        "schema": {
+                            "title": "Video Id",
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "title": "Response",
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/replay/start/{video_id}": {
+            "post": {
+                "operationId": "core_api_replay_start",
+                "summary": "Replay Start",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "video_id",
+                        "schema": {
+                            "title": "Video Id",
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReplayStatus"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "title": "Response",
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/replay/stop": {
+            "post": {
+                "operationId": "core_api_replay_stop",
+                "summary": "Replay Stop",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "title": "Response",
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/replay/status": {
+            "get": {
+                "operationId": "core_api_replay_status",
+                "summary": "Replay Status",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReplayStatus"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/event_recording_config": {
+            "get": {
+                "operationId": "core_api_get_event_recording_config",
+                "summary": "Get Event Recording Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EventRecordingConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return current event-triggered recording configuration."
+            },
+            "patch": {
+                "operationId": "core_api_update_event_recording_config",
+                "summary": "Update Event Recording Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EventRecordingConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Update event-triggered recording configuration and persist to DB.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EventRecordingConfigSchemaPatch"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
+        },
+        "/api/event_clips": {
+            "get": {
+                "operationId": "core_api_get_event_clips",
+                "summary": "Get Event Clips",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/EventClipSchema"
+                                    },
+                                    "title": "Response",
+                                    "type": "array"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return recent event-triggered clips and clear the queue.\n\nThe frontend polls this endpoint; each clip is returned only once."
+            }
         }
     },
     "components": {
         "schemas": {
             "PikiOptions": {
                 "properties": {
-                    "mode": {
-                        "title": "Mode",
-                        "type": "string"
+                    "show_boxes": {
+                        "default": true,
+                        "title": "Show Boxes",
+                        "type": "boolean"
+                    },
+                    "show_mask": {
+                        "default": false,
+                        "title": "Show Mask",
+                        "type": "boolean"
+                    },
+                    "show_rois": {
+                        "default": false,
+                        "title": "Show Rois",
+                        "type": "boolean"
                     },
                     "conf_threshold": {
                         "anyOf": [
@@ -317,39 +623,6 @@
                             }
                         ],
                         "title": "Mask Transparency"
-                    },
-                    "tracker_type": {
-                        "anyOf": [
-                            {
-                                "type": "string"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Type"
-                    },
-                    "tracker_lost_threshold": {
-                        "anyOf": [
-                            {
-                                "type": "integer"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Lost Threshold"
-                    },
-                    "tracking_enabled": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracking Enabled"
                     },
                     "servo_pid_kp": {
                         "anyOf": [
@@ -396,24 +669,43 @@
                         "title": "Servo Dead Zone"
                     }
                 },
-                "required": [
-                    "mode"
-                ],
                 "title": "PikiOptions",
                 "type": "object"
             },
             "PikiOptionsPatch": {
                 "properties": {
-                    "mode": {
+                    "show_boxes": {
                         "anyOf": [
                             {
-                                "type": "string"
+                                "type": "boolean"
                             },
                             {
                                 "type": "null"
                             }
                         ],
-                        "title": "Mode"
+                        "title": "Show Boxes"
+                    },
+                    "show_mask": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Show Mask"
+                    },
+                    "show_rois": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Show Rois"
                     },
                     "conf_threshold": {
                         "anyOf": [
@@ -491,39 +783,6 @@
                             }
                         ],
                         "title": "Mask Transparency"
-                    },
-                    "tracker_type": {
-                        "anyOf": [
-                            {
-                                "type": "string"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Type"
-                    },
-                    "tracker_lost_threshold": {
-                        "anyOf": [
-                            {
-                                "type": "integer"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Lost Threshold"
-                    },
-                    "tracking_enabled": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracking Enabled"
                     },
                     "servo_pid_kp": {
                         "anyOf": [
@@ -641,27 +900,17 @@
                 "title": "AimConfigSchemaPatch",
                 "type": "object"
             },
-            "TrackerStatus": {
+            "SystemStatus": {
                 "properties": {
-                    "tracking": {
-                        "title": "Tracking",
-                        "type": "boolean"
-                    },
-                    "tracker_type": {
-                        "title": "Tracker Type",
-                        "type": "string"
-                    },
                     "fps": {
                         "title": "Fps",
                         "type": "number"
                     }
                 },
                 "required": [
-                    "tracking",
-                    "tracker_type",
                     "fps"
                 ],
-                "title": "TrackerStatus",
+                "title": "SystemStatus",
                 "type": "object"
             },
             "ServoPositionSchema": {
@@ -698,6 +947,251 @@
                     "tilt_angle"
                 ],
                 "title": "ServoMoveSchema",
+                "type": "object"
+            },
+            "RecordingStatus": {
+                "properties": {
+                    "is_recording": {
+                        "title": "Is Recording",
+                        "type": "boolean"
+                    },
+                    "elapsed_seconds": {
+                        "default": 0.0,
+                        "title": "Elapsed Seconds",
+                        "type": "number"
+                    },
+                    "frame_count": {
+                        "default": 0,
+                        "title": "Frame Count",
+                        "type": "integer"
+                    },
+                    "file_path": {
+                        "default": "",
+                        "title": "File Path",
+                        "type": "string"
+                    },
+                    "event_enabled": {
+                        "default": false,
+                        "title": "Event Enabled",
+                        "type": "boolean"
+                    },
+                    "event_active": {
+                        "default": false,
+                        "title": "Event Active",
+                        "type": "boolean"
+                    },
+                    "event_cooldown_remaining": {
+                        "default": 0.0,
+                        "title": "Event Cooldown Remaining",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "is_recording"
+                ],
+                "title": "RecordingStatus",
+                "type": "object"
+            },
+            "VideoInfo": {
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "integer"
+                    },
+                    "filename": {
+                        "title": "Filename",
+                        "type": "string"
+                    },
+                    "url": {
+                        "title": "Url",
+                        "type": "string"
+                    },
+                    "size_bytes": {
+                        "title": "Size Bytes",
+                        "type": "integer"
+                    },
+                    "source": {
+                        "title": "Source",
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "title": "Created At",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "id",
+                    "filename",
+                    "url",
+                    "size_bytes",
+                    "source",
+                    "created_at"
+                ],
+                "title": "VideoInfo",
+                "type": "object"
+            },
+            "ReplayStatus": {
+                "properties": {
+                    "is_replaying": {
+                        "title": "Is Replaying",
+                        "type": "boolean"
+                    },
+                    "video_filename": {
+                        "default": "",
+                        "title": "Video Filename",
+                        "type": "string"
+                    },
+                    "current_frame": {
+                        "default": 0,
+                        "title": "Current Frame",
+                        "type": "integer"
+                    },
+                    "total_frames": {
+                        "default": 0,
+                        "title": "Total Frames",
+                        "type": "integer"
+                    },
+                    "video_fps": {
+                        "default": 0.0,
+                        "title": "Video Fps",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "is_replaying"
+                ],
+                "title": "ReplayStatus",
+                "type": "object"
+            },
+            "EventRecordingConfigSchema": {
+                "properties": {
+                    "enabled": {
+                        "default": false,
+                        "title": "Enabled",
+                        "type": "boolean"
+                    },
+                    "pre_buffer_seconds": {
+                        "default": 5,
+                        "title": "Pre Buffer Seconds",
+                        "type": "integer"
+                    },
+                    "post_trigger_seconds": {
+                        "default": 10,
+                        "title": "Post Trigger Seconds",
+                        "type": "integer"
+                    },
+                    "trigger_classes": {
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        },
+                        "title": "Trigger Classes",
+                        "type": "array"
+                    },
+                    "cooldown_seconds": {
+                        "default": 30,
+                        "title": "Cooldown Seconds",
+                        "type": "integer"
+                    }
+                },
+                "title": "EventRecordingConfigSchema",
+                "type": "object"
+            },
+            "EventRecordingConfigSchemaPatch": {
+                "properties": {
+                    "enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Enabled"
+                    },
+                    "pre_buffer_seconds": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Pre Buffer Seconds"
+                    },
+                    "post_trigger_seconds": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Post Trigger Seconds"
+                    },
+                    "trigger_classes": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "type": "string"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Trigger Classes"
+                    },
+                    "cooldown_seconds": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Cooldown Seconds"
+                    }
+                },
+                "title": "EventRecordingConfigSchemaPatch",
+                "type": "object"
+            },
+            "EventClipSchema": {
+                "properties": {
+                    "filename": {
+                        "title": "Filename",
+                        "type": "string"
+                    },
+                    "file": {
+                        "title": "File",
+                        "type": "string"
+                    },
+                    "frame_count": {
+                        "title": "Frame Count",
+                        "type": "integer"
+                    },
+                    "time": {
+                        "title": "Time",
+                        "type": "string"
+                    },
+                    "video_id": {
+                        "title": "Video Id",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "filename",
+                    "file",
+                    "frame_count",
+                    "time",
+                    "video_id"
+                ],
+                "title": "EventClipSchema",
                 "type": "object"
             }
         }

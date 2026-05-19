@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AimConfig, DetectionConfig, User, Video
+from .models import AimConfig, DetectionConfig, EventRecordingConfig, User, Video
 
 
 @admin.register(User)
@@ -20,4 +20,9 @@ class AimConfigAdmin(admin.ModelAdmin):
 
 @admin.register(Video)
 class VideoAdmin(admin.ModelAdmin):
+    pass
+
+
+@admin.register(EventRecordingConfig)
+class EventRecordingConfigAdmin(admin.ModelAdmin):
     pass

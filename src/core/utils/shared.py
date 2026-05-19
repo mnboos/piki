@@ -299,4 +299,19 @@ class MotionDetector:
         )
 
 
+# --- Event-triggered recording state ---
+event_recording_enabled = threading.Event()
+event_recording_active = threading.Event()
+event_recording_cooldown_until = 0.0
+
+event_pre_buffer_seconds = mp.Value(c_float, 5.0)
+event_post_trigger_seconds = mp.Value(c_float, 10.0)
+event_cooldown_seconds = mp.Value(c_float, 30.0)
+
+event_trigger_classes: list[str] = []
+event_trigger_classes_lock = threading.Lock()
+
+event_clip_queue: deque[dict] = deque(maxlen=20)
+event_clip_queue_lock = threading.Lock()
+
 motion_detector = MotionDetector()

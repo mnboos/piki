@@ -5,6 +5,7 @@ import App from "./App.vue";
 import router from "./router";
 import { VueQueryPlugin, type VueQueryPluginOptions } from "@tanstack/vue-query";
 import PrimeVue from "primevue/config";
+import ToastService from "primevue/toastservice";
 import Aura from "@primevue/themes/aura";
 
 import { Configuration, DefaultConfig, type Middleware, type RequestContext, type ResponseContext } from "@/api";
@@ -49,6 +50,7 @@ DefaultConfig.config = new Configuration({
 
 app.use(router);
 app.use(PrimeVue, { theme: { preset: Aura } });
+app.use(ToastService);
 const vueQueryPluginOptions: VueQueryPluginOptions = {
     queryClientConfig: {
         defaultOptions: {

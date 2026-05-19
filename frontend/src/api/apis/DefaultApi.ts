@@ -17,28 +17,50 @@ import * as runtime from '../runtime';
 import type {
   AimConfigSchema,
   AimConfigSchemaPatch,
+  EventClipSchema,
+  EventRecordingConfigSchema,
+  EventRecordingConfigSchemaPatch,
   PikiOptions,
   PikiOptionsPatch,
+  RecordingStatus,
+  ReplayStatus,
   ServoMoveSchema,
   ServoPositionSchema,
-  TrackerStatus,
+  SystemStatus,
+  VideoInfo,
 } from '../models/index';
 import {
     AimConfigSchemaFromJSON,
     AimConfigSchemaToJSON,
     AimConfigSchemaPatchFromJSON,
     AimConfigSchemaPatchToJSON,
+    EventClipSchemaFromJSON,
+    EventClipSchemaToJSON,
+    EventRecordingConfigSchemaFromJSON,
+    EventRecordingConfigSchemaToJSON,
+    EventRecordingConfigSchemaPatchFromJSON,
+    EventRecordingConfigSchemaPatchToJSON,
     PikiOptionsFromJSON,
     PikiOptionsToJSON,
     PikiOptionsPatchFromJSON,
     PikiOptionsPatchToJSON,
+    RecordingStatusFromJSON,
+    RecordingStatusToJSON,
+    ReplayStatusFromJSON,
+    ReplayStatusToJSON,
     ServoMoveSchemaFromJSON,
     ServoMoveSchemaToJSON,
     ServoPositionSchemaFromJSON,
     ServoPositionSchemaToJSON,
-    TrackerStatusFromJSON,
-    TrackerStatusToJSON,
+    SystemStatusFromJSON,
+    SystemStatusToJSON,
+    VideoInfoFromJSON,
+    VideoInfoToJSON,
 } from '../models/index';
+
+export interface CoreApiReplayStartRequest {
+    videoId: number;
+}
 
 export interface CoreApiServoMoveRequest {
     servoMoveSchema: ServoMoveSchema;
@@ -48,8 +70,16 @@ export interface CoreApiUpdateAimConfigRequest {
     aimConfigSchemaPatch: AimConfigSchemaPatch;
 }
 
+export interface CoreApiUpdateEventRecordingConfigRequest {
+    eventRecordingConfigSchemaPatch: EventRecordingConfigSchemaPatch;
+}
+
 export interface CoreApiUpdateOptionsRequest {
     pikiOptionsPatch: PikiOptionsPatch;
+}
+
+export interface CoreApiVideosDeleteRequest {
+    videoId: number;
 }
 
 /**
@@ -89,6 +119,68 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
+     * Return recent event-triggered clips and clear the queue.  The frontend polls this endpoint; each clip is returned only once.
+     * Get Event Clips
+     */
+    async coreApiGetEventClipsRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<EventClipSchema>>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/event_clips`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(EventClipSchemaFromJSON));
+    }
+
+    /**
+     * Return recent event-triggered clips and clear the queue.  The frontend polls this endpoint; each clip is returned only once.
+     * Get Event Clips
+     */
+    async coreApiGetEventClips(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<EventClipSchema>> {
+        const response = await this.coreApiGetEventClipsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return current event-triggered recording configuration.
+     * Get Event Recording Config
+     */
+    async coreApiGetEventRecordingConfigRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<EventRecordingConfigSchema>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/event_recording_config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => EventRecordingConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current event-triggered recording configuration.
+     * Get Event Recording Config
+     */
+    async coreApiGetEventRecordingConfig(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<EventRecordingConfigSchema> {
+        const response = await this.coreApiGetEventRecordingConfigRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Return current tuning values so the frontend can initialise its controls.
      * Get Options
      */
@@ -120,10 +212,10 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Return current tracker state.
+     * Return current system status.
      * Get Tracker Status
      */
-    async coreApiGetTrackerStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<TrackerStatus>> {
+    async coreApiGetTrackerStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SystemStatus>> {
         const queryParameters: any = {};
 
         const headerParameters: runtime.HTTPHeaders = {};
@@ -138,14 +230,14 @@ export class DefaultApi extends runtime.BaseAPI {
             query: queryParameters,
         }, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => TrackerStatusFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => SystemStatusFromJSON(jsonValue));
     }
 
     /**
-     * Return current tracker state.
+     * Return current system status.
      * Get Tracker Status
      */
-    async coreApiGetTrackerStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<TrackerStatus> {
+    async coreApiGetTrackerStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SystemStatus> {
         const response = await this.coreApiGetTrackerStatusRaw(initOverrides);
         return await response.value();
     }
@@ -178,6 +270,188 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiGetYoloClasses(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<string>> {
         const response = await this.coreApiGetYoloClassesRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Recording Start
+     */
+    async coreApiRecordingStartRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<RecordingStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/recording/start`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => RecordingStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Recording Start
+     */
+    async coreApiRecordingStart(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RecordingStatus> {
+        const response = await this.coreApiRecordingStartRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Recording Status
+     */
+    async coreApiRecordingStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<RecordingStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/recording/status`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => RecordingStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Recording Status
+     */
+    async coreApiRecordingStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RecordingStatus> {
+        const response = await this.coreApiRecordingStatusRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Recording Stop
+     */
+    async coreApiRecordingStopRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<RecordingStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/recording/stop`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => RecordingStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Recording Stop
+     */
+    async coreApiRecordingStop(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RecordingStatus> {
+        const response = await this.coreApiRecordingStopRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Replay Start
+     */
+    async coreApiReplayStartRaw(requestParameters: CoreApiReplayStartRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ReplayStatus>> {
+        if (requestParameters['videoId'] == null) {
+            throw new runtime.RequiredError(
+                'videoId',
+                'Required parameter "videoId" was null or undefined when calling coreApiReplayStart().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/replay/start/{video_id}`;
+        urlPath = urlPath.replace(`{${"video_id"}}`, encodeURIComponent(String(requestParameters['videoId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ReplayStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Replay Start
+     */
+    async coreApiReplayStart(requestParameters: CoreApiReplayStartRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReplayStatus> {
+        const response = await this.coreApiReplayStartRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Replay Status
+     */
+    async coreApiReplayStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ReplayStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/replay/status`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ReplayStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Replay Status
+     */
+    async coreApiReplayStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReplayStatus> {
+        const response = await this.coreApiReplayStatusRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Replay Stop
+     */
+    async coreApiReplayStopRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<{ [key: string]: any; }>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/replay/stop`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse<any>(response);
+    }
+
+    /**
+     * Replay Stop
+     */
+    async coreApiReplayStop(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<{ [key: string]: any; }> {
+        const response = await this.coreApiReplayStopRaw(initOverrides);
         return await response.value();
     }
 
@@ -294,6 +568,47 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
+     * Update event-triggered recording configuration and persist to DB.
+     * Update Event Recording Config
+     */
+    async coreApiUpdateEventRecordingConfigRaw(requestParameters: CoreApiUpdateEventRecordingConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<EventRecordingConfigSchema>> {
+        if (requestParameters['eventRecordingConfigSchemaPatch'] == null) {
+            throw new runtime.RequiredError(
+                'eventRecordingConfigSchemaPatch',
+                'Required parameter "eventRecordingConfigSchemaPatch" was null or undefined when calling coreApiUpdateEventRecordingConfig().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/event_recording_config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PATCH',
+            headers: headerParameters,
+            query: queryParameters,
+            body: EventRecordingConfigSchemaPatchToJSON(requestParameters['eventRecordingConfigSchemaPatch']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => EventRecordingConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Update event-triggered recording configuration and persist to DB.
+     * Update Event Recording Config
+     */
+    async coreApiUpdateEventRecordingConfig(requestParameters: CoreApiUpdateEventRecordingConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<EventRecordingConfigSchema> {
+        const response = await this.coreApiUpdateEventRecordingConfigRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Update Options
      */
     async coreApiUpdateOptionsRaw(requestParameters: CoreApiUpdateOptionsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PikiOptions>> {
@@ -360,6 +675,101 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiVideoFeed(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
         const response = await this.coreApiVideoFeedRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Videos Delete
+     */
+    async coreApiVideosDeleteRaw(requestParameters: CoreApiVideosDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<{ [key: string]: any; }>> {
+        if (requestParameters['videoId'] == null) {
+            throw new runtime.RequiredError(
+                'videoId',
+                'Required parameter "videoId" was null or undefined when calling coreApiVideosDelete().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/videos/{video_id}`;
+        urlPath = urlPath.replace(`{${"video_id"}}`, encodeURIComponent(String(requestParameters['videoId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'DELETE',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse<any>(response);
+    }
+
+    /**
+     * Videos Delete
+     */
+    async coreApiVideosDelete(requestParameters: CoreApiVideosDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<{ [key: string]: any; }> {
+        const response = await this.coreApiVideosDeleteRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Videos List
+     */
+    async coreApiVideosListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<VideoInfo>>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/videos`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(VideoInfoFromJSON));
+    }
+
+    /**
+     * Videos List
+     */
+    async coreApiVideosList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<VideoInfo>> {
+        const response = await this.coreApiVideosListRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Videos Upload
+     */
+    async coreApiVideosUploadRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<VideoInfo>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/videos/upload`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => VideoInfoFromJSON(jsonValue));
+    }
+
+    /**
+     * Videos Upload
+     */
+    async coreApiVideosUpload(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<VideoInfo> {
+        const response = await this.coreApiVideosUploadRaw(initOverrides);
         return await response.value();
     }
 

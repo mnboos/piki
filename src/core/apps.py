@@ -113,6 +113,39 @@ class CoreConfig(AppConfig):
             print("[DJANGO STARTUP] Could not load AimConfig — using defaults.", flush=True)
             traceback.print_exc()
 
+    def _load_event_recording_config(self):
+        """Load persisted EventRecordingConfig from DB into shared memory."""
+        try:
+            from .models import EventRecordingConfig  # noqa: PLC0415
+            from .utils.shared import (  # noqa: PLC0415
+                event_cooldown_seconds,
+                event_post_trigger_seconds,
+                event_pre_buffer_seconds,
+                event_recording_enabled,
+                event_trigger_classes,
+                event_trigger_classes_lock,
+            )
+
+            config = EventRecordingConfig.load()
+            if config.enabled:
+                event_recording_enabled.set()
+            event_pre_buffer_seconds.value = float(config.pre_buffer_seconds)
+            event_post_trigger_seconds.value = float(config.post_trigger_seconds)
+            event_cooldown_seconds.value = float(config.cooldown_seconds)
+            with event_trigger_classes_lock:
+                event_trigger_classes.clear()
+                event_trigger_classes.extend([c.lower() for c in config.trigger_classes])
+            print(
+                f"[DJANGO STARTUP] Loaded event recording config: enabled={config.enabled}, "
+                f"pre={config.pre_buffer_seconds}s, post={config.post_trigger_seconds}s, "
+                f"cooldown={config.cooldown_seconds}s, classes={config.trigger_classes}",
+                flush=True,
+            )
+        except Exception:
+            import traceback  # noqa: PLC0415
+            print("[DJANGO STARTUP] Could not load EventRecordingConfig — using defaults.", flush=True)
+            traceback.print_exc()
+
     def ready(self):
         # The `runserver` command runs this method twice. We use an environment
         # variable to ensure our setup code only runs in the main process.
@@ -126,6 +159,7 @@ class CoreConfig(AppConfig):
             # Load persisted settings from DB into shared memory.
             self._load_detection_config()
             self._load_aim_config()
+            self._load_event_recording_config()
 
             # monkey_patch_reloader()
 

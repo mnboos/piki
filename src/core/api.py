@@ -9,6 +9,16 @@ from ninja import NinjaAPI, PatchDict, Schema
 from .utils.shared import (
     app_settings,
     cv2,
+    event_clip_queue,
+    event_clip_queue_lock,
+    event_cooldown_seconds,
+    event_post_trigger_seconds,
+    event_pre_buffer_seconds,
+    event_recording_active,
+    event_recording_cooldown_until,
+    event_recording_enabled,
+    event_trigger_classes,
+    event_trigger_classes_lock,
     fps_counter,
     is_object_detection_disabled,
     latest_debug_frame,
@@ -419,6 +429,25 @@ class RecordingStatus(Schema):
     elapsed_seconds: float = 0.0
     frame_count: int = 0
     file_path: str = ""
+    event_enabled: bool = False
+    event_active: bool = False
+    event_cooldown_remaining: float = 0.0
+
+
+class EventRecordingConfigSchema(Schema):
+    enabled: bool = False
+    pre_buffer_seconds: int = 5
+    post_trigger_seconds: int = 10
+    trigger_classes: list[str] = []
+    cooldown_seconds: int = 30
+
+
+class EventClipSchema(Schema):
+    filename: str
+    file: str
+    frame_count: int
+    time: str
+    video_id: int
 
 
 class VideoInfo(Schema):
@@ -444,6 +473,9 @@ def recording_start(request: HttpRequest):
 
     if replaying_active.is_set():
         return 409, {"detail": "Cannot record while replaying."}
+
+    if event_recording_active.is_set():
+        return 409, {"detail": "Cannot start manual recording while event recording is active."}
 
     if is_recording():
         stats = get_recording_stats()
@@ -491,12 +523,21 @@ def recording_stop(request: HttpRequest):
 
 @api.get("/recording/status", response=RecordingStatus)
 def recording_status(request: HttpRequest):
+    import time  # noqa: PLC0415
+
     from .utils.recording import get_recording_stats, is_recording  # noqa: PLC0415
 
+    cooldown_remaining = max(0.0, event_recording_cooldown_until - time.time())
+    event_fields = {
+        "event_enabled": event_recording_enabled.is_set(),
+        "event_active": event_recording_active.is_set(),
+        "event_cooldown_remaining": round(cooldown_remaining, 1),
+    }
+
     if not is_recording():
-        return RecordingStatus(is_recording=False)
+        return RecordingStatus(is_recording=False, **event_fields)
     stats = get_recording_stats()
-    return RecordingStatus(is_recording=True, **stats)
+    return RecordingStatus(is_recording=True, **stats, **event_fields)
 
 
 @api.get("/videos", response=list[VideoInfo])
@@ -540,6 +581,28 @@ def videos_upload(request: HttpRequest):
         size_bytes=video.size_bytes,
         source=video.source,
         created_at=video.created_at.isoformat(),
+    )
+
+
+@api.get("/videos/{video_id}/download", response={200: None}, openapi_extra={"responses": {"200": {"content": {"application/octet-stream": {}}, "description": "Video file"}}})
+def videos_download(request: HttpRequest, video_id: int):
+    from django.http.response import FileResponse  # noqa: PLC0415
+
+    from .models import Video  # noqa: PLC0415
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        raise Http404("Video not found")
+
+    file_path = Path(django_settings.MEDIA_ROOT) / video.file.name
+    if not file_path.exists():
+        raise Http404("File not found on disk")
+
+    return FileResponse(
+        file_path.open("rb"),
+        as_attachment=True,
+        filename=video.filename,
     )
 
 
@@ -610,4 +673,86 @@ def replay_status(request: HttpRequest):
         return ReplayStatus(is_replaying=False)
     stats = get_replay_stats()
     return ReplayStatus(is_replaying=True, **stats)
+
+
+# ---------------------------------------------------------------------------
+# Event-triggered recording
+# ---------------------------------------------------------------------------
+
+
+@api.get("/event_recording_config", response=EventRecordingConfigSchema)
+def get_event_recording_config(request: HttpRequest):
+    """Return current event-triggered recording configuration."""
+    with event_trigger_classes_lock:
+        classes = list(event_trigger_classes)
+    return EventRecordingConfigSchema(
+        enabled=event_recording_enabled.is_set(),
+        pre_buffer_seconds=int(event_pre_buffer_seconds.value),
+        post_trigger_seconds=int(event_post_trigger_seconds.value),
+        trigger_classes=classes,
+        cooldown_seconds=int(event_cooldown_seconds.value),
+    )
+
+
+@api.patch("/event_recording_config", response=EventRecordingConfigSchema)
+def update_event_recording_config(request: HttpRequest, payload: PatchDict[EventRecordingConfigSchema]):
+    """Update event-triggered recording configuration and persist to DB."""
+    from .models import EventRecordingConfig  # noqa: PLC0415
+    from .utils.recording import pre_buffer_clear  # noqa: PLC0415
+
+    config = EventRecordingConfig.load()
+
+    if (v := payload.get("enabled")) is not None:
+        config.enabled = bool(v)
+        if v:
+            event_recording_enabled.set()
+        else:
+            event_recording_enabled.clear()
+            pre_buffer_clear()
+
+    if (v := payload.get("pre_buffer_seconds")) is not None:
+        clamped = max(1, min(30, int(v)))
+        config.pre_buffer_seconds = clamped
+        event_pre_buffer_seconds.value = float(clamped)
+
+    if (v := payload.get("post_trigger_seconds")) is not None:
+        clamped = max(1, min(60, int(v)))
+        config.post_trigger_seconds = clamped
+        event_post_trigger_seconds.value = float(clamped)
+
+    if (v := payload.get("trigger_classes")) is not None:
+        validated = [str(c).strip() for c in v if str(c).strip() in _YOLO_CLASSES]
+        config.trigger_classes = validated
+        with event_trigger_classes_lock:
+            event_trigger_classes.clear()
+            event_trigger_classes.extend([c.lower() for c in validated])
+
+    if (v := payload.get("cooldown_seconds")) is not None:
+        clamped = max(0, min(300, int(v)))
+        config.cooldown_seconds = clamped
+        event_cooldown_seconds.value = float(clamped)
+
+    config.save()
+
+    with event_trigger_classes_lock:
+        classes = list(event_trigger_classes)
+    return EventRecordingConfigSchema(
+        enabled=event_recording_enabled.is_set(),
+        pre_buffer_seconds=int(event_pre_buffer_seconds.value),
+        post_trigger_seconds=int(event_post_trigger_seconds.value),
+        trigger_classes=classes,
+        cooldown_seconds=int(event_cooldown_seconds.value),
+    )
+
+
+@api.get("/event_clips", response=list[EventClipSchema])
+def get_event_clips(request: HttpRequest):
+    """Return recent event-triggered clips and clear the queue.
+
+    The frontend polls this endpoint; each clip is returned only once.
+    """
+    with event_clip_queue_lock:
+        clips = [EventClipSchema(**c) for c in event_clip_queue]
+        event_clip_queue.clear()
+    return clips
 
