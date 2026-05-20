@@ -1,0 +1,183 @@
+<script setup lang="ts">
+import { type SplashConfigSchema } from "@/api";
+import Panel from "primevue/panel";
+import ToggleSwitch from "primevue/toggleswitch";
+import Checkbox from "primevue/checkbox";
+import InputNumber from "primevue/inputnumber";
+
+const model = defineModel<SplashConfigSchema>({ required: true });
+defineProps<{ classes: string[] }>();
+
+function toggleClass(cls: string) {
+    const idx = model.value.trigger_classes.indexOf(cls);
+    if (idx === -1) {
+        model.value.trigger_classes = [...model.value.trigger_classes, cls];
+    } else {
+        model.value.trigger_classes = model.value.trigger_classes.filter(c => c !== cls);
+    }
+}
+</script>
+
+<template>
+    <Panel>
+        <template #header>
+            <div class="panel-header">
+                <span class="panel-title">Splash (Relay)</span>
+                <div class="toggle-row">
+                    <ToggleSwitch v-model="model.enabled" input-id="splash-enabled" />
+                    <label
+                        for="splash-enabled"
+                        class="toggle-label"
+                        :class="model.enabled ? 'enabled' : 'disabled'"
+                    >
+                        {{ model.enabled ? "Enabled" : "Disabled" }}
+                    </label>
+                </div>
+            </div>
+        </template>
+
+        <p class="hint">
+            Trigger splash on these classes
+            <span v-if="model.trigger_classes.length > 0" class="selected-count">
+                ({{ model.trigger_classes.length }} selected)
+            </span>:
+        </p>
+        <div class="class-grid">
+            <div v-for="cls in classes" :key="cls" class="class-item">
+                <Checkbox
+                    :input-id="`splash-cls-${cls}`"
+                    :model-value="model.trigger_classes.includes(cls)"
+                    :binary="true"
+                    @update:model-value="toggleClass(cls)"
+                />
+                <label :for="`splash-cls-${cls}`" class="class-label">{{ cls }}</label>
+            </div>
+        </div>
+
+        <div class="timing-grid">
+            <div class="timing-item">
+                <label for="splash-delay" class="timing-label">Delay (s)</label>
+                <InputNumber
+                    input-id="splash-delay"
+                    v-model="model.delay_seconds"
+                    :min="0"
+                    :max="30"
+                    :step="0.1"
+                    :min-fraction-digits="1"
+                    :max-fraction-digits="1"
+                    class="timing-input"
+                />
+                <p class="timing-help">Wait after target lock before firing.</p>
+            </div>
+
+            <div class="timing-item">
+                <label for="splash-duration" class="timing-label">Duration (s)</label>
+                <InputNumber
+                    input-id="splash-duration"
+                    v-model="model.duration_seconds"
+                    :min="0.01"
+                    :max="10"
+                    :step="0.1"
+                    :min-fraction-digits="2"
+                    :max-fraction-digits="2"
+                    class="timing-input"
+                />
+                <p class="timing-help">How long the relay stays active.</p>
+            </div>
+
+            <div class="timing-item">
+                <label for="splash-cooldown" class="timing-label">Cooldown (s)</label>
+                <InputNumber
+                    input-id="splash-cooldown"
+                    v-model="model.cooldown_seconds"
+                    :min="0"
+                    :max="600"
+                    :step="1"
+                    :min-fraction-digits="0"
+                    class="timing-input"
+                />
+                <p class="timing-help">Minimum time between splashes.</p>
+            </div>
+        </div>
+    </Panel>
+</template>
+
+<style scoped>
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+.panel-title {
+    font-weight: 700;
+    font-size: 1rem;
+}
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.toggle-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    user-select: none;
+}
+.toggle-label.enabled {
+    color: var(--p-green-500, #22c55e);
+}
+.toggle-label.disabled {
+    color: var(--p-text-muted-color, #888);
+}
+.hint {
+    font-size: 0.8rem;
+    color: var(--p-text-muted-color);
+    margin: 0.5rem 0;
+}
+.selected-count {
+    font-weight: 600;
+    color: var(--p-primary-color);
+}
+.class-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.75rem;
+    margin-bottom: 0.75rem;
+    max-height: 160px;
+    overflow-y: auto;
+}
+.class-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.75rem;
+    min-width: 100px;
+}
+.class-label {
+    cursor: pointer;
+    user-select: none;
+}
+.timing-grid {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.75rem;
+}
+.timing-item {
+    flex: 1;
+    min-width: 0;
+}
+.timing-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.25rem;
+}
+.timing-input {
+    width: 100%;
+}
+.timing-help {
+    font-size: 0.7rem;
+    color: var(--p-text-muted-color);
+    margin: 0.2rem 0 0;
+}
+</style>

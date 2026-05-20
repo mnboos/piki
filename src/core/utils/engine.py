@@ -40,6 +40,10 @@ SERVO_VFOV: float = float(os.environ.get("SERVO_VFOV", "100.0"))  # vertical FOV
 SERVO_PAN_PIN: int = int(os.environ.get("SERVO_PAN_PIN", "32"))
 SERVO_TILT_PIN: int = int(os.environ.get("SERVO_TILT_PIN", "33"))
 
+# GPIO pin for the splash relay/solenoid (digital output, not PWM).
+# Override with SPLASH_GPIO_PIN env var (physical pin number).
+SPLASH_GPIO_PIN: int = int(os.environ.get("SPLASH_GPIO_PIN", "36"))
+
 # Standard 50 Hz servo PWM: 1.5 ms centre pulse → 7.5% duty cycle.
 # Mapping: angle [-90°, +90°] → duty cycle [2.5%, 12.5%]
 _SERVO_FREQ_HZ = 50
@@ -234,7 +238,7 @@ _gpio_initialised = False
 
 @atexit.register
 def _cleanup_gpio() -> None:
-    global _pan_pwm, _tilt_pwm  # noqa: PLW0603
+    global _pan_pwm, _tilt_pwm, _splash_pin  # noqa: PLW0603
     try:
         move_to(0.0, 0.0)
         time.sleep(0.3)
@@ -251,7 +255,11 @@ def _cleanup_gpio() -> None:
     if _gpio_initialised:
         try:
             import Hobot.GPIO as GPIO  # noqa: PLC0415
-            GPIO.cleanup([SERVO_PAN_PIN, SERVO_TILT_PIN])
+            pins = [SERVO_PAN_PIN, SERVO_TILT_PIN]
+            if _splash_pin is not None:
+                GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+                pins.append(SPLASH_GPIO_PIN)
+            GPIO.cleanup(pins)
         except Exception:
             pass
 
@@ -368,6 +376,7 @@ def aim_at(
     logger.debug("Target at pan=%.1f° tilt=%.1f°", pan_angle, tilt_angle)
 
     from ..utils.shared import (  # noqa: PLC0415
+        app_settings,
         servo_dead_zone,
         servo_kalman_lookahead_ms,
         servo_kalman_meas_noise,
@@ -436,10 +445,20 @@ def aim_at(
         servo_pid_kp.value, servo_pid_ki.value, servo_pid_kd.value,
     )
 
+    # Read invert flags and vertical offset from the shared aim settings.
+    pan_inv = app_settings.aim_settings.pan_invert
+    tilt_inv = app_settings.aim_settings.tilt_invert
+
+    from ..utils.shared import vertical_angle_offset  # noqa: PLC0415
+    tilt_offset = vertical_angle_offset.value
+
     pan_pwm = _get_pan_pwm()
     if pan_pwm is not None:
         try:
-            pan_pwm.ChangeDutyCycle(_angle_to_dc(-pan_new))
+            # By default pan is negated (physical mounting).  If pan_invert is
+            # set, flip the sign so the servo moves the other way.
+            pan_dc = -pan_new if not pan_inv else pan_new
+            pan_pwm.ChangeDutyCycle(_angle_to_dc(pan_dc))
             logger.info("Pan servo → %.1f° (target %.1f°)", pan_new, pan_clamped)
         except Exception:
             logger.exception("Failed to move pan servo")
@@ -447,8 +466,11 @@ def aim_at(
     tilt_pwm = _get_tilt_pwm()
     if tilt_pwm is not None:
         try:
-            tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_new))
-            logger.info("Tilt servo → %.1f° (target %.1f°)", tilt_new, tilt_clamped)
+            # Apply vertical angle offset at the output so the crosshair shows
+            # the raw target position but the servo compensates for mounting height.
+            tilt_out = (tilt_new + tilt_offset) if not tilt_inv else -(tilt_new + tilt_offset)
+            tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_out))
+            logger.info("Tilt servo → %.1f° (target %.1f° offset=%.1f°)", tilt_out, tilt_clamped, tilt_offset)
         except Exception:
             logger.exception("Failed to move tilt servo")
 
@@ -475,17 +497,24 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
 
     logger.info("Manual move → pan=%.1f° tilt=%.1f°", pan_clamped, tilt_clamped)
 
+    from ..utils.shared import app_settings, vertical_angle_offset  # noqa: PLC0415
+    pan_inv = app_settings.aim_settings.pan_invert
+    tilt_inv = app_settings.aim_settings.tilt_invert
+    tilt_offset = vertical_angle_offset.value
+
     pan_pwm = _get_pan_pwm()
     if pan_pwm is not None:
         try:
-            pan_pwm.ChangeDutyCycle(_angle_to_dc(-pan_clamped))
+            pan_dc = -pan_clamped if not pan_inv else pan_clamped
+            pan_pwm.ChangeDutyCycle(_angle_to_dc(pan_dc))
         except Exception:
             logger.exception("Failed to move pan servo")
 
     tilt_pwm = _get_tilt_pwm()
     if tilt_pwm is not None:
         try:
-            tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_clamped))
+            tilt_out = (tilt_clamped + tilt_offset) if not tilt_inv else -(tilt_clamped + tilt_offset)
+            tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_out))
         except Exception:
             logger.exception("Failed to move tilt servo")
 
@@ -494,3 +523,52 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
     servo_tilt.value = tilt_clamped
 
     return pan_clamped, tilt_clamped
+
+
+# ---------------------------------------------------------------------------
+# Splash relay — digital GPIO output for a solenoid / water valve.
+# ---------------------------------------------------------------------------
+_splash_pin = None
+
+
+def _init_splash_gpio() -> bool:
+    global _splash_pin  # noqa: PLW0603
+    if _splash_pin is not None:
+        return True
+    if not _init_gpio():
+        return False
+    try:
+        import Hobot.GPIO as GPIO  # noqa: PLC0415
+        GPIO.setup(SPLASH_GPIO_PIN, GPIO.OUT)
+        GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+        _splash_pin = True
+        logger.info("Splash relay initialised on physical pin %d", SPLASH_GPIO_PIN)
+    except Exception:
+        logger.warning("Splash relay unavailable on pin %d", SPLASH_GPIO_PIN, exc_info=True)
+        _splash_pin = None
+    return _splash_pin is not None
+
+
+def activate_splash(duration_s: float) -> None:
+    """Activate the splash relay for *duration_s* seconds, non-blocking.
+
+    The relay is deactivated by a daemon thread after the duration elapses.
+    Safe to call from any thread.
+    """
+    if not _init_splash_gpio():
+        return
+    import Hobot.GPIO as GPIO  # noqa: PLC0415
+
+    GPIO.output(SPLASH_GPIO_PIN, GPIO.HIGH)
+    logger.info("Splash relay ON (duration=%.1fs)", duration_s)
+
+    def _deactivate() -> None:
+        time.sleep(duration_s)
+        try:
+            GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+            logger.info("Splash relay OFF")
+        except Exception:
+            logger.exception("Failed to deactivate splash relay")
+
+    t = threading.Thread(target=_deactivate, daemon=True, name="splash-timer")
+    t.start()

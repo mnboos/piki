@@ -11,5 +11,7 @@ export * from './RecordingStatus';
 export * from './ReplayStatus';
 export * from './ServoMoveSchema';
 export * from './ServoPositionSchema';
+export * from './SplashConfigSchema';
+export * from './SplashConfigSchemaPatch';
 export * from './SystemStatus';
 export * from './VideoInfo';

@@ -24,85 +24,91 @@ export interface PikiOptionsPatch {
      * @type {boolean}
      * @memberof PikiOptionsPatch
      */
-    showBoxes?: boolean | null;
+    show_boxes?: boolean | null;
     /**
      * 
      * @type {boolean}
      * @memberof PikiOptionsPatch
      */
-    showMask?: boolean | null;
+    show_mask?: boolean | null;
     /**
      * 
      * @type {boolean}
      * @memberof PikiOptionsPatch
      */
-    showRois?: boolean | null;
+    show_rois?: boolean | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof PikiOptionsPatch
+     */
+    show_seg?: boolean | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    confThreshold?: number | null;
+    conf_threshold?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    pixelcountThreshold?: number | null;
+    pixelcount_threshold?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    minArea?: number | null;
+    min_area?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    mog2History?: number | null;
+    mog2_history?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    mog2VarThreshold?: number | null;
+    mog2_var_threshold?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    denoiseKernelsize?: number | null;
+    denoise_kernelsize?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    maskTransparency?: number | null;
+    mask_transparency?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    servoPidKp?: number | null;
+    servo_pid_kp?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    servoPidKi?: number | null;
+    servo_pid_ki?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    servoPidKd?: number | null;
+    servo_pid_kd?: number | null;
     /**
      * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    servoDeadZone?: number | null;
+    servo_dead_zone?: number | null;
 }
 
 /**
@@ -122,20 +128,21 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
     }
     return {
         
-        'showBoxes': json['show_boxes'] == null ? undefined : json['show_boxes'],
-        'showMask': json['show_mask'] == null ? undefined : json['show_mask'],
-        'showRois': json['show_rois'] == null ? undefined : json['show_rois'],
-        'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
-        'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
-        'minArea': json['min_area'] == null ? undefined : json['min_area'],
-        'mog2History': json['mog2_history'] == null ? undefined : json['mog2_history'],
-        'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
-        'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
-        'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
-        'servoPidKp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
-        'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
-        'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
-        'servoDeadZone': json['servo_dead_zone'] == null ? undefined : json['servo_dead_zone'],
+        'show_boxes': json['show_boxes'] == null ? undefined : json['show_boxes'],
+        'show_mask': json['show_mask'] == null ? undefined : json['show_mask'],
+        'show_rois': json['show_rois'] == null ? undefined : json['show_rois'],
+        'show_seg': json['show_seg'] == null ? undefined : json['show_seg'],
+        'conf_threshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
+        'pixelcount_threshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
+        'min_area': json['min_area'] == null ? undefined : json['min_area'],
+        'mog2_history': json['mog2_history'] == null ? undefined : json['mog2_history'],
+        'mog2_var_threshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
+        'denoise_kernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
+        'mask_transparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
+        'servo_pid_kp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
+        'servo_pid_ki': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
+        'servo_pid_kd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
+        'servo_dead_zone': json['servo_dead_zone'] == null ? undefined : json['servo_dead_zone'],
     };
 }
 
@@ -150,20 +157,21 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
 
     return {
         
-        'show_boxes': value['showBoxes'],
-        'show_mask': value['showMask'],
-        'show_rois': value['showRois'],
-        'conf_threshold': value['confThreshold'],
-        'pixelcount_threshold': value['pixelcountThreshold'],
-        'min_area': value['minArea'],
-        'mog2_history': value['mog2History'],
-        'mog2_var_threshold': value['mog2VarThreshold'],
-        'denoise_kernelsize': value['denoiseKernelsize'],
-        'mask_transparency': value['maskTransparency'],
-        'servo_pid_kp': value['servoPidKp'],
-        'servo_pid_ki': value['servoPidKi'],
-        'servo_pid_kd': value['servoPidKd'],
-        'servo_dead_zone': value['servoDeadZone'],
+        'show_boxes': value['show_boxes'],
+        'show_mask': value['show_mask'],
+        'show_rois': value['show_rois'],
+        'show_seg': value['show_seg'],
+        'conf_threshold': value['conf_threshold'],
+        'pixelcount_threshold': value['pixelcount_threshold'],
+        'min_area': value['min_area'],
+        'mog2_history': value['mog2_history'],
+        'mog2_var_threshold': value['mog2_var_threshold'],
+        'denoise_kernelsize': value['denoise_kernelsize'],
+        'mask_transparency': value['mask_transparency'],
+        'servo_pid_kp': value['servo_pid_kp'],
+        'servo_pid_ki': value['servo_pid_ki'],
+        'servo_pid_kd': value['servo_pid_kd'],
+        'servo_dead_zone': value['servo_dead_zone'],
     };
 }
 

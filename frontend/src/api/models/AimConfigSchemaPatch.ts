@@ -24,19 +24,37 @@ export interface AimConfigSchemaPatch {
      * @type {Array<string>}
      * @memberof AimConfigSchemaPatch
      */
-    targetClasses?: Array<string> | null;
+    target_classes?: Array<string> | null;
     /**
      * 
      * @type {boolean}
      * @memberof AimConfigSchemaPatch
      */
-    servoEnabled?: boolean | null;
+    servo_enabled?: boolean | null;
     /**
      * 
      * @type {number}
      * @memberof AimConfigSchemaPatch
      */
-    targetLockDuration?: number | null;
+    target_lock_duration?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof AimConfigSchemaPatch
+     */
+    vertical_angle_offset?: number | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof AimConfigSchemaPatch
+     */
+    pan_invert?: boolean | null;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof AimConfigSchemaPatch
+     */
+    tilt_invert?: boolean | null;
 }
 
 /**
@@ -56,9 +74,12 @@ export function AimConfigSchemaPatchFromJSONTyped(json: any, ignoreDiscriminator
     }
     return {
         
-        'targetClasses': json['target_classes'] == null ? undefined : json['target_classes'],
-        'servoEnabled': json['servo_enabled'] == null ? undefined : json['servo_enabled'],
-        'targetLockDuration': json['target_lock_duration'] == null ? undefined : json['target_lock_duration'],
+        'target_classes': json['target_classes'] == null ? undefined : json['target_classes'],
+        'servo_enabled': json['servo_enabled'] == null ? undefined : json['servo_enabled'],
+        'target_lock_duration': json['target_lock_duration'] == null ? undefined : json['target_lock_duration'],
+        'vertical_angle_offset': json['vertical_angle_offset'] == null ? undefined : json['vertical_angle_offset'],
+        'pan_invert': json['pan_invert'] == null ? undefined : json['pan_invert'],
+        'tilt_invert': json['tilt_invert'] == null ? undefined : json['tilt_invert'],
     };
 }
 
@@ -73,9 +94,12 @@ export function AimConfigSchemaPatchToJSONTyped(value?: AimConfigSchemaPatch | n
 
     return {
         
-        'target_classes': value['targetClasses'],
-        'servo_enabled': value['servoEnabled'],
-        'target_lock_duration': value['targetLockDuration'],
+        'target_classes': value['target_classes'],
+        'servo_enabled': value['servo_enabled'],
+        'target_lock_duration': value['target_lock_duration'],
+        'vertical_angle_offset': value['vertical_angle_offset'],
+        'pan_invert': value['pan_invert'],
+        'tilt_invert': value['tilt_invert'],
     };
 }
 

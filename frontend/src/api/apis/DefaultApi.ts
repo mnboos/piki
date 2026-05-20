@@ -26,6 +26,8 @@ import type {
   ReplayStatus,
   ServoMoveSchema,
   ServoPositionSchema,
+  SplashConfigSchema,
+  SplashConfigSchemaPatch,
   SystemStatus,
   VideoInfo,
 } from '../models/index';
@@ -52,6 +54,10 @@ import {
     ServoMoveSchemaToJSON,
     ServoPositionSchemaFromJSON,
     ServoPositionSchemaToJSON,
+    SplashConfigSchemaFromJSON,
+    SplashConfigSchemaToJSON,
+    SplashConfigSchemaPatchFromJSON,
+    SplashConfigSchemaPatchToJSON,
     SystemStatusFromJSON,
     SystemStatusToJSON,
     VideoInfoFromJSON,
@@ -78,7 +84,15 @@ export interface CoreApiUpdateOptionsRequest {
     pikiOptionsPatch: PikiOptionsPatch;
 }
 
+export interface CoreApiUpdateSplashConfigRequest {
+    splashConfigSchemaPatch: SplashConfigSchemaPatch;
+}
+
 export interface CoreApiVideosDeleteRequest {
+    videoId: number;
+}
+
+export interface CoreApiVideosDownloadRequest {
     videoId: number;
 }
 
@@ -208,6 +222,37 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiGetOptions(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<PikiOptions> {
         const response = await this.coreApiGetOptionsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return current splash (relay/solenoid) configuration.
+     * Get Splash Config
+     */
+    async coreApiGetSplashConfigRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SplashConfigSchema>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/splash_config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => SplashConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Return current splash (relay/solenoid) configuration.
+     * Get Splash Config
+     */
+    async coreApiGetSplashConfig(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SplashConfigSchema> {
+        const response = await this.coreApiGetSplashConfigRaw(initOverrides);
         return await response.value();
     }
 
@@ -648,6 +693,47 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
+     * Update splash configuration and persist to database.
+     * Update Splash Config
+     */
+    async coreApiUpdateSplashConfigRaw(requestParameters: CoreApiUpdateSplashConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SplashConfigSchema>> {
+        if (requestParameters['splashConfigSchemaPatch'] == null) {
+            throw new runtime.RequiredError(
+                'splashConfigSchemaPatch',
+                'Required parameter "splashConfigSchemaPatch" was null or undefined when calling coreApiUpdateSplashConfig().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/splash_config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PATCH',
+            headers: headerParameters,
+            query: queryParameters,
+            body: SplashConfigSchemaPatchToJSON(requestParameters['splashConfigSchemaPatch']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => SplashConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Update splash configuration and persist to database.
+     * Update Splash Config
+     */
+    async coreApiUpdateSplashConfig(requestParameters: CoreApiUpdateSplashConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SplashConfigSchema> {
+        const response = await this.coreApiUpdateSplashConfigRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Video streaming route.
      * Video Feed
      */
@@ -713,6 +799,42 @@ export class DefaultApi extends runtime.BaseAPI {
     async coreApiVideosDelete(requestParameters: CoreApiVideosDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<{ [key: string]: any; }> {
         const response = await this.coreApiVideosDeleteRaw(requestParameters, initOverrides);
         return await response.value();
+    }
+
+    /**
+     * Videos Download
+     */
+    async coreApiVideosDownloadRaw(requestParameters: CoreApiVideosDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        if (requestParameters['videoId'] == null) {
+            throw new runtime.RequiredError(
+                'videoId',
+                'Required parameter "videoId" was null or undefined when calling coreApiVideosDownload().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/videos/{video_id}/download`;
+        urlPath = urlPath.replace(`{${"video_id"}}`, encodeURIComponent(String(requestParameters['videoId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     * Videos Download
+     */
+    async coreApiVideosDownload(requestParameters: CoreApiVideosDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.coreApiVideosDownloadRaw(requestParameters, initOverrides);
     }
 
     /**

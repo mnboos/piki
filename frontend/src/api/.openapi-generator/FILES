@@ -12,6 +12,8 @@ models/RecordingStatus.ts
 models/ReplayStatus.ts
 models/ServoMoveSchema.ts
 models/ServoPositionSchema.ts
+models/SplashConfigSchema.ts
+models/SplashConfigSchemaPatch.ts
 models/SystemStatus.ts
 models/VideoInfo.ts
 models/index.ts

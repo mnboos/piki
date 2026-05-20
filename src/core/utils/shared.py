@@ -33,8 +33,9 @@ logger = logging.getLogger(__name__)
 logger.info("Setup shared module...")
 
 app_settings = AppSettings(
-    debug_settings=DebugSettings(show_boxes=True, show_mask=False, show_rois=False),
-    aim_settings=AimSettings(target_classes=[], servo_enabled=False, target_lock_duration=3.0),
+    debug_settings=DebugSettings(show_boxes=True, show_mask=False, show_rois=False, show_seg=False),
+    aim_settings=AimSettings(target_classes=[], servo_enabled=False, target_lock_duration=3.0,
+                             pan_invert=False, tilt_invert=False),
 )
 
 
@@ -70,6 +71,7 @@ servo_dead_zone = mp.Value(c_float, 1.5)      # degrees: changes smaller than th
 servo_kalman_process_noise = mp.Value(c_float, 10.0)   # deg/s² — how quickly velocity may change
 servo_kalman_meas_noise = mp.Value(c_float, 5.0)       # deg   — position measurement uncertainty
 servo_kalman_lookahead_ms = mp.Value(c_float, 50.0)    # ms    — servo lag to compensate for (0 = off)
+vertical_angle_offset = mp.Value(c_float, 0.0)          # deg   — tilt offset to compensate for mounting height
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
@@ -313,5 +315,15 @@ event_trigger_classes_lock = threading.Lock()
 
 event_clip_queue: deque[dict] = deque(maxlen=20)
 event_clip_queue_lock = threading.Lock()
+
+# --- Splash relay state ---
+splash_enabled = threading.Event()
+splash_cooldown_until = 0.0
+splash_armed_at = 0.0
+splash_delay = mp.Value(c_float, 0.5)
+splash_duration = mp.Value(c_float, 1.0)
+splash_cooldown = mp.Value(c_float, 10.0)
+splash_trigger_classes: list[str] = []
+splash_trigger_classes_lock = threading.Lock()
 
 motion_detector = MotionDetector()

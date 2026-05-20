@@ -35,6 +35,12 @@ from .utils.shared import (
     servo_pid_kp,
     servo_tilt,
     settings,
+    splash_cooldown,
+    splash_delay,
+    splash_duration,
+    splash_enabled,
+    splash_trigger_classes,
+    splash_trigger_classes_lock,
     streaming_active,
 )
 
@@ -115,6 +121,32 @@ async def stream_camera():
                         1,
                         cv2.LINE_AA,
                     )
+
+            # Draw segmentation mask overlay when available.
+            if app_settings.debug_settings.show_seg:
+                from .utils.stream import (  # noqa: PLC0415
+                    _latest_seg_mask,
+                    _latest_seg_bbox,
+                    _latest_seg_mask_lock,
+                )
+                with _latest_seg_mask_lock:
+                    seg_mask = _latest_seg_mask
+                    seg_bbox = list(_latest_seg_bbox)
+                if seg_mask is not None and seg_mask.size > 0:
+                    fh_mask, fw_mask = draw_frame.shape[:2]
+                    ymin, xmin, ymax, xmax = seg_bbox
+                    x1 = max(0, int(xmin * fw_mask))
+                    y1 = max(0, int(ymin * fh_mask))
+                    x2 = min(fw_mask, int(xmax * fw_mask))
+                    y2 = min(fh_mask, int(ymax * fh_mask))
+                    if x2 > x1 and y2 > y1:
+                        mask_resized = cv2.resize(
+                            seg_mask, (x2 - x1, y2 - y1), interpolation=cv2.INTER_NEAREST,
+                        )
+                        # Draw mask as a semi-transparent magenta overlay.
+                        overlay = np.zeros_like(draw_frame)
+                        overlay[y1:y2, x1:x2][mask_resized > 0] = (200, 50, 200)
+                        draw_frame = cv2.addWeighted(draw_frame, 1.0, overlay, 0.45, 0)
 
             # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
             # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
@@ -211,6 +243,7 @@ class PikiOptions(Schema):
     show_boxes: bool = True
     show_mask: bool = False
     show_rois: bool = False
+    show_seg: bool = False
     conf_threshold: Optional[float] = None
     pixelcount_threshold: Optional[int] = None
     min_area: Optional[int] = None
@@ -234,6 +267,8 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         app_settings.debug_settings.show_mask = v
     if (v := options.get("show_rois")) is not None:
         app_settings.debug_settings.show_rois = v
+    if (v := options.get("show_seg")) is not None:
+        app_settings.debug_settings.show_seg = v
 
     if (v := options.get("conf_threshold")) is not None:
         prob_threshold.value = float(v)
@@ -273,6 +308,7 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.show_boxes = app_settings.debug_settings.show_boxes
     config.show_mask = app_settings.debug_settings.show_mask
     config.show_rois = app_settings.debug_settings.show_rois
+    config.show_seg = app_settings.debug_settings.show_seg
     config.conf_threshold = prob_threshold.value
     config.pixelcount_threshold = settings.foreground_mask_options.pixelcount_threshold.value
     config.min_area = settings.foreground_mask_options.min_area.value
@@ -290,6 +326,7 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         show_boxes=app_settings.debug_settings.show_boxes,
         show_mask=app_settings.debug_settings.show_mask,
         show_rois=app_settings.debug_settings.show_rois,
+        show_seg=app_settings.debug_settings.show_seg,
         conf_threshold=prob_threshold.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
@@ -318,6 +355,7 @@ def get_options(request: HttpRequest):
         show_boxes=app_settings.debug_settings.show_boxes,
         show_mask=app_settings.debug_settings.show_mask,
         show_rois=app_settings.debug_settings.show_rois,
+        show_seg=app_settings.debug_settings.show_seg,
         conf_threshold=prob_threshold.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
@@ -336,15 +374,23 @@ class AimConfigSchema(Schema):
     target_classes: list[str]
     servo_enabled: bool
     target_lock_duration: float
+    vertical_angle_offset: float = 0.0
+    pan_invert: bool = False
+    tilt_invert: bool = False
 
 
 @api.get("/aim_config", response=AimConfigSchema)
 def get_aim_config(request: HttpRequest):
     """Return current servo aim configuration."""
+    from .utils.shared import vertical_angle_offset  # noqa: PLC0415
+
     return AimConfigSchema(
         target_classes=list(app_settings.aim_settings.target_classes or []),
         servo_enabled=bool(app_settings.aim_settings.servo_enabled),
         target_lock_duration=float(app_settings.aim_settings.target_lock_duration),
+        vertical_angle_offset=float(vertical_angle_offset.value),
+        pan_invert=bool(app_settings.aim_settings.pan_invert),
+        tilt_invert=bool(app_settings.aim_settings.tilt_invert),
     )
 
 
@@ -352,6 +398,7 @@ def get_aim_config(request: HttpRequest):
 def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema]):
     """Update servo aim configuration and persist to database."""
     from .models import AimConfig  # noqa: PLC0415
+    from .utils.shared import vertical_angle_offset  # noqa: PLC0415
 
     config = AimConfig.load()
 
@@ -369,12 +416,28 @@ def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema])
         app_settings.aim_settings.target_lock_duration = clamped
         config.target_lock_duration = clamped
 
+    if (offset := payload.get("vertical_angle_offset")) is not None:
+        clamped = max(-30.0, min(30.0, float(offset)))
+        vertical_angle_offset.value = clamped
+        config.vertical_angle_offset = clamped
+
+    if (v := payload.get("pan_invert")) is not None:
+        app_settings.aim_settings.pan_invert = bool(v)
+        config.pan_invert = bool(v)
+
+    if (v := payload.get("tilt_invert")) is not None:
+        app_settings.aim_settings.tilt_invert = bool(v)
+        config.tilt_invert = bool(v)
+
     config.save()
 
     return AimConfigSchema(
         target_classes=list(app_settings.aim_settings.target_classes or []),
         servo_enabled=bool(app_settings.aim_settings.servo_enabled),
         target_lock_duration=float(app_settings.aim_settings.target_lock_duration),
+        vertical_angle_offset=float(vertical_angle_offset.value),
+        pan_invert=bool(app_settings.aim_settings.pan_invert),
+        tilt_invert=bool(app_settings.aim_settings.tilt_invert),
     )
 
 
@@ -756,4 +819,80 @@ def get_event_clips(request: HttpRequest):
         clips = [EventClipSchema(**c) for c in event_clip_queue]
         event_clip_queue.clear()
     return clips
+
+
+# ---------------------------------------------------------------------------
+# Splash (relay/solenoid) configuration
+# ---------------------------------------------------------------------------
+
+
+class SplashConfigSchema(Schema):
+    enabled: bool = False
+    trigger_classes: list[str] = []
+    delay_seconds: float = 0.5
+    duration_seconds: float = 1.0
+    cooldown_seconds: float = 10.0
+
+
+@api.get("/splash_config", response=SplashConfigSchema)
+def get_splash_config(request: HttpRequest):
+    """Return current splash (relay/solenoid) configuration."""
+    with splash_trigger_classes_lock:
+        classes = list(splash_trigger_classes)
+    return SplashConfigSchema(
+        enabled=splash_enabled.is_set(),
+        trigger_classes=classes,
+        delay_seconds=float(splash_delay.value),
+        duration_seconds=float(splash_duration.value),
+        cooldown_seconds=float(splash_cooldown.value),
+    )
+
+
+@api.patch("/splash_config", response=SplashConfigSchema)
+def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSchema]):
+    """Update splash configuration and persist to database."""
+    from .models import SplashConfig  # noqa: PLC0415
+
+    config = SplashConfig.load()
+
+    if (v := payload.get("enabled")) is not None:
+        config.enabled = bool(v)
+        if v:
+            splash_enabled.set()
+        else:
+            splash_enabled.clear()
+
+    if (v := payload.get("delay_seconds")) is not None:
+        clamped = max(0.0, min(30.0, float(v)))
+        config.delay_seconds = clamped
+        splash_delay.value = clamped
+
+    if (v := payload.get("duration_seconds")) is not None:
+        clamped = max(0.01, min(10.0, float(v)))
+        config.duration_seconds = clamped
+        splash_duration.value = clamped
+
+    if (v := payload.get("cooldown_seconds")) is not None:
+        clamped = max(0.0, min(600.0, float(v)))
+        config.cooldown_seconds = clamped
+        splash_cooldown.value = clamped
+
+    if (v := payload.get("trigger_classes")) is not None:
+        validated = [str(c).strip() for c in v if str(c).strip() in _YOLO_CLASSES]
+        config.trigger_classes = validated
+        with splash_trigger_classes_lock:
+            splash_trigger_classes.clear()
+            splash_trigger_classes.extend([c.lower() for c in validated])
+
+    config.save()
+
+    with splash_trigger_classes_lock:
+        classes = list(splash_trigger_classes)
+    return SplashConfigSchema(
+        enabled=splash_enabled.is_set(),
+        trigger_classes=classes,
+        delay_seconds=float(splash_delay.value),
+        duration_seconds=float(splash_duration.value),
+        cooldown_seconds=float(splash_cooldown.value),
+    )
 

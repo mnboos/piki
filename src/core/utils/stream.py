@@ -79,6 +79,20 @@ latest_ai_lock = threading.Lock()
 _latest_mask: "Optional[np.ndarray]" = None
 _latest_mask_shape: "tuple[int, int]" = (1, 1)
 
+# Latest NV12 frame reference — cached so on_done() can run segmentation on the
+# current frame for splash-targeted objects.  Written by process_frame() and read
+# by on_done() (same streaming thread in practice, but a lock guards the reference).
+_latest_nv12: "Optional[np.ndarray]" = None
+_latest_nv12_shape: "tuple[int, int]" = (1, 1)
+_nv12_lock = threading.Lock()
+
+# Latest segmentation mask (binary, bbox resolution) and its bbox — cached so
+# the MJPEG stream can overlay it on the Camera tab when show_seg is enabled.
+_latest_seg_mask: "Optional[np.ndarray]" = None
+_latest_seg_bbox: "list[float]" = [0, 0, 1, 1]  # normalized [ymin, xmin, ymax, xmax]
+_latest_seg_mask_lock = threading.Lock()
+_seg_frame_skip = 0   # throttle counter for display-only segmentation
+
 # Event-triggered recording runtime state.
 _event_recorder: "EventClipRecorder | None" = None
 _event_recorder_lock = threading.Lock()
@@ -109,6 +123,19 @@ def _foreground_centroid(
         if xs.size > 0:
             return (float(xs.mean()) + x1) / fw, (float(ys.mean()) + y1) / fh
     return (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
+
+
+def _cache_seg_mask_for_display(bbox_normalized: list[float]) -> None:
+    """Store the latest segmentation mask so the MJPEG stream can overlay it."""
+    from .seg import get_last_seg_mask  # noqa: PLC0415
+
+    mask = get_last_seg_mask()
+    if mask is None:
+        return
+    with _latest_seg_mask_lock:
+        global _latest_seg_mask, _latest_seg_bbox
+        _latest_seg_mask = mask
+        _latest_seg_bbox = list(bbox_normalized)
 
 
 def init_worker():
@@ -680,10 +707,67 @@ def on_done(future: Future[InferenceOutput]):
             # Aim servo at chosen detection.
             if aim_enabled and target_classes:
                 from .engine import aim_at  # noqa: PLC0415
+
+                # Check if this target should use segmentation for precision aiming.
+                from .shared import (  # noqa: PLC0415
+                    splash_enabled as _se,
+                    splash_trigger_classes as _stc,
+                    splash_trigger_classes_lock as _stc_lock,
+                )
+                with _stc_lock:
+                    _splash_classes = {c.strip().lower() for c in _stc}
+                _use_seg_aim = _se.is_set() and chosen_label.strip().lower() in _splash_classes
+
+                # Also run segmentation for display overlay when show_seg is
+                # enabled, throttled to every 6th frame (~5 Hz at 30 fps).
+                global _seg_frame_skip
+                _show_seg = app_settings.debug_settings.show_seg
+                _do_seg = _use_seg_aim or (_show_seg and _seg_frame_skip % 6 == 0)
+                _seg_frame_skip += 1
+
                 _aim_center = None
-                if _latest_mask is not None:
+                if _do_seg and _latest_nv12 is not None:
+                    from .seg import segmentation_centroid  # noqa: PLC0415
+                    with _nv12_lock:
+                        _nv12_frame = _latest_nv12
+                        _nv12_shape = _latest_nv12_shape
+                    if _nv12_frame is not None:
+                        _aim_center = segmentation_centroid(chosen_bbox, _nv12_frame, _nv12_shape)
+                        if _aim_center is not None:
+                            # Cache mask for display overlay (always).
+                            _cache_seg_mask_for_display(chosen_bbox)
+                            if not _use_seg_aim:
+                                # Ran for display only — don't use for aiming.
+                                _aim_center = None
+                            else:
+                                logger.debug("Using segmentation centroid: (%.3f, %.3f)", *_aim_center)
+
+                if _aim_center is None and _latest_mask is not None:
                     _aim_center = _foreground_centroid(chosen_bbox, _latest_mask, _latest_mask_shape)
+
                 aim_at(bbox_normalized=chosen_bbox, aim_center=_aim_center)
+
+            # --- Splash logic: fire relay when a splash-class target is locked ---
+            from . import shared as _s  # noqa: PLC0415
+
+            if _s.splash_enabled.is_set() and time.time() > _s.splash_cooldown_until:
+                with _s.splash_trigger_classes_lock:
+                    splash_classes = {c.strip().lower() for c in _s.splash_trigger_classes}
+                if chosen_label.strip().lower() in splash_classes:
+                    if _s.splash_armed_at == 0.0:
+                        _s.splash_armed_at = time.time()
+                        logger.info("Splash armed for target=%s (delay=%.1fs)", chosen_label, _s.splash_delay.value)
+                    elif time.time() - _s.splash_armed_at >= _s.splash_delay.value:
+                        from .engine import activate_splash  # noqa: PLC0415
+                        _s.splash_cooldown_until = time.time() + _s.splash_cooldown.value
+                        _s.splash_armed_at = 0.0
+                        activate_splash(_s.splash_duration.value)
+                        logger.info("Splash fired for target=%s (duration=%.1fs, cooldown=%.1fs)",
+                                    chosen_label, _s.splash_duration.value, _s.splash_cooldown.value)
+                else:
+                    _s.splash_armed_at = 0.0
+            else:
+                _s.splash_armed_at = 0.0
 
         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
@@ -834,7 +918,7 @@ def _submit_yolo(*, nv12_frame: np.ndarray, frame_lores: np.ndarray, rois: list,
 
 def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     global latest_ai_detections
-    global _latest_mask, _latest_mask_shape
+    global _latest_mask, _latest_mask_shape, _latest_nv12, _latest_nv12_shape
 
     current_time = time.time_ns()
 
@@ -847,6 +931,11 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     has_movement, mask = motion_detector.is_moving(frame_lores)
     _latest_mask = mask
     _latest_mask_shape = mask.shape[:2] if mask is not None else (1, 1)
+
+    # Cache NV12 frame reference for segmentation in on_done().
+    with _nv12_lock:
+        _latest_nv12 = nv12_frame
+        _latest_nv12_shape = (frame_h, nv12_frame.shape[1])
 
     # --- Recording: manual and event-triggered ---
     frame_bgr = cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR)

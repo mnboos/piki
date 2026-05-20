@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, watchEffect, onMounted } from "vue";
 import { useMutation } from "@tanstack/vue-query";
-import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiOptions, type PikiOptionsPatch } from "@/api";
+import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiOptions, type PikiOptionsPatch, type SplashConfigSchema, type SplashConfigSchemaPatch } from "@/api";
 import { useTrackerStatusQuery, useEventClipsQuery, useYoloClassesQuery } from "@/queries/recordings";
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import RecordingsPanel from "@/components/RecordingsPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
+import SplashPanel from "@/components/SplashPanel.vue";
 import CameraFeed from "@/components/CameraFeed.vue";
 import Tab from "primevue/tab";
 import TabList from "primevue/tablist";
@@ -19,26 +20,38 @@ import { useToast } from "primevue/usetoast";
 const api = new DefaultApi();
 
 const options = ref<PikiOptions>({
-    showBoxes: true,
-    showMask: false,
-    showRois: false,
-    confThreshold: 0.4,
-    pixelcountThreshold: 500,
-    minArea: 500,
-    mog2History: 500,
-    mog2VarThreshold: 16,
-    denoiseKernelsize: 7,
-    maskTransparency: 0.5,
-    servoPidKp: 1.0,
-    servoPidKi: 0.0,
-    servoPidKd: 0.0,
-    servoDeadZone: 1.5,
+    show_boxes: true,
+    show_mask: false,
+    show_rois: false,
+    show_seg: false,
+    conf_threshold: 0.4,
+    pixelcount_threshold: 500,
+    min_area: 500,
+    mog2_history: 500,
+    mog2_var_threshold: 16,
+    denoise_kernelsize: 7,
+    mask_transparency: 0.5,
+    servo_pid_kp: 1.0,
+    servo_pid_ki: 0.0,
+    servo_pid_kd: 0.0,
+    servo_dead_zone: 1.5,
 });
 
 const aimConfig = ref<AimConfigSchema>({
-    targetClasses: [],
-    servoEnabled: false,
-    targetLockDuration: 3.0,
+    target_classes: [],
+    servo_enabled: false,
+    target_lock_duration: 3.0,
+    vertical_angle_offset: 0.0,
+    pan_invert: false,
+    tilt_invert: false,
+});
+
+const splashConfig = ref<SplashConfigSchema>({
+    enabled: false,
+    trigger_classes: [],
+    delay_seconds: 0.5,
+    duration_seconds: 1.0,
+    cooldown_seconds: 10.0,
 });
 
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
@@ -89,6 +102,10 @@ const { mutate: updateAimConfig } = useMutation({
     mutationFn: (payload: AimConfigSchemaPatch) => api.coreApiUpdateAimConfig({ aimConfigSchemaPatch: payload }),
 });
 
+const { mutate: updateSplashConfig } = useMutation({
+    mutationFn: (payload: SplashConfigSchemaPatch) => api.coreApiUpdateSplashConfig({ splashConfigSchemaPatch: payload }),
+});
+
 const { mutate: servoMove } = useMutation({
     mutationFn: (payload: { panAngle: number; tiltAngle: number }) =>
         api.coreApiServoMove({ servoMoveSchema: { panAngle: payload.panAngle, tiltAngle: payload.tiltAngle } }),
@@ -100,28 +117,46 @@ const { mutate: servoMove } = useMutation({
 onMounted(async () => {
     const current = await api.coreApiGetOptions();
     options.value = {
-        showBoxes: current.showBoxes,
-        showMask: current.showMask,
-        showRois: current.showRois,
-        confThreshold: current.confThreshold ?? 0.4,
-        pixelcountThreshold: current.pixelcountThreshold ?? 500,
-        minArea: current.minArea ?? 500,
-        mog2History: current.mog2History ?? 500,
-        mog2VarThreshold: current.mog2VarThreshold ?? 16,
-        denoiseKernelsize: current.denoiseKernelsize ?? 7,
-        maskTransparency: current.maskTransparency ?? 0.5,
+        show_boxes: current.show_boxes ?? true,
+        show_mask: current.show_mask ?? false,
+        show_rois: current.show_rois ?? false,
+        show_seg: current.show_seg ?? false,
+        conf_threshold: current.conf_threshold ?? 0.4,
+        pixelcount_threshold: current.pixelcount_threshold ?? 500,
+        min_area: current.min_area ?? 500,
+        mog2_history: current.mog2_history ?? 500,
+        mog2_var_threshold: current.mog2_var_threshold ?? 16,
+        denoise_kernelsize: current.denoise_kernelsize ?? 7,
+        mask_transparency: current.mask_transparency ?? 0.5,
+        servo_pid_kp: current.servo_pid_kp,
+        servo_pid_ki: current.servo_pid_ki,
+        servo_pid_kd: current.servo_pid_kd,
+        servo_dead_zone: current.servo_dead_zone,
     };
 
     const aim = await api.coreApiGetAimConfig();
     aimConfig.value = {
-        targetClasses: aim.targetClasses,
-        servoEnabled: aim.servoEnabled,
-        targetLockDuration: aim.targetLockDuration ?? 3.0,
+        target_classes: aim.target_classes ?? [],
+        servo_enabled: aim.servo_enabled ?? false,
+        target_lock_duration: aim.target_lock_duration ?? 3.0,
+        vertical_angle_offset: aim.vertical_angle_offset ?? 0.0,
+        pan_invert: aim.pan_invert ?? false,
+        tilt_invert: aim.tilt_invert ?? false,
+    };
+
+    const splash = await api.coreApiGetSplashConfig();
+    splashConfig.value = {
+        enabled: splash.enabled ?? false,
+        trigger_classes: splash.trigger_classes ?? [],
+        delay_seconds: splash.delay_seconds ?? 0.5,
+        duration_seconds: splash.duration_seconds ?? 1.0,
+        cooldown_seconds: splash.cooldown_seconds ?? 10.0,
     };
 });
 
 watch(options, opts => updateOptions(opts), { deep: true });
 watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
+watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
 </script>
 
 <template>
@@ -141,12 +176,14 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                         <CameraFeed :src="feedUrl" alt="camera feed" />
                         <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
                         <div class="overlay-toggles">
-                            <button :class="['ot-btn', { active: options.showBoxes }]"
-                                @click="options.showBoxes = !options.showBoxes">Boxes</button>
-                            <button :class="['ot-btn', { active: options.showMask }]"
-                                @click="options.showMask = !options.showMask">Mask</button>
-                            <button :class="['ot-btn', { active: options.showRois }]"
-                                @click="options.showRois = !options.showRois">ROIs</button>
+                            <button :class="['ot-btn', { active: options.show_boxes }]"
+                                @click="options.show_boxes = !options.show_boxes">Boxes</button>
+                            <button :class="['ot-btn', { active: options.show_mask }]"
+                                @click="options.show_mask = !options.show_mask">Mask</button>
+                            <button :class="['ot-btn', { active: options.show_rois }]"
+                                @click="options.show_rois = !options.show_rois">ROIs</button>
+                            <button :class="['ot-btn', { active: options.show_seg }]"
+                                @click="options.show_seg = !options.show_seg">Seg</button>
                         </div>
                     </div>
                 </TabPanel>
@@ -168,12 +205,14 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
                     <div class="feed-wrapper">
                         <CameraFeed :src="feedUrl" alt="camera feed" />
                         <div class="overlay-toggles">
-                            <button :class="['ot-btn', { active: options.showBoxes }]"
-                                @click="options.showBoxes = !options.showBoxes">Boxes</button>
-                            <button :class="['ot-btn', { active: options.showMask }]"
-                                @click="options.showMask = !options.showMask">Mask</button>
-                            <button :class="['ot-btn', { active: options.showRois }]"
-                                @click="options.showRois = !options.showRois">ROIs</button>
+                            <button :class="['ot-btn', { active: options.show_boxes }]"
+                                @click="options.show_boxes = !options.show_boxes">Boxes</button>
+                            <button :class="['ot-btn', { active: options.show_mask }]"
+                                @click="options.show_mask = !options.show_mask">Mask</button>
+                            <button :class="['ot-btn', { active: options.show_rois }]"
+                                @click="options.show_rois = !options.show_rois">ROIs</button>
+                            <button :class="['ot-btn', { active: options.show_seg }]"
+                                @click="options.show_seg = !options.show_seg">Seg</button>
                         </div>
                     </div>
                     <DetectionControls v-model="options" @reset-background="resetBackground()" />
@@ -181,6 +220,7 @@ watch(aimConfig, cfg => updateAimConfig(cfg), { deep: true });
 
                 <TabPanel value="servo">
                     <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses ?? []" />
+                    <SplashPanel v-model="splashConfig" :classes="allClasses ?? []" />
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
                 </TabPanel>
 

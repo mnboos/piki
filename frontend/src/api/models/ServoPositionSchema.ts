@@ -24,21 +24,21 @@ export interface ServoPositionSchema {
      * @type {number}
      * @memberof ServoPositionSchema
      */
-    panAngle: number;
+    pan_angle: number;
     /**
      * 
      * @type {number}
      * @memberof ServoPositionSchema
      */
-    tiltAngle: number;
+    tilt_angle: number;
 }
 
 /**
  * Check if a given object implements the ServoPositionSchema interface.
  */
 export function instanceOfServoPositionSchema(value: object): value is ServoPositionSchema {
-    if (!('panAngle' in value) || value['panAngle'] === undefined) return false;
-    if (!('tiltAngle' in value) || value['tiltAngle'] === undefined) return false;
+    if (!('pan_angle' in value) || value['pan_angle'] === undefined) return false;
+    if (!('tilt_angle' in value) || value['tilt_angle'] === undefined) return false;
     return true;
 }
 
@@ -52,8 +52,8 @@ export function ServoPositionSchemaFromJSONTyped(json: any, ignoreDiscriminator:
     }
     return {
         
-        'panAngle': json['pan_angle'],
-        'tiltAngle': json['tilt_angle'],
+        'pan_angle': json['pan_angle'],
+        'tilt_angle': json['tilt_angle'],
     };
 }
 
@@ -68,8 +68,8 @@ export function ServoPositionSchemaToJSONTyped(value?: ServoPositionSchema | nul
 
     return {
         
-        'pan_angle': value['panAngle'],
-        'tilt_angle': value['tiltAngle'],
+        'pan_angle': value['pan_angle'],
+        'tilt_angle': value['tilt_angle'],
     };
 }
 

@@ -1,5 +1,5 @@
 {
-    "openapi": "3.1.0",
+    "openapi": "3.0.3",
     "info": {
         "title": "NinjaAPI",
         "version": "1.0.0",
@@ -45,7 +45,7 @@
                         }
                     }
                 },
-                "description": "Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."
+                "description": "Raw/debug video feed \u2014 streams the ROS_DEBUG_TOPIC without any overlays."
             }
         },
         "/api/update_options": {
@@ -343,6 +343,31 @@
                 }
             }
         },
+        "/api/videos/{video_id}/download": {
+            "get": {
+                "operationId": "core_api_videos_download",
+                "summary": "Videos Download",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "video_id",
+                        "schema": {
+                            "title": "Video Id",
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/octet-stream": {}
+                        },
+                        "description": "Video file"
+                    }
+                }
+            }
+        },
         "/api/videos/{video_id}": {
             "delete": {
                 "operationId": "core_api_videos_delete",
@@ -526,6 +551,54 @@
                 },
                 "description": "Return recent event-triggered clips and clear the queue.\n\nThe frontend polls this endpoint; each clip is returned only once."
             }
+        },
+        "/api/splash_config": {
+            "get": {
+                "operationId": "core_api_get_splash_config",
+                "summary": "Get Splash Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SplashConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return current splash (relay/solenoid) configuration."
+            },
+            "patch": {
+                "operationId": "core_api_update_splash_config",
+                "summary": "Update Splash Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SplashConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Update splash configuration and persist to database.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SplashConfigSchemaPatch"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
         }
     },
     "components": {
@@ -545,6 +618,11 @@
                     "show_rois": {
                         "default": false,
                         "title": "Show Rois",
+                        "type": "boolean"
+                    },
+                    "show_seg": {
+                        "default": false,
+                        "title": "Show Seg",
                         "type": "boolean"
                     },
                     "conf_threshold": {
@@ -707,6 +785,17 @@
                         ],
                         "title": "Show Rois"
                     },
+                    "show_seg": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Show Seg"
+                    },
                     "conf_threshold": {
                         "anyOf": [
                             {
@@ -848,6 +937,21 @@
                     "target_lock_duration": {
                         "title": "Target Lock Duration",
                         "type": "number"
+                    },
+                    "vertical_angle_offset": {
+                        "default": 0.0,
+                        "title": "Vertical Angle Offset",
+                        "type": "number"
+                    },
+                    "pan_invert": {
+                        "default": false,
+                        "title": "Pan Invert",
+                        "type": "boolean"
+                    },
+                    "tilt_invert": {
+                        "default": false,
+                        "title": "Tilt Invert",
+                        "type": "boolean"
                     }
                 },
                 "required": [
@@ -895,6 +999,39 @@
                             }
                         ],
                         "title": "Target Lock Duration"
+                    },
+                    "vertical_angle_offset": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Vertical Angle Offset"
+                    },
+                    "pan_invert": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Pan Invert"
+                    },
+                    "tilt_invert": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tilt Invert"
                     }
                 },
                 "title": "AimConfigSchemaPatch",
@@ -1193,8 +1330,105 @@
                 ],
                 "title": "EventClipSchema",
                 "type": "object"
+            },
+            "SplashConfigSchema": {
+                "properties": {
+                    "enabled": {
+                        "default": false,
+                        "title": "Enabled",
+                        "type": "boolean"
+                    },
+                    "trigger_classes": {
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        },
+                        "title": "Trigger Classes",
+                        "type": "array"
+                    },
+                    "delay_seconds": {
+                        "default": 0.5,
+                        "title": "Delay Seconds",
+                        "type": "number"
+                    },
+                    "duration_seconds": {
+                        "default": 1.0,
+                        "title": "Duration Seconds",
+                        "type": "number"
+                    },
+                    "cooldown_seconds": {
+                        "default": 10.0,
+                        "title": "Cooldown Seconds",
+                        "type": "number"
+                    }
+                },
+                "title": "SplashConfigSchema",
+                "type": "object"
+            },
+            "SplashConfigSchemaPatch": {
+                "properties": {
+                    "enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Enabled"
+                    },
+                    "trigger_classes": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "type": "string"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Trigger Classes"
+                    },
+                    "delay_seconds": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Delay Seconds"
+                    },
+                    "duration_seconds": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Duration Seconds"
+                    },
+                    "cooldown_seconds": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Cooldown Seconds"
+                    }
+                },
+                "title": "SplashConfigSchemaPatch",
+                "type": "object"
             }
         }
-    },
-    "servers": []
+    }
 }

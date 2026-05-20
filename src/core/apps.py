@@ -71,6 +71,7 @@ class CoreConfig(AppConfig):
             app_settings.debug_settings.show_boxes = config.show_boxes
             app_settings.debug_settings.show_mask = config.show_mask
             app_settings.debug_settings.show_rois = config.show_rois
+            app_settings.debug_settings.show_seg = config.show_seg
             prob_threshold.value = config.conf_threshold
             settings.foreground_mask_options.pixelcount_threshold.value = config.pixelcount_threshold
             settings.foreground_mask_options.min_area.value = config.min_area
@@ -84,7 +85,7 @@ class CoreConfig(AppConfig):
             servo_dead_zone.value = config.servo_dead_zone
             print(
                 f"[DJANGO STARTUP] Loaded detection config: show_boxes={config.show_boxes}, "
-                f"show_mask={config.show_mask}, show_rois={config.show_rois}, "
+                f"show_mask={config.show_mask}, show_rois={config.show_rois}, show_seg={config.show_seg}, "
                 f"conf={config.conf_threshold}, mog2_history={config.mog2_history}",
                 flush=True,
             )
@@ -99,13 +100,20 @@ class CoreConfig(AppConfig):
             from .models import AimConfig  # noqa: PLC0415
             from .utils.shared import app_settings  # noqa: PLC0415
 
+            from ..utils.shared import vertical_angle_offset  # noqa: PLC0415
+
             config = AimConfig.load()
             app_settings.aim_settings.target_classes = config.target_classes
             app_settings.aim_settings.servo_enabled = config.servo_enabled
             app_settings.aim_settings.target_lock_duration = float(config.target_lock_duration)
+            vertical_angle_offset.value = float(config.vertical_angle_offset)
+            app_settings.aim_settings.pan_invert = bool(config.pan_invert)
+            app_settings.aim_settings.tilt_invert = bool(config.tilt_invert)
             print(
                 f"[DJANGO STARTUP] Loaded aim config: servo_enabled={config.servo_enabled}, "
-                f"classes={config.target_classes}, target_lock_duration={config.target_lock_duration}s",
+                f"classes={config.target_classes}, target_lock_duration={config.target_lock_duration}s, "
+                f"vertical_angle_offset={config.vertical_angle_offset}°, "
+                f"pan_invert={config.pan_invert}, tilt_invert={config.tilt_invert}",
                 flush=True,
             )
         except Exception:
@@ -146,6 +154,41 @@ class CoreConfig(AppConfig):
             print("[DJANGO STARTUP] Could not load EventRecordingConfig — using defaults.", flush=True)
             traceback.print_exc()
 
+    def _load_splash_config(self):
+        """Load persisted SplashConfig from DB into shared memory."""
+        try:
+            from .models import SplashConfig  # noqa: PLC0415
+            from .utils.shared import (  # noqa: PLC0415
+                splash_cooldown,
+                splash_delay,
+                splash_duration,
+                splash_enabled,
+                splash_trigger_classes,
+                splash_trigger_classes_lock,
+            )
+
+            config = SplashConfig.load()
+            if config.enabled:
+                splash_enabled.set()
+            else:
+                splash_enabled.clear()
+            splash_delay.value = float(config.delay_seconds)
+            splash_duration.value = float(config.duration_seconds)
+            splash_cooldown.value = float(config.cooldown_seconds)
+            with splash_trigger_classes_lock:
+                splash_trigger_classes.clear()
+                splash_trigger_classes.extend([c.lower() for c in config.trigger_classes])
+            print(
+                f"[DJANGO STARTUP] Loaded splash config: enabled={config.enabled}, "
+                f"delay={config.delay_seconds}s, duration={config.duration_seconds}s, "
+                f"cooldown={config.cooldown_seconds}s, classes={config.trigger_classes}",
+                flush=True,
+            )
+        except Exception:
+            import traceback  # noqa: PLC0415
+            print("[DJANGO STARTUP] Could not load SplashConfig — using defaults.", flush=True)
+            traceback.print_exc()
+
     def ready(self):
         # The `runserver` command runs this method twice. We use an environment
         # variable to ensure our setup code only runs in the main process.
@@ -160,6 +203,7 @@ class CoreConfig(AppConfig):
             self._load_detection_config()
             self._load_aim_config()
             self._load_event_recording_config()
+            self._load_splash_config()
 
             # monkey_patch_reloader()
 

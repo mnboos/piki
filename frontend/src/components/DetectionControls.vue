@@ -15,39 +15,39 @@ const model = defineModel<PikiOptions>({ required: true });
 const emit = defineEmits<{ resetBackground: [] }>();
 
 // Motion detection
-const mog2History = computed({
-    get: () => model.value.mog2History ?? 500,
-    set: (v: number) => { model.value.mog2History = v; },
+const mog2_history = computed({
+    get: () => model.value.mog2_history ?? 500,
+    set: (v: number) => { model.value.mog2_history = v; },
 });
-const mog2VarThreshold = computed({
-    get: () => model.value.mog2VarThreshold ?? 16,
-    set: (v: number) => { model.value.mog2VarThreshold = v; },
+const mog2_var_threshold = computed({
+    get: () => model.value.mog2_var_threshold ?? 16,
+    set: (v: number) => { model.value.mog2_var_threshold = v; },
 });
-const denoiseKernelsize = computed({
-    get: () => model.value.denoiseKernelsize ?? 7,
-    set: (v: number) => { model.value.denoiseKernelsize = v; },
+const denoise_kernelsize = computed({
+    get: () => model.value.denoise_kernelsize ?? 7,
+    set: (v: number) => { model.value.denoise_kernelsize = v; },
 });
-const pixelcountThreshold = computed({
-    get: () => model.value.pixelcountThreshold ?? 500,
-    set: (v: number) => { model.value.pixelcountThreshold = v; },
+const pixelcount_threshold = computed({
+    get: () => model.value.pixelcount_threshold ?? 500,
+    set: (v: number) => { model.value.pixelcount_threshold = v; },
 });
-const minArea = computed({
-    get: () => model.value.minArea ?? 500,
-    set: (v: number) => { model.value.minArea = v; },
+const min_area = computed({
+    get: () => model.value.min_area ?? 500,
+    set: (v: number) => { model.value.min_area = v; },
 });
 
 // Object detection
-const confThreshold = computed({
-    get: () => model.value.confThreshold ?? 0.4,
-    set: (v: number) => { model.value.confThreshold = v; },
+const conf_threshold = computed({
+    get: () => model.value.conf_threshold ?? 0.4,
+    set: (v: number) => { model.value.conf_threshold = v; },
 });
 
 // Servo smoothing — removed (PID controls moved to ServoAimPanel)
 
 // Display
-const maskTransparency = computed({
-    get: () => model.value.maskTransparency ?? 0.5,
-    set: (v: number) => { model.value.maskTransparency = v; },
+const mask_transparency = computed({
+    get: () => model.value.mask_transparency ?? 0.5,
+    set: (v: number) => { model.value.mask_transparency = v; },
 });
 
 const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), value: v }));
@@ -65,32 +65,32 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                 <TabPanel value="motion">
                     <div class="controls-grid">
                         <div class="control-item">
-                            <label class="control-label">MOG2 History: {{ mog2History }}</label>
-                            <Slider v-model="mog2History" :min="50" :max="2000" :step="50" class="slider" />
+                            <label class="control-label">MOG2 History: {{ mog2_history }}</label>
+                            <Slider v-model="mog2_history" :min="50" :max="2000" :step="50" class="slider" />
                             <p class="help-text">Frames used to build the background model. Higher values produce a more stable background but react more slowly to scene changes (e.g. lights turning on).</p>
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">MOG2 Variance Threshold: {{ mog2VarThreshold }}</label>
-                            <Slider v-model="mog2VarThreshold" :min="4" :max="128" :step="2" class="slider" />
+                            <label class="control-label">MOG2 Variance Threshold: {{ mog2_var_threshold }}</label>
+                            <Slider v-model="mog2_var_threshold" :min="4" :max="128" :step="2" class="slider" />
                             <p class="help-text">How different a pixel must be from the background model to be considered foreground. Lower = more sensitive to subtle motion; raise if static scenes produce false detections.</p>
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">Denoise Kernel: {{ denoiseKernelsize === 1 ? "off" : denoiseKernelsize }}</label>
-                            <Select v-model="denoiseKernelsize" :options="kernelOptions" option-label="name" option-value="value" class="kernel-select" />
+                            <label class="control-label">Denoise Kernel: {{ denoise_kernelsize === 1 ? "off" : denoise_kernelsize }}</label>
+                            <Select v-model="denoise_kernelsize" :options="kernelOptions" option-label="name" option-value="value" class="kernel-select" />
                             <p class="help-text">Gaussian blur kernel size applied before background subtraction. Larger values suppress sensor noise but may merge nearby objects. Set to 1 to disable blurring.</p>
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">Motion Pixel Threshold: {{ pixelcountThreshold }} px</label>
-                            <Slider v-model="pixelcountThreshold" :min="50" :max="2000" :step="50" class="slider" />
+                            <label class="control-label">Motion Pixel Threshold: {{ pixelcount_threshold }} px</label>
+                            <Slider v-model="pixelcount_threshold" :min="50" :max="2000" :step="50" class="slider" />
                             <p class="help-text">Minimum number of changed pixels required to trigger the object detector. Raise to ignore small or distant motion (e.g. swaying leaves, camera noise).</p>
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">Min Blob Area: {{ minArea }} px²</label>
-                            <Slider v-model="minArea" :min="50" :max="2000" :step="50" class="slider" />
+                            <label class="control-label">Min Blob Area: {{ min_area }} px²</label>
+                            <Slider v-model="min_area" :min="50" :max="2000" :step="50" class="slider" />
                             <p class="help-text">Minimum bounding-box area for a motion region to generate a detection ROI. Smaller blobs are discarded. Raise to ignore tiny movement fragments.</p>
                         </div>
 
@@ -104,8 +104,8 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                 <TabPanel value="object">
                     <div class="controls-grid">
                         <div class="control-item">
-                            <label class="control-label">Confidence Threshold: {{ confThreshold.toFixed(2) }}</label>
-                            <Slider v-model="confThreshold" :min="0.1" :max="0.95" :step="0.05" class="slider" />
+                            <label class="control-label">Confidence Threshold: {{ conf_threshold.toFixed(2) }}</label>
+                            <Slider v-model="conf_threshold" :min="0.1" :max="0.95" :step="0.05" class="slider" />
                             <p class="help-text">Minimum YOLO confidence score for a detection to be shown. Raise to display only high-confidence hits and reduce false positives.</p>
                         </div>
 
@@ -117,16 +117,16 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                         <div class="control-item">
                             <label class="control-label">Overlays</label>
                             <div class="toggle-group">
-                                <ToggleButton v-model="model.showBoxes" on-label="Boxes" off-label="Boxes" class="tb-btn" />
-                                <ToggleButton v-model="model.showMask" on-label="Mask" off-label="Mask" class="tb-btn" />
-                                <ToggleButton v-model="model.showRois" on-label="ROIs" off-label="ROIs" class="tb-btn" />
+                                <ToggleButton v-model="model.show_boxes" on-label="Boxes" off-label="Boxes" class="tb-btn" />
+                                <ToggleButton v-model="model.show_mask" on-label="Mask" off-label="Mask" class="tb-btn" />
+                                <ToggleButton v-model="model.show_rois" on-label="ROIs" off-label="ROIs" class="tb-btn" />
                             </div>
                             <p class="help-text">Toggle overlays independently. <strong>Boxes</strong>: YOLO detection boxes. <strong>Mask</strong>: motion foreground mask. <strong>ROIs</strong>: tile rectangles sent to the detector.</p>
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">Mask Transparency: {{ maskTransparency.toFixed(2) }}</label>
-                            <Slider v-model="maskTransparency" :min="0" :max="1" :step="0.05" class="slider" />
+                            <label class="control-label">Mask Transparency: {{ mask_transparency.toFixed(2) }}</label>
+                            <Slider v-model="mask_transparency" :min="0" :max="1" :step="0.05" class="slider" />
                             <p class="help-text">Opacity of the motion mask overlay used in <em>mask</em> and <em>rois</em> modes. 0 = fully transparent (overlay invisible), 1 = background fully replaced by the mask colour.</p>
                         </div>
                     </div>

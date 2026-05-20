@@ -24,38 +24,38 @@ export interface ReplayStatus {
      * @type {boolean}
      * @memberof ReplayStatus
      */
-    isReplaying: boolean;
+    is_replaying: boolean;
     /**
      * 
      * @type {string}
      * @memberof ReplayStatus
      */
-    videoFilename?: string;
+    video_filename?: string;
     /**
      * 
      * @type {number}
      * @memberof ReplayStatus
      */
-    currentFrame?: number;
+    current_frame?: number;
     /**
      * 
      * @type {number}
      * @memberof ReplayStatus
      */
-    totalFrames?: number;
+    total_frames?: number;
     /**
      * 
      * @type {number}
      * @memberof ReplayStatus
      */
-    videoFps?: number;
+    video_fps?: number;
 }
 
 /**
  * Check if a given object implements the ReplayStatus interface.
  */
 export function instanceOfReplayStatus(value: object): value is ReplayStatus {
-    if (!('isReplaying' in value) || value['isReplaying'] === undefined) return false;
+    if (!('is_replaying' in value) || value['is_replaying'] === undefined) return false;
     return true;
 }
 
@@ -69,11 +69,11 @@ export function ReplayStatusFromJSONTyped(json: any, ignoreDiscriminator: boolea
     }
     return {
         
-        'isReplaying': json['is_replaying'],
-        'videoFilename': json['video_filename'] == null ? undefined : json['video_filename'],
-        'currentFrame': json['current_frame'] == null ? undefined : json['current_frame'],
-        'totalFrames': json['total_frames'] == null ? undefined : json['total_frames'],
-        'videoFps': json['video_fps'] == null ? undefined : json['video_fps'],
+        'is_replaying': json['is_replaying'],
+        'video_filename': json['video_filename'] == null ? undefined : json['video_filename'],
+        'current_frame': json['current_frame'] == null ? undefined : json['current_frame'],
+        'total_frames': json['total_frames'] == null ? undefined : json['total_frames'],
+        'video_fps': json['video_fps'] == null ? undefined : json['video_fps'],
     };
 }
 
@@ -88,11 +88,11 @@ export function ReplayStatusToJSONTyped(value?: ReplayStatus | null, ignoreDiscr
 
     return {
         
-        'is_replaying': value['isReplaying'],
-        'video_filename': value['videoFilename'],
-        'current_frame': value['currentFrame'],
-        'total_frames': value['totalFrames'],
-        'video_fps': value['videoFps'],
+        'is_replaying': value['is_replaying'],
+        'video_filename': value['video_filename'],
+        'current_frame': value['current_frame'],
+        'total_frames': value['total_frames'],
+        'video_fps': value['video_fps'],
     };
 }
 
