@@ -1,5 +1,5 @@
 {
-    "openapi": "3.0.3",
+    "openapi": "3.1.0",
     "info": {
         "title": "NinjaAPI",
         "version": "1.0.0",
@@ -45,7 +45,7 @@
                         }
                     }
                 },
-                "description": "Raw/debug video feed \u2014 streams the ROS_DEBUG_TOPIC without any overlays."
+                "description": "Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."
             }
         },
         "/api/update_options": {
@@ -360,10 +360,74 @@
                 ],
                 "responses": {
                     "200": {
+                        "description": "Video file",
                         "content": {
-                            "application/octet-stream": {}
+                            "application/octet-stream": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/videos/{video_id}/log": {
+            "get": {
+                "operationId": "core_api_videos_log_download",
+                "summary": "Videos Log Download",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "video_id",
+                        "schema": {
+                            "title": "Video Id",
+                            "type": "integer"
                         },
-                        "description": "Video file"
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Technical-log JSONL sidecar",
+                        "content": {
+                            "application/x-ndjson": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/videos/{video_id}/log/summary": {
+            "get": {
+                "operationId": "core_api_videos_log_summary",
+                "summary": "Videos Log Summary",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "video_id",
+                        "schema": {
+                            "title": "Video Id",
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EventLogSummary"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -599,6 +663,115 @@
                     "required": true
                 }
             }
+        },
+        "/api/exclusion_zones": {
+            "get": {
+                "operationId": "core_api_list_exclusion_zones",
+                "summary": "List Exclusion Zones",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/ExclusionZoneSchema"
+                                    },
+                                    "title": "Response",
+                                    "type": "array"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "operationId": "core_api_create_exclusion_zone",
+                "summary": "Create Exclusion Zone",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ExclusionZoneSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ExclusionZoneSchema"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
+        },
+        "/api/exclusion_zones/{zone_id}": {
+            "patch": {
+                "operationId": "core_api_update_exclusion_zone",
+                "summary": "Update Exclusion Zone",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "zone_id",
+                        "schema": {
+                            "title": "Zone Id",
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ExclusionZoneSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ExclusionZoneSchemaPatch"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            },
+            "delete": {
+                "operationId": "core_api_delete_exclusion_zone",
+                "summary": "Delete Exclusion Zone",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "zone_id",
+                        "schema": {
+                            "title": "Zone Id",
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
         }
     },
     "components": {
@@ -635,6 +808,94 @@
                             }
                         ],
                         "title": "Conf Threshold"
+                    },
+                    "conf_threshold_keep": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Conf Threshold Keep"
+                    },
+                    "min_consecutive_frames": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Min Consecutive Frames"
+                    },
+                    "bbox_ema_alpha": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Bbox Ema Alpha"
+                    },
+                    "ghost_frames_ms": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Ghost Frames Ms"
+                    },
+                    "tracker_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Enabled"
+                    },
+                    "tracker_iou_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Iou Threshold"
+                    },
+                    "tracker_max_misses": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Max Misses"
+                    },
+                    "tracker_confirm_hits": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Confirm Hits"
                     },
                     "pixelcount_threshold": {
                         "anyOf": [
@@ -806,6 +1067,94 @@
                             }
                         ],
                         "title": "Conf Threshold"
+                    },
+                    "conf_threshold_keep": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Conf Threshold Keep"
+                    },
+                    "min_consecutive_frames": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Min Consecutive Frames"
+                    },
+                    "bbox_ema_alpha": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Bbox Ema Alpha"
+                    },
+                    "ghost_frames_ms": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Ghost Frames Ms"
+                    },
+                    "tracker_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Enabled"
+                    },
+                    "tracker_iou_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Iou Threshold"
+                    },
+                    "tracker_max_misses": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Max Misses"
+                    },
+                    "tracker_confirm_hits": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Confirm Hits"
                     },
                     "pixelcount_threshold": {
                         "anyOf": [
@@ -1154,6 +1503,16 @@
                     "created_at": {
                         "title": "Created At",
                         "type": "string"
+                    },
+                    "event_id": {
+                        "default": "",
+                        "title": "Event Id",
+                        "type": "string"
+                    },
+                    "has_log": {
+                        "default": false,
+                        "title": "Has Log",
+                        "type": "boolean"
                     }
                 },
                 "required": [
@@ -1165,6 +1524,113 @@
                     "created_at"
                 ],
                 "title": "VideoInfo",
+                "type": "object"
+            },
+            "EventLogSummary": {
+                "properties": {
+                    "event_id": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Event Id"
+                    },
+                    "started_at": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Started At"
+                    },
+                    "ended_at": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Ended At"
+                    },
+                    "duration_seconds": {
+                        "default": 0.0,
+                        "title": "Duration Seconds",
+                        "type": "number"
+                    },
+                    "frames_total": {
+                        "default": 0,
+                        "title": "Frames Total",
+                        "type": "integer"
+                    },
+                    "frames_prebuffer": {
+                        "default": 0,
+                        "title": "Frames Prebuffer",
+                        "type": "integer"
+                    },
+                    "frames_live": {
+                        "default": 0,
+                        "title": "Frames Live",
+                        "type": "integer"
+                    },
+                    "detections_total": {
+                        "default": 0,
+                        "title": "Detections Total",
+                        "type": "integer"
+                    },
+                    "labels": {
+                        "additionalProperties": true,
+                        "default": {},
+                        "title": "Labels",
+                        "type": "object"
+                    },
+                    "splashes": {
+                        "default": 0,
+                        "title": "Splashes",
+                        "type": "integer"
+                    },
+                    "trigger": {
+                        "anyOf": [
+                            {
+                                "additionalProperties": true,
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Trigger"
+                    },
+                    "config_snapshot": {
+                        "anyOf": [
+                            {
+                                "additionalProperties": true,
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Config Snapshot"
+                    },
+                    "unique_track_ids": {
+                        "default": [],
+                        "items": {
+                            "type": "integer"
+                        },
+                        "title": "Unique Track Ids",
+                        "type": "array"
+                    }
+                },
+                "title": "EventLogSummary",
                 "type": "object"
             },
             "ReplayStatus": {
@@ -1428,7 +1894,118 @@
                 },
                 "title": "SplashConfigSchemaPatch",
                 "type": "object"
+            },
+            "ExclusionZoneSchema": {
+                "properties": {
+                    "id": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Id"
+                    },
+                    "name": {
+                        "default": "zone",
+                        "title": "Name",
+                        "type": "string"
+                    },
+                    "enabled": {
+                        "default": true,
+                        "title": "Enabled",
+                        "type": "boolean"
+                    },
+                    "points": {
+                        "items": {
+                            "maxItems": 2,
+                            "minItems": 2,
+                            "prefixItems": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "number"
+                                }
+                            ],
+                            "type": "array"
+                        },
+                        "title": "Points",
+                        "type": "array"
+                    }
+                },
+                "required": [
+                    "points"
+                ],
+                "title": "ExclusionZoneSchema",
+                "type": "object"
+            },
+            "ExclusionZoneSchemaPatch": {
+                "properties": {
+                    "id": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Id"
+                    },
+                    "name": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Name"
+                    },
+                    "enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Enabled"
+                    },
+                    "points": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "maxItems": 2,
+                                    "minItems": 2,
+                                    "prefixItems": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "number"
+                                        }
+                                    ],
+                                    "type": "array"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Points"
+                    }
+                },
+                "title": "ExclusionZoneSchemaPatch",
+                "type": "object"
             }
         }
-    }
+    },
+    "servers": []
 }

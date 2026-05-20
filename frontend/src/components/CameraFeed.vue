@@ -35,6 +35,12 @@ watch(() => props.src, () => { status.value = "loading"; });
             @load="status = 'loaded'"
             @error="status = 'error'"
         />
+
+        <!-- Overlay slot: consumers can layer interactive SVG/canvas on top
+             of the MJPEG image.  Positioned absolutely to match the img. -->
+        <div class="cf-overlay">
+            <slot name="overlay" />
+        </div>
     </div>
 </template>
 
@@ -81,5 +87,12 @@ watch(() => props.src, () => { status.value = "loading"; });
 }
 .cf-img--hidden {
     visibility: hidden;
+}
+.cf-overlay {
+    position: absolute;
+    inset: 0;
+    /* Default: pass clicks through to the underlying feed.  Overlay components
+       opt-in to interactivity by setting pointer-events: auto on themselves. */
+    pointer-events: none;
 }
 </style>

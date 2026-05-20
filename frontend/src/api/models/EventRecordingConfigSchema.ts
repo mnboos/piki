@@ -30,25 +30,25 @@ export interface EventRecordingConfigSchema {
      * @type {number}
      * @memberof EventRecordingConfigSchema
      */
-    pre_buffer_seconds?: number;
+    preBufferSeconds?: number;
     /**
      * 
      * @type {number}
      * @memberof EventRecordingConfigSchema
      */
-    post_trigger_seconds?: number;
+    postTriggerSeconds?: number;
     /**
      * 
      * @type {Array<string>}
      * @memberof EventRecordingConfigSchema
      */
-    trigger_classes?: Array<string>;
+    triggerClasses?: Array<string>;
     /**
      * 
      * @type {number}
      * @memberof EventRecordingConfigSchema
      */
-    cooldown_seconds?: number;
+    cooldownSeconds?: number;
 }
 
 /**
@@ -69,10 +69,10 @@ export function EventRecordingConfigSchemaFromJSONTyped(json: any, ignoreDiscrim
     return {
         
         'enabled': json['enabled'] == null ? undefined : json['enabled'],
-        'pre_buffer_seconds': json['pre_buffer_seconds'] == null ? undefined : json['pre_buffer_seconds'],
-        'post_trigger_seconds': json['post_trigger_seconds'] == null ? undefined : json['post_trigger_seconds'],
-        'trigger_classes': json['trigger_classes'] == null ? undefined : json['trigger_classes'],
-        'cooldown_seconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
+        'preBufferSeconds': json['pre_buffer_seconds'] == null ? undefined : json['pre_buffer_seconds'],
+        'postTriggerSeconds': json['post_trigger_seconds'] == null ? undefined : json['post_trigger_seconds'],
+        'triggerClasses': json['trigger_classes'] == null ? undefined : json['trigger_classes'],
+        'cooldownSeconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
     };
 }
 
@@ -88,10 +88,10 @@ export function EventRecordingConfigSchemaToJSONTyped(value?: EventRecordingConf
     return {
         
         'enabled': value['enabled'],
-        'pre_buffer_seconds': value['pre_buffer_seconds'],
-        'post_trigger_seconds': value['post_trigger_seconds'],
-        'trigger_classes': value['trigger_classes'],
-        'cooldown_seconds': value['cooldown_seconds'],
+        'pre_buffer_seconds': value['preBufferSeconds'],
+        'post_trigger_seconds': value['postTriggerSeconds'],
+        'trigger_classes': value['triggerClasses'],
+        'cooldown_seconds': value['cooldownSeconds'],
     };
 }
 

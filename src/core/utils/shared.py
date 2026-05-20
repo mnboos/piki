@@ -157,7 +157,36 @@ class LatestFrame:
 
 latest_frame = LatestFrame()
 latest_debug_frame = LatestFrame()  # raw/distorted frame for the debug video feed
+
+# Detection confidence thresholds with hysteresis:
+#   prob_threshold      = "enter" threshold (default 0.40) — required to start
+#                          a lock, count toward the min-streak, or trigger an
+#                          event recording.
+#   prob_threshold_keep = "keep"  threshold (default 0.25) — a confirmed lock
+#                          survives while matched detections stay at or above
+#                          this value.  Also the floor used by the YOLO
+#                          post-processor so low-conf candidates reach
+#                          on_done() for hysteresis to evaluate.
 prob_threshold = mp.Value(c_float, 0.4)
+prob_threshold_keep = mp.Value(c_float, 0.25)
+
+# Per-label same-class consecutive-hit counter requirement (gating noise).
+min_consecutive_frames = mp.Value("i", 2)
+
+# Exponential-moving-average factor for smoothing the locked-target bbox.
+bbox_ema_alpha = mp.Value(c_float, 0.4)
+
+# Display-only persistence window after the last real detection (ms).
+ghost_frames_ms = mp.Value("i", 300)
+
+# --- SORT-style tracker (Phase B) ---
+# When enabled, on_done() routes detections through an IoU + Kalman tracker
+# whose confirmed tracks become the source of identity for the technical log
+# and the source of truth for downstream consumers (aim, recording trigger).
+tracker_enabled = mp.Value("i", 1)  # 1 = on, 0 = off (mp.Value has no bool type)
+tracker_iou_threshold = mp.Value(c_float, 0.3)
+tracker_max_misses = mp.Value("i", 10)
+tracker_confirm_hits = mp.Value("i", 3)
 
 
 class MotionDetector:

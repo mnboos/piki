@@ -4,8 +4,11 @@ index.ts
 models/AimConfigSchema.ts
 models/AimConfigSchemaPatch.ts
 models/EventClipSchema.ts
+models/EventLogSummary.ts
 models/EventRecordingConfigSchema.ts
 models/EventRecordingConfigSchemaPatch.ts
+models/ExclusionZoneSchema.ts
+models/ExclusionZoneSchemaPatch.ts
 models/PikiOptions.ts
 models/PikiOptionsPatch.ts
 models/RecordingStatus.ts

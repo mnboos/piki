@@ -24,50 +24,50 @@ export interface RecordingStatus {
      * @type {boolean}
      * @memberof RecordingStatus
      */
-    is_recording: boolean;
+    isRecording: boolean;
     /**
      * 
      * @type {number}
      * @memberof RecordingStatus
      */
-    elapsed_seconds?: number;
+    elapsedSeconds?: number;
     /**
      * 
      * @type {number}
      * @memberof RecordingStatus
      */
-    frame_count?: number;
+    frameCount?: number;
     /**
      * 
      * @type {string}
      * @memberof RecordingStatus
      */
-    file_path?: string;
+    filePath?: string;
     /**
      * 
      * @type {boolean}
      * @memberof RecordingStatus
      */
-    event_enabled?: boolean;
+    eventEnabled?: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof RecordingStatus
      */
-    event_active?: boolean;
+    eventActive?: boolean;
     /**
      * 
      * @type {number}
      * @memberof RecordingStatus
      */
-    event_cooldown_remaining?: number;
+    eventCooldownRemaining?: number;
 }
 
 /**
  * Check if a given object implements the RecordingStatus interface.
  */
 export function instanceOfRecordingStatus(value: object): value is RecordingStatus {
-    if (!('is_recording' in value) || value['is_recording'] === undefined) return false;
+    if (!('isRecording' in value) || value['isRecording'] === undefined) return false;
     return true;
 }
 
@@ -81,13 +81,13 @@ export function RecordingStatusFromJSONTyped(json: any, ignoreDiscriminator: boo
     }
     return {
         
-        'is_recording': json['is_recording'],
-        'elapsed_seconds': json['elapsed_seconds'] == null ? undefined : json['elapsed_seconds'],
-        'frame_count': json['frame_count'] == null ? undefined : json['frame_count'],
-        'file_path': json['file_path'] == null ? undefined : json['file_path'],
-        'event_enabled': json['event_enabled'] == null ? undefined : json['event_enabled'],
-        'event_active': json['event_active'] == null ? undefined : json['event_active'],
-        'event_cooldown_remaining': json['event_cooldown_remaining'] == null ? undefined : json['event_cooldown_remaining'],
+        'isRecording': json['is_recording'],
+        'elapsedSeconds': json['elapsed_seconds'] == null ? undefined : json['elapsed_seconds'],
+        'frameCount': json['frame_count'] == null ? undefined : json['frame_count'],
+        'filePath': json['file_path'] == null ? undefined : json['file_path'],
+        'eventEnabled': json['event_enabled'] == null ? undefined : json['event_enabled'],
+        'eventActive': json['event_active'] == null ? undefined : json['event_active'],
+        'eventCooldownRemaining': json['event_cooldown_remaining'] == null ? undefined : json['event_cooldown_remaining'],
     };
 }
 
@@ -102,13 +102,13 @@ export function RecordingStatusToJSONTyped(value?: RecordingStatus | null, ignor
 
     return {
         
-        'is_recording': value['is_recording'],
-        'elapsed_seconds': value['elapsed_seconds'],
-        'frame_count': value['frame_count'],
-        'file_path': value['file_path'],
-        'event_enabled': value['event_enabled'],
-        'event_active': value['event_active'],
-        'event_cooldown_remaining': value['event_cooldown_remaining'],
+        'is_recording': value['isRecording'],
+        'elapsed_seconds': value['elapsedSeconds'],
+        'frame_count': value['frameCount'],
+        'file_path': value['filePath'],
+        'event_enabled': value['eventEnabled'],
+        'event_active': value['eventActive'],
+        'event_cooldown_remaining': value['eventCooldownRemaining'],
     };
 }
 

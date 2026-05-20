@@ -26,6 +26,9 @@ class RelativePathFilter(logging.Filter):
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+LOG_DIR = BASE_DIR.parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -155,6 +158,15 @@ LOGGING = {
             "formatter": "verbose",
             "filters": ["add_relative_path"],
         },
+        "file": {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "filename": str(LOG_DIR / "piki.log"),
+            "when": "midnight",
+            "backupCount": 14,
+            "encoding": "utf-8",
+            "formatter": "verbose",
+            "filters": ["add_relative_path"],
+        },
     },
     "filters": {
         "add_relative_path": {
@@ -173,7 +185,7 @@ LOGGING = {
     },
     "loggers": {
         "core": {
-            "handlers": ["console"],
+            "handlers": ["console", "file"],
             "level": "DEBUG",
             "propagate": True,
         },

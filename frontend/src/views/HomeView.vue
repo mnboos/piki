@@ -9,6 +9,8 @@ import RecordingsPanel from "@/components/RecordingsPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
 import SplashPanel from "@/components/SplashPanel.vue";
 import CameraFeed from "@/components/CameraFeed.vue";
+import ExclusionZoneOverlay from "@/components/ExclusionZoneOverlay.vue";
+import ExclusionZonesPanel from "@/components/ExclusionZonesPanel.vue";
 import Tab from "primevue/tab";
 import TabList from "primevue/tablist";
 import TabPanel from "primevue/tabpanel";
@@ -20,42 +22,43 @@ import { useToast } from "primevue/usetoast";
 const api = new DefaultApi();
 
 const options = ref<PikiOptions>({
-    show_boxes: true,
-    show_mask: false,
-    show_rois: false,
-    show_seg: false,
-    conf_threshold: 0.4,
-    pixelcount_threshold: 500,
-    min_area: 500,
-    mog2_history: 500,
-    mog2_var_threshold: 16,
-    denoise_kernelsize: 7,
-    mask_transparency: 0.5,
-    servo_pid_kp: 1.0,
-    servo_pid_ki: 0.0,
-    servo_pid_kd: 0.0,
-    servo_dead_zone: 1.5,
+    showBoxes: true,
+    showMask: false,
+    showRois: false,
+    showSeg: false,
+    confThreshold: 0.4,
+    pixelcountThreshold: 500,
+    minArea: 500,
+    mog2History: 500,
+    mog2VarThreshold: 16,
+    denoiseKernelsize: 7,
+    maskTransparency: 0.5,
+    servoPidKp: 1.0,
+    servoPidKi: 0.0,
+    servoPidKd: 0.0,
+    servoDeadZone: 1.5,
 });
 
 const aimConfig = ref<AimConfigSchema>({
-    target_classes: [],
-    servo_enabled: false,
-    target_lock_duration: 3.0,
-    vertical_angle_offset: 0.0,
-    pan_invert: false,
-    tilt_invert: false,
+    targetClasses: [],
+    servoEnabled: false,
+    targetLockDuration: 3.0,
+    verticalAngleOffset: 0.0,
+    panInvert: false,
+    tiltInvert: false,
 });
 
 const splashConfig = ref<SplashConfigSchema>({
     enabled: false,
-    trigger_classes: [],
-    delay_seconds: 0.5,
-    duration_seconds: 1.0,
-    cooldown_seconds: 10.0,
+    triggerClasses: [],
+    delaySeconds: 0.5,
+    durationSeconds: 1.0,
+    cooldownSeconds: 10.0,
 });
 
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
 const toast = useToast();
+const editingZones = ref(false);
 const feedUrl = "/api/video_feed";
 const debugFeedUrl = "/api/video_feed_raw";
 const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
@@ -117,40 +120,40 @@ const { mutate: servoMove } = useMutation({
 onMounted(async () => {
     const current = await api.coreApiGetOptions();
     options.value = {
-        show_boxes: current.show_boxes ?? true,
-        show_mask: current.show_mask ?? false,
-        show_rois: current.show_rois ?? false,
-        show_seg: current.show_seg ?? false,
-        conf_threshold: current.conf_threshold ?? 0.4,
-        pixelcount_threshold: current.pixelcount_threshold ?? 500,
-        min_area: current.min_area ?? 500,
-        mog2_history: current.mog2_history ?? 500,
-        mog2_var_threshold: current.mog2_var_threshold ?? 16,
-        denoise_kernelsize: current.denoise_kernelsize ?? 7,
-        mask_transparency: current.mask_transparency ?? 0.5,
-        servo_pid_kp: current.servo_pid_kp,
-        servo_pid_ki: current.servo_pid_ki,
-        servo_pid_kd: current.servo_pid_kd,
-        servo_dead_zone: current.servo_dead_zone,
+        showBoxes: current.showBoxes ?? true,
+        showMask: current.showMask ?? false,
+        showRois: current.showRois ?? false,
+        showSeg: current.showSeg ?? false,
+        confThreshold: current.confThreshold ?? 0.4,
+        pixelcountThreshold: current.pixelcountThreshold ?? 500,
+        minArea: current.minArea ?? 500,
+        mog2History: current.mog2History ?? 500,
+        mog2VarThreshold: current.mog2VarThreshold ?? 16,
+        denoiseKernelsize: current.denoiseKernelsize ?? 7,
+        maskTransparency: current.maskTransparency ?? 0.5,
+        servoPidKp: current.servoPidKp,
+        servoPidKi: current.servoPidKi,
+        servoPidKd: current.servoPidKd,
+        servoDeadZone: current.servoDeadZone,
     };
 
     const aim = await api.coreApiGetAimConfig();
     aimConfig.value = {
-        target_classes: aim.target_classes ?? [],
-        servo_enabled: aim.servo_enabled ?? false,
-        target_lock_duration: aim.target_lock_duration ?? 3.0,
-        vertical_angle_offset: aim.vertical_angle_offset ?? 0.0,
-        pan_invert: aim.pan_invert ?? false,
-        tilt_invert: aim.tilt_invert ?? false,
+        targetClasses: aim.targetClasses ?? [],
+        servoEnabled: aim.servoEnabled ?? false,
+        targetLockDuration: aim.targetLockDuration ?? 3.0,
+        verticalAngleOffset: aim.verticalAngleOffset ?? 0.0,
+        panInvert: aim.panInvert ?? false,
+        tiltInvert: aim.tiltInvert ?? false,
     };
 
     const splash = await api.coreApiGetSplashConfig();
     splashConfig.value = {
         enabled: splash.enabled ?? false,
-        trigger_classes: splash.trigger_classes ?? [],
-        delay_seconds: splash.delay_seconds ?? 0.5,
-        duration_seconds: splash.duration_seconds ?? 1.0,
-        cooldown_seconds: splash.cooldown_seconds ?? 10.0,
+        triggerClasses: splash.triggerClasses ?? [],
+        delaySeconds: splash.delaySeconds ?? 0.5,
+        durationSeconds: splash.durationSeconds ?? 1.0,
+        cooldownSeconds: splash.cooldownSeconds ?? 10.0,
     };
 });
 
@@ -176,14 +179,14 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                         <CameraFeed :src="feedUrl" alt="camera feed" />
                         <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
                         <div class="overlay-toggles">
-                            <button :class="['ot-btn', { active: options.show_boxes }]"
-                                @click="options.show_boxes = !options.show_boxes">Boxes</button>
-                            <button :class="['ot-btn', { active: options.show_mask }]"
-                                @click="options.show_mask = !options.show_mask">Mask</button>
-                            <button :class="['ot-btn', { active: options.show_rois }]"
-                                @click="options.show_rois = !options.show_rois">ROIs</button>
-                            <button :class="['ot-btn', { active: options.show_seg }]"
-                                @click="options.show_seg = !options.show_seg">Seg</button>
+                            <button :class="['ot-btn', { active: options.showBoxes }]"
+                                @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: options.showMask }]"
+                                @click="options.showMask = !options.showMask">Mask</button>
+                            <button :class="['ot-btn', { active: options.showRois }]"
+                                @click="options.showRois = !options.showRois">ROIs</button>
+                            <button :class="['ot-btn', { active: options.showSeg }]"
+                                @click="options.showSeg = !options.showSeg">Seg</button>
                         </div>
                     </div>
                 </TabPanel>
@@ -203,18 +206,25 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
 
                 <TabPanel value="detection">
                     <div class="feed-wrapper">
-                        <CameraFeed :src="feedUrl" alt="camera feed" />
+                        <CameraFeed :src="feedUrl" alt="camera feed">
+                            <template #overlay>
+                                <ExclusionZoneOverlay :enabled="editingZones" />
+                            </template>
+                        </CameraFeed>
                         <div class="overlay-toggles">
-                            <button :class="['ot-btn', { active: options.show_boxes }]"
-                                @click="options.show_boxes = !options.show_boxes">Boxes</button>
-                            <button :class="['ot-btn', { active: options.show_mask }]"
-                                @click="options.show_mask = !options.show_mask">Mask</button>
-                            <button :class="['ot-btn', { active: options.show_rois }]"
-                                @click="options.show_rois = !options.show_rois">ROIs</button>
-                            <button :class="['ot-btn', { active: options.show_seg }]"
-                                @click="options.show_seg = !options.show_seg">Seg</button>
+                            <button :class="['ot-btn', { active: options.showBoxes }]"
+                                @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: options.showMask }]"
+                                @click="options.showMask = !options.showMask">Mask</button>
+                            <button :class="['ot-btn', { active: options.showRois }]"
+                                @click="options.showRois = !options.showRois">ROIs</button>
+                            <button :class="['ot-btn', { active: options.showSeg }]"
+                                @click="options.showSeg = !options.showSeg">Seg</button>
+                            <button :class="['ot-btn', { active: editingZones }]"
+                                @click="editingZones = !editingZones">Zones</button>
                         </div>
                     </div>
+                    <ExclusionZonesPanel v-model="editingZones" />
                     <DetectionControls v-model="options" @reset-background="resetBackground()" />
                 </TabPanel>
 

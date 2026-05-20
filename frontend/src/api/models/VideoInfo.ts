@@ -42,7 +42,7 @@ export interface VideoInfo {
      * @type {number}
      * @memberof VideoInfo
      */
-    size_bytes: number;
+    sizeBytes: number;
     /**
      * 
      * @type {string}
@@ -54,7 +54,19 @@ export interface VideoInfo {
      * @type {string}
      * @memberof VideoInfo
      */
-    created_at: string;
+    createdAt: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof VideoInfo
+     */
+    eventId?: string;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof VideoInfo
+     */
+    hasLog?: boolean;
 }
 
 /**
@@ -64,9 +76,9 @@ export function instanceOfVideoInfo(value: object): value is VideoInfo {
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('filename' in value) || value['filename'] === undefined) return false;
     if (!('url' in value) || value['url'] === undefined) return false;
-    if (!('size_bytes' in value) || value['size_bytes'] === undefined) return false;
+    if (!('sizeBytes' in value) || value['sizeBytes'] === undefined) return false;
     if (!('source' in value) || value['source'] === undefined) return false;
-    if (!('created_at' in value) || value['created_at'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
     return true;
 }
 
@@ -83,9 +95,11 @@ export function VideoInfoFromJSONTyped(json: any, ignoreDiscriminator: boolean):
         'id': json['id'],
         'filename': json['filename'],
         'url': json['url'],
-        'size_bytes': json['size_bytes'],
+        'sizeBytes': json['size_bytes'],
         'source': json['source'],
-        'created_at': json['created_at'],
+        'createdAt': json['created_at'],
+        'eventId': json['event_id'] == null ? undefined : json['event_id'],
+        'hasLog': json['has_log'] == null ? undefined : json['has_log'],
     };
 }
 
@@ -103,9 +117,11 @@ export function VideoInfoToJSONTyped(value?: VideoInfo | null, ignoreDiscriminat
         'id': value['id'],
         'filename': value['filename'],
         'url': value['url'],
-        'size_bytes': value['size_bytes'],
+        'size_bytes': value['sizeBytes'],
         'source': value['source'],
-        'created_at': value['created_at'],
+        'created_at': value['createdAt'],
+        'event_id': value['eventId'],
+        'has_log': value['hasLog'],
     };
 }
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from hobot_dnn import pyeasy_dnn as dnn
 
-from .shared import prob_threshold, worker_ready
+from .shared import prob_threshold, prob_threshold_keep, worker_ready
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +413,9 @@ try:
         if _profile:
             logger.info("PERF stage=bpu_forward ms=%.2f", (time.perf_counter() - t_fwd) * 1000)
 
-        conf = prob_threshold.value
+        # Use the lower "keep" threshold so the post-processor emits candidate
+        # boxes that on_done()'s hysteresis can still promote / maintain.
+        conf = min(prob_threshold.value, prob_threshold_keep.value)
         t_dec = time.perf_counter()
         if _USE_YOLOv8_DECODER:
             results = yolov8_post_process(outputs=outputs, conf_thres=conf)

@@ -31,6 +31,7 @@ from .shared import (
     InferenceOutput,
     ai_input_size,
     app_settings,
+    bbox_ema_alpha,
     cv2,
     event_clip_queue,
     event_clip_queue_lock,
@@ -43,16 +44,24 @@ from .shared import (
     event_trigger_classes,
     event_trigger_classes_lock,
     fps_counter,
+    ghost_frames_ms,
     is_object_detection_disabled,
     latest_debug_frame,
     latest_frame,
     mask_transparency,
+    min_consecutive_frames,
     motion_detector,
     preview_downscale_factor,
     prob_threshold,
+    prob_threshold_keep,
     recording_active,
     replaying_active,
+    settings,
     streaming_active,
+    tracker_confirm_hits,
+    tracker_enabled,
+    tracker_iou_threshold,
+    tracker_max_misses,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +72,20 @@ logger = logging.getLogger(__name__)
 _locked_target_bbox: list[float] | None = None   # normalized [ymin, xmin, ymax, xmax]
 _locked_target_label: str | None = None
 _locked_target_lost_since: float | None = None   # time.time() when target was last seen
+
+# --- Phase A stability state (hysteresis, min-streak, ghost frames) ---
+# Per-label consecutive-hit counter — incremented when a detection of that label
+# arrives at conf ≥ enter, decremented (clamped to 0) on misses.  A label is
+# considered "confirmed" once the counter reaches min_consecutive_frames.
+_label_streak: dict[str, int] = {}
+
+# Monotonic ns timestamp of the last inference completion that yielded at least
+# one detection.  Used to decide whether to keep showing the previous detection
+# set as "ghost frames" while the model is briefly returning nothing.
+_last_seen_monotonic_ns: int = 0
+# Snapshot of the most recent non-empty denormalized detection list, replayed on
+# the MJPEG stream during the ghost-frame window.
+_last_seen_denormalized: "list[Detection]" = []
 
 double_buffer: DoubleBuffer | None = None
 worker_semaphore = Semaphore(NUM_AI_WORKERS)
@@ -97,6 +120,24 @@ _seg_frame_skip = 0   # throttle counter for display-only segmentation
 _event_recorder: "EventClipRecorder | None" = None
 _event_recorder_lock = threading.Lock()
 _event_clip_until: float = 0.0
+
+# Per-event technical log state.  Lifecycle is bound to _event_recorder:
+# created in _start_event_recording, closed in _finalize_event_recording.
+_event_logger: "EventLogger | None" = None
+_event_frame_idx: int = 0
+_event_started_monotonic: float = 0.0
+_event_video_path: str = ""
+
+# Cache of the most recent inference's normalized detections (including ones
+# the exclusion filter dropped, with `inside_exclusion: True`).  Used by
+# process_frame() to populate per-frame log entries without blocking on the
+# inference thread.
+_latest_inference_log_entries: list[dict] = []
+_latest_inference_lock = threading.Lock()
+
+# Module-level tracker instance, lazily constructed on first inference so
+# the module can be imported in contexts that don't need it.
+_tracker: "Optional[object]" = None
 
 
 def _foreground_centroid(
@@ -633,76 +674,236 @@ def on_done(future: Future[InferenceOutput]):
 
         max_output_timestamp = timestamp
 
+        # Exclusion-zone filter (defense in depth — mask suppression in
+        # process_frame() already prevents YOLO from running on excluded
+        # pixels, but a detection whose centroid lands inside a zone is
+        # dropped here so it cannot reach aim / display / recording).
+        # We also build the per-frame technical-log cache here so the log
+        # surfaces *why* a detection was suppressed.
+        from . import exclusion as _exclusion  # noqa: PLC0415
+
+        zones_active = _exclusion.has_zones()
+        log_entries: list[dict] = []
+        kept: list = []
+        n_dropped_by_zone = 0
+        for label, confidence, bbox_normalized in detections:
+            inside = (
+                _exclusion.bbox_centroid_inside_any(bbox_normalized)
+                if zones_active else False
+            )
+            log_entries.append({
+                "label": label,
+                "confidence": float(confidence),
+                "bbox_norm": [float(v) for v in bbox_normalized],
+                "inside_exclusion": bool(inside),
+                # Filled in below when the tracker is enabled.
+                "track_id": None,
+                "track_age_frames": None,
+            })
+            if not inside:
+                kept.append((label, confidence, bbox_normalized))
+            else:
+                n_dropped_by_zone += 1
+        detections = kept
+        if n_dropped_by_zone:
+            logger.info(
+                "Exclusion filter dropped %d/%d detection(s) inside zones.",
+                n_dropped_by_zone, n_dropped_by_zone + len(kept),
+            )
+
+        # --- SORT-style tracker (Phase B) ---
+        # When enabled, replace the raw detection list with the tracker's
+        # confirmed tracks.  Track ids / ages are stamped onto the matching
+        # log entries so the per-event JSONL can reconstruct identities.
+        global _tracker
+        tracker_on = bool(tracker_enabled.value)
+        if tracker_on:
+            from . import tracking as _tracking  # noqa: PLC0415
+
+            if _tracker is None:
+                _tracker = _tracking.IouTracker(
+                    iou_threshold=float(tracker_iou_threshold.value),
+                    max_misses=int(tracker_max_misses.value),
+                    confirm_hits=int(tracker_confirm_hits.value),
+                )
+            else:
+                _tracker.iou_threshold = float(tracker_iou_threshold.value)
+                _tracker.max_misses = int(tracker_max_misses.value)
+                _tracker.confirm_hits = int(tracker_confirm_hits.value)
+
+            tracks = _tracker.update(detections)
+
+            # Hide tracks whose predicted bbox center is inside an exclusion
+            # zone from downstream consumers (display, aim, recording, log
+            # annotation).  The track stays alive in the tracker so it can be
+            # re-acquired with the same id when the target leaves the zone —
+            # we just suppress its output while it's still predicting inside
+            # the carve-out.
+            #
+            # Strict mode (zones active): we also drop tracks that didn't
+            # match a real detection this frame (`misses > 0`).  Kalman state
+            # carries the pre-zone velocity and can extrapolate the predicted
+            # bbox *past* the zone boundary, which would defeat the centroid
+            # check on its own and let the servo keep tracking through the
+            # zone.  This trades the tracker's single-frame-gap fill for
+            # honest zone enforcement — the user explicitly chose that
+            # priority by drawing a zone.
+            if zones_active:
+                visible_tracks = [
+                    t for t in tracks
+                    if t.misses == 0
+                    and not _exclusion.bbox_centroid_inside_any(t.bbox_norm)
+                ]
+            else:
+                visible_tracks = tracks
+
+            # Annotate log entries with their matching track (best IoU, same
+            # label).  Unmatched detections (e.g. very low IoU vs all tracks)
+            # keep track_id=None.
+            for ent in log_entries:
+                if ent["inside_exclusion"]:
+                    continue
+                best_iou = 0.3
+                best_t = None
+                lbl_lc = ent["label"].strip().lower()
+                for t in visible_tracks:
+                    if t.label.strip().lower() != lbl_lc:
+                        continue
+                    iou_v = _tracking._iou(ent["bbox_norm"], t.bbox_norm)
+                    if iou_v > best_iou:
+                        best_iou = iou_v
+                        best_t = t
+                if best_t is not None:
+                    ent["track_id"] = int(best_t.id)
+                    ent["track_age_frames"] = int(best_t.age_frames)
+
+            # Replace `detections` with the confirmed tracks for downstream.
+            # The tracker fills brief detection gaps by predicting through
+            # `bbox_norm`, so a confirmed track without a match this frame
+            # still contributes — fixing the single-frame-miss jitter.
+            detections = [
+                (t.label, float(t.last_confidence), list(t.bbox_norm))
+                for t in visible_tracks if t.confirmed
+            ]
+
+        with _latest_inference_lock:
+            global _latest_inference_log_entries
+            _latest_inference_log_entries = log_entries
+
         aim_enabled = app_settings.aim_settings.servo_enabled
         target_classes = {c.strip().lower() for c in (app_settings.aim_settings.target_classes or [])}
         target_lock_duration = float(app_settings.aim_settings.target_lock_duration)
 
-        # --- Servo aiming + tracker init/re-init from YOLO result ---
-        # Always process regardless of streaming state so servo and tracker work
-        # even when no browser is watching.
-        #
-        # Target-lock: instead of blindly picking the first matching detection each
-        # frame (which causes the servo to jump when detection order changes), we
-        # maintain a locked target bbox.  We look for the matching detection with the
-        # highest IoU vs. the lock.  If found, we update the lock and aim.  If not
-        # found for longer than `target_lock_duration` seconds, we allow a switch.
+        # --- Phase A stability knobs (read once per call) ---
+        conf_enter = float(prob_threshold.value)
+        conf_keep = float(prob_threshold_keep.value)
+        if conf_keep > conf_enter:
+            conf_keep = conf_enter
+        min_streak_required = max(1, int(min_consecutive_frames.value))
+        ema_alpha = max(0.0, min(1.0, float(bbox_ema_alpha.value)))
 
-        # Collect all matching detections for this frame.
+        # Update per-label streak counters: ENTER-confidence detections increment,
+        # everything else decays toward zero so transient false positives don't
+        # accumulate the right to trigger.
+        firing_labels: set[str] = {
+            label.strip().lower()
+            for label, confidence, _bbox in detections
+            if confidence >= conf_enter
+        }
+        # Decay/increment existing labels in place; insert newcomers.
+        for lbl in list(_label_streak.keys()):
+            if lbl in firing_labels:
+                _label_streak[lbl] = min(_label_streak[lbl] + 1, min_streak_required + 5)
+            else:
+                new_val = _label_streak[lbl] - 1
+                if new_val <= 0:
+                    del _label_streak[lbl]
+                else:
+                    _label_streak[lbl] = new_val
+        for lbl in firing_labels:
+            _label_streak.setdefault(lbl, 1)
+
+        def _confirmed(label: str) -> bool:
+            return _label_streak.get(label.strip().lower(), 0) >= min_streak_required
+
+        # --- Servo aiming with hysteresis-aware target lock ---
+        # An existing lock is kept alive by any matched detection at conf ≥ KEEP.
+        # Establishing a new lock requires conf ≥ ENTER and a confirmed streak.
+
+        # If the lock has wandered into (or been covered by) an exclusion
+        # zone, release it now — don't wait `target_lock_duration` seconds
+        # for the natural lost-timer to expire.  Otherwise the EMA keeps
+        # blending the pre-zone bbox into the lock and downstream consumers
+        # (and the servo via aim_at) keep firing at the smoothed position.
+        if (_locked_target_bbox is not None
+                and zones_active
+                and _exclusion.bbox_centroid_inside_any(_locked_target_bbox)):
+            logger.info("Locked target entered exclusion zone — releasing lock and homing servo.")
+            _locked_target_bbox = None
+            _locked_target_label = None
+            _locked_target_lost_since = None
+            if aim_enabled and target_classes:
+                _go_home_servo()
+
         matching: list[tuple[str, float, list[float]]] = [
             (label, confidence, bbox_normalized)
             for label, confidence, bbox_normalized in detections
             if not target_classes or label.strip().lower() in target_classes
         ]
 
-        # Resolve which detection to use this frame.
         chosen: tuple[str, float, list[float]] | None = None
 
-        if matching:
-            if _locked_target_bbox is None:
-                # No lock yet — take the first match and lock onto it.
-                chosen = matching[0]
+        if _locked_target_bbox is not None:
+            # Try to maintain the existing lock with a matched detection ≥ KEEP.
+            best_iou = 0.0
+            best: tuple[str, float, list[float]] | None = None
+            for det in matching:
+                if det[1] < conf_keep:
+                    continue
+                iou = _compute_iou(_locked_target_bbox, det[2])
+                if iou > best_iou:
+                    best_iou = iou
+                    best = det
+            if best is not None and best_iou >= 0.3:
+                chosen = best
+                _locked_target_lost_since = None
             else:
-                # Find the matching detection with highest IoU vs. current lock.
-                best_iou = 0.0
-                best = None
-                for det in matching:
-                    iou = _compute_iou(_locked_target_bbox, det[2])
-                    if iou > best_iou:
-                        best_iou = iou
-                        best = det
-                if best_iou >= 0.3:
-                    # Good match — update lock position, clear lost timer.
-                    chosen = best
-                    _locked_target_lost_since = None
-                else:
-                    # Current lock not found among detections.
-                    if _locked_target_lost_since is None:
-                        _locked_target_lost_since = time.time()
-                    elapsed = time.time() - _locked_target_lost_since
-                    if elapsed >= target_lock_duration:
-                        # Lock expired — switch to the new first matching detection.
-                        logger.info(
-                            "Target lock expired after %.1fs, switching to new target.", elapsed
-                        )
-                        chosen = matching[0]
-                        _locked_target_lost_since = None
-                    # else: hold lock position; skip servo update this cycle.
-        else:
-            # No matching detections at all.
-            if _locked_target_bbox is not None:
+                # Lock not maintained this frame — start / continue the lost timer.
                 if _locked_target_lost_since is None:
                     _locked_target_lost_since = time.time()
                 elapsed = time.time() - _locked_target_lost_since
                 if elapsed >= target_lock_duration:
-                    logger.info("Target lock expired after %.1fs (no detections), clearing lock.", elapsed)
+                    logger.info("Target lock expired after %.1fs.", elapsed)
                     _locked_target_bbox = None
                     _locked_target_label = None
                     _locked_target_lost_since = None
+                    if aim_enabled and target_classes:
+                        _go_home_servo()
+
+        if chosen is None and _locked_target_bbox is None:
+            # No active lock — establish one if a candidate clears ENTER + streak.
+            for det in matching:
+                label, conf, _bbox = det
+                if conf >= conf_enter and _confirmed(label):
+                    chosen = det
+                    break
 
         if chosen is not None:
             chosen_label, chosen_confidence, chosen_bbox = chosen
-            _locked_target_bbox = list(chosen_bbox)
+            new_bbox = list(chosen_bbox)
+            if _locked_target_bbox is None or ema_alpha >= 0.999:
+                _locked_target_bbox = new_bbox
+            else:
+                # EMA on the four normalized corners — smooths display + servo.
+                _locked_target_bbox = [
+                    (1.0 - ema_alpha) * old + ema_alpha * meas
+                    for old, meas in zip(_locked_target_bbox, new_bbox)
+                ]
             _locked_target_label = chosen_label
+
+            # Use the smoothed locked bbox (not the raw measurement) for aim and
+            # segmentation so jitter is reduced consistently across consumers.
+            smoothed_bbox = list(_locked_target_bbox)
 
             # Aim servo at chosen detection.
             if aim_enabled and target_classes:
@@ -732,10 +933,10 @@ def on_done(future: Future[InferenceOutput]):
                         _nv12_frame = _latest_nv12
                         _nv12_shape = _latest_nv12_shape
                     if _nv12_frame is not None:
-                        _aim_center = segmentation_centroid(chosen_bbox, _nv12_frame, _nv12_shape)
+                        _aim_center = segmentation_centroid(smoothed_bbox, _nv12_frame, _nv12_shape)
                         if _aim_center is not None:
                             # Cache mask for display overlay (always).
-                            _cache_seg_mask_for_display(chosen_bbox)
+                            _cache_seg_mask_for_display(smoothed_bbox)
                             if not _use_seg_aim:
                                 # Ran for display only — don't use for aiming.
                                 _aim_center = None
@@ -743,9 +944,9 @@ def on_done(future: Future[InferenceOutput]):
                                 logger.debug("Using segmentation centroid: (%.3f, %.3f)", *_aim_center)
 
                 if _aim_center is None and _latest_mask is not None:
-                    _aim_center = _foreground_centroid(chosen_bbox, _latest_mask, _latest_mask_shape)
+                    _aim_center = _foreground_centroid(smoothed_bbox, _latest_mask, _latest_mask_shape)
 
-                aim_at(bbox_normalized=chosen_bbox, aim_center=_aim_center)
+                aim_at(bbox_normalized=smoothed_bbox, aim_center=_aim_center)
 
             # --- Splash logic: fire relay when a splash-class target is locked ---
             from . import shared as _s  # noqa: PLC0415
@@ -764,6 +965,12 @@ def on_done(future: Future[InferenceOutput]):
                         activate_splash(_s.splash_duration.value)
                         logger.info("Splash fired for target=%s (duration=%.1fs, cooldown=%.1fs)",
                                     chosen_label, _s.splash_duration.value, _s.splash_cooldown.value)
+                        if _event_logger is not None:
+                            _event_logger.write({
+                                "event": "splash_fired",
+                                "label": chosen_label,
+                                "duration_seconds": float(_s.splash_duration.value),
+                            })
                 else:
                     _s.splash_armed_at = 0.0
             else:
@@ -772,6 +979,15 @@ def on_done(future: Future[InferenceOutput]):
         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
         # --- Display work: only when a stream consumer is active ---
+        # Detections below KEEP threshold are dropped from the display so the
+        # low-conf candidates we now ask the model to emit (so hysteresis can see
+        # them) don't paint flickering boxes.  Within `ghost_frames_ms` of the
+        # last non-empty result, the previous detection set is replayed instead
+        # of being cleared — keeps the UI calm during single-frame model misses.
+        global _last_seen_monotonic_ns, _last_seen_denormalized, latest_ai_detections
+        now_mono_ns = time.monotonic_ns()
+        ghost_window_ns = max(0, int(ghost_frames_ms.value)) * 1_000_000
+
         if streaming_active.is_set():
             with cache_lock:
                 lores_shape = lowres_frame_cache.pop(timestamp, None)
@@ -780,6 +996,8 @@ def on_done(future: Future[InferenceOutput]):
             for label, confidence, bbox_normalized in detections:
                 if lores_shape is None:
                     break
+                if confidence < conf_keep:
+                    continue
                 x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=lores_shape)
                 if x < 0 or y < 0 or w < 0 or h < 0:
                     logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
@@ -788,11 +1006,17 @@ def on_done(future: Future[InferenceOutput]):
                     Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
                 )
 
+            if detections_denormalized:
+                _last_seen_monotonic_ns = now_mono_ns
+                _last_seen_denormalized = detections_denormalized
+            elif ghost_window_ns > 0 and (now_mono_ns - _last_seen_monotonic_ns) <= ghost_window_ns:
+                # Within the ghost window — replay last detections to MJPEG only.
+                detections_denormalized = list(_last_seen_denormalized)
+
             if ros_node is not None:
                 ros_node.publish_detections(detections_denormalized)
 
             with latest_ai_lock:
-                global latest_ai_detections
                 latest_ai_detections = detections_denormalized
         else:
             with cache_lock:
@@ -804,7 +1028,7 @@ def on_done(future: Future[InferenceOutput]):
                     for label, confidence, bbox in detections
                 ])
 
-        # --- Event-triggered recording: check if any detection matches trigger classes ---
+        # --- Event-triggered recording: require ENTER confidence + confirmed streak ---
         if (event_recording_enabled.is_set()
                 and not event_recording_active.is_set()
                 and not recording_active.is_set()
@@ -813,7 +1037,10 @@ def on_done(future: Future[InferenceOutput]):
                 trigger_set = {c.strip().lower() for c in event_trigger_classes}
             if trigger_set:
                 for label, confidence, bbox_normalized in detections:
-                    if confidence >= prob_threshold.value and label.strip().lower() in trigger_set:
+                    label_lc = label.strip().lower()
+                    if (confidence >= conf_enter
+                            and label_lc in trigger_set
+                            and _confirmed(label_lc)):
                         _start_event_recording()
                         break
 
@@ -824,14 +1051,65 @@ def on_done(future: Future[InferenceOutput]):
         raise
 
 
+def _go_home_servo() -> None:
+    """One-shot move the pan/tilt servos to the neutral (0°, 0°) position.
+
+    Called on the lock-release transition — either because the locked target
+    walked into / was covered by an exclusion zone, or because the lock-lost
+    timer elapsed.  Bypasses the dead-zone (uses ``engine.move_to``, the same
+    path the ServoDebugPanel uses) so the move always takes effect.  Not
+    called every frame, so manual servo control via the Debug tab still
+    works between locks.
+    """
+    try:
+        from .engine import move_to  # noqa: PLC0415
+        move_to(0.0, 0.0)
+    except Exception:
+        logger.exception("Failed to send servo home after lock release.")
+
+
+def _log_live_event_frame(mask) -> None:
+    """Emit a `frame` JSONL entry for one live (post-trigger) recorded frame."""
+    global _event_frame_idx
+    if _event_logger is None:
+        return
+    with _latest_inference_lock:
+        detections_payload = list(_latest_inference_log_entries)
+    motion_px = int(cv2.countNonZero(mask)) if mask is not None else 0
+    from . import shared as _s  # noqa: PLC0415
+    locked_label = _locked_target_label
+    if _locked_target_lost_since is not None:
+        lost_ms = int((time.time() - _locked_target_lost_since) * 1000)
+    else:
+        lost_ms = None
+    _event_logger.write({
+        "event": "frame",
+        "frame_idx": _event_frame_idx,
+        "prebuffer": False,
+        "motion": {"pixel_count": motion_px},
+        "detections": detections_payload,
+        "servo": {
+            "pan_deg": float(_s.servo_pan.value),
+            "tilt_deg": float(_s.servo_tilt.value),
+            "locked_label": locked_label,
+            "locked_lost_since_ms": lost_ms,
+        },
+    })
+    _event_frame_idx += 1
+
+
 def _start_event_recording() -> None:
-    """Begin event-triggered recording: flush pre-buffer, start live capture."""
+    """Begin event-triggered recording: flush pre-buffer, start live capture,
+    and open the technical-log sidecar."""
     global _event_recorder, _event_clip_until
+    global _event_logger, _event_frame_idx, _event_started_monotonic, _event_video_path
+    import uuid  # noqa: PLC0415
     from datetime import datetime  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     from django.conf import settings as django_settings  # noqa: PLC0415
 
+    from .event_log import EventLogger  # noqa: PLC0415
     from .recording import EventClipRecorder, pre_buffer_snapshot  # noqa: PLC0415
 
     pre_frames = pre_buffer_snapshot()
@@ -843,24 +1121,96 @@ def _start_event_recording() -> None:
 
     videos_dir = Path(django_settings.MEDIA_ROOT) / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
+    # Short UUID guarantees uniqueness even when two events fire in the same
+    # second — the previous timestamp-only naming was collision-prone.
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = str(videos_dir / f"event_{ts}.mp4")
+    event_id = f"{ts}_{uuid.uuid4().hex[:8]}"
+    video_path = str(videos_dir / f"event_{event_id}.mp4")
+    log_path = str(videos_dir / f"event_{event_id}.log.jsonl")
 
     actual_fps = fps_counter.fps if fps_counter.fps > 0 else 30.0
 
+    # Snapshot the config + trigger context for the event_started entry.
+    from . import shared as _s  # noqa: PLC0415
+
+    with event_trigger_classes_lock:
+        trigger_classes_snapshot = list(event_trigger_classes)
+    trigger_detection = None
+    with _latest_inference_lock:
+        for ent in _latest_inference_log_entries:
+            if ent["inside_exclusion"]:
+                continue
+            if ent["confidence"] >= float(prob_threshold.value) and (
+                not trigger_classes_snapshot
+                or ent["label"].strip().lower() in {c.strip().lower() for c in trigger_classes_snapshot}
+            ):
+                trigger_detection = {
+                    "label": ent["label"],
+                    "confidence": ent["confidence"],
+                    "bbox_norm": ent["bbox_norm"],
+                }
+                break
+
+    config_snapshot = {
+        "conf_threshold_enter": float(prob_threshold.value),
+        "conf_threshold_keep": float(prob_threshold_keep.value),
+        "min_consecutive_frames": int(min_consecutive_frames.value),
+        "bbox_ema_alpha": float(bbox_ema_alpha.value),
+        "ghost_frames_ms": int(ghost_frames_ms.value),
+        "pre_buffer_seconds": float(event_pre_buffer_seconds.value),
+        "post_trigger_seconds": float(event_post_trigger_seconds.value),
+        "cooldown_seconds": float(event_cooldown_seconds.value),
+        "trigger_classes": trigger_classes_snapshot,
+    }
+
     with _event_recorder_lock:
-        _event_recorder = EventClipRecorder(path, fps=actual_fps, pre_frames=pre_frames,
+        _event_recorder = EventClipRecorder(video_path, fps=actual_fps, pre_frames=pre_frames,
                                              frame_w=w, frame_h=h)
         _event_clip_until = time.monotonic() + event_post_trigger_seconds.value
+        _event_started_monotonic = time.monotonic()
+        _event_video_path = _event_recorder._output_path  # may differ if AVC1 fell back to MJPG
+        _event_frame_idx = 0
+        try:
+            _event_logger = EventLogger(log_path, event_id=event_id)
+        except Exception:
+            logger.exception("Failed to open EventLogger at %s — recording continues without log.", log_path)
+            _event_logger = None
         event_recording_active.set()
 
-    logger.info("Event recording started: %s (%d pre-buffer frames, %ds post-trigger)",
-                path, len(pre_frames), event_post_trigger_seconds.value)
+    if _event_logger is not None:
+        _event_logger.write({
+            "event": "event_started",
+            "event_id": event_id,
+            "video_filename": Path(_event_video_path).name,
+            "fps_estimate": float(actual_fps),
+            "frame": {"w": int(w), "h": int(h)},
+            "trigger": trigger_detection,
+            "config_snapshot": config_snapshot,
+            "servo": {"pan_deg": float(_s.servo_pan.value), "tilt_deg": float(_s.servo_tilt.value)},
+        })
+
+        # One log line per pre-buffer frame already written by the recorder.
+        # We don't have per-frame inference data for these (they predate the
+        # trigger), so detections is empty and prebuffer=true.
+        for _i in range(len(pre_frames)):
+            _event_logger.write({
+                "event": "frame",
+                "frame_idx": _event_frame_idx,
+                "prebuffer": True,
+                "motion": None,
+                "detections": [],
+                "servo": {"pan_deg": float(_s.servo_pan.value), "tilt_deg": float(_s.servo_tilt.value)},
+            })
+            _event_frame_idx += 1
+
+    logger.info("Event recording started: %s (%d pre-buffer frames, %ds post-trigger, log=%s)",
+                _event_video_path, len(pre_frames), event_post_trigger_seconds.value,
+                "yes" if _event_logger else "no")
 
 
-def _finalize_event_recording() -> None:
-    """Stop event recording, save to DB, queue notification."""
-    global _event_recorder, _event_clip_until
+def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
+    """Stop event recording, save to DB, queue notification, close log."""
+    global _event_recorder, _event_clip_until, _event_logger, _event_frame_idx
     from datetime import datetime  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
@@ -872,23 +1222,46 @@ def _finalize_event_recording() -> None:
             return
         final_path, frame_count, error = _event_recorder.close()
         _event_recorder = None
+        ev_logger = _event_logger
+        _event_logger = None
+        duration_seconds = time.monotonic() - _event_started_monotonic if _event_started_monotonic else 0.0
+        frames_written = _event_frame_idx
 
     _event_clip_until = 0.0
     event_recording_active.clear()
     from . import shared as _s  # noqa: PLC0415
     _s.event_recording_cooldown_until = time.time() + event_cooldown_seconds.value
 
+    # Finalize the log first so it's flushed even if the DB write fails.
+    if ev_logger is not None:
+        ev_logger.write({
+            "event": "event_ended",
+            "reason": reason,
+            "frames_written": int(frames_written),
+            "duration_seconds": round(float(duration_seconds), 3),
+            "error": error,
+        })
+        ev_logger.close()
+
     if final_path and frame_count > 0:
         file_path = Path(final_path)
+        log_path = Path(ev_logger.path) if ev_logger is not None else None
         try:
             from ..models import Video  # noqa: PLC0415
 
-            video = Video.objects.create(
-                filename=file_path.name,
-                file=str(file_path.relative_to(django_settings.MEDIA_ROOT)),
-                size_bytes=file_path.stat().st_size,
-                source="event",
-            )
+            video_kwargs = {
+                "filename": file_path.name,
+                "file": str(file_path.relative_to(django_settings.MEDIA_ROOT)),
+                "size_bytes": file_path.stat().st_size,
+                "source": "event",
+            }
+            if ev_logger is not None:
+                # event_id is the stem-uuid that we used for both the video
+                # and log filenames.
+                video_kwargs["event_id"] = ev_logger.event_id
+                if log_path is not None and log_path.exists():
+                    video_kwargs["log_file"] = str(log_path.relative_to(django_settings.MEDIA_ROOT))
+            video = Video.objects.create(**video_kwargs)
             with event_clip_queue_lock:
                 event_clip_queue.append({
                     "filename": file_path.name,
@@ -897,7 +1270,8 @@ def _finalize_event_recording() -> None:
                     "time": datetime.now().isoformat(),
                     "video_id": video.id,
                 })
-            logger.info("Event clip saved: %s (%d frames)", file_path.name, frame_count)
+            logger.info("Event clip saved: %s (%d frames, log=%s)", file_path.name, frame_count,
+                        log_path.name if log_path else "no")
         except Exception:
             logger.exception("Failed to save event clip to DB")
     else:
@@ -929,6 +1303,18 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     step = preview_downscale_factor
     frame_lores = y_plane[::step, ::step]
     has_movement, mask = motion_detector.is_moving(frame_lores)
+
+    # Suppress motion inside any exclusion zone — drops ROIs (and thus YOLO work)
+    # before they're generated.  The allowed mask is rasterised lazily and
+    # cached per (shape, generation) by exclusion.py.
+    if mask is not None and has_movement:
+        from . import exclusion as _exclusion  # noqa: PLC0415
+
+        allowed = _exclusion.allowed_mask_for(mask.shape[:2])
+        if allowed is not None:
+            cv2.bitwise_and(mask, allowed, dst=mask)
+            has_movement = bool(cv2.countNonZero(mask) >= settings.foreground_mask_options.pixelcount_threshold.value)
+
     _latest_mask = mask
     _latest_mask_shape = mask.shape[:2] if mask is not None else (1, 1)
 
@@ -954,9 +1340,13 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
 
     # Event-triggered recording (post-trigger live capture).
     if event_recording_active.is_set():
+        wrote_frame = False
         with _event_recorder_lock:
             if _event_recorder is not None:
                 _event_recorder.write_frame(frame_bgr)
+                wrote_frame = True
+        if wrote_frame:
+            _log_live_event_frame(mask)
         # Check if post-trigger duration has elapsed.
         if time.monotonic() >= _event_clip_until:
             _finalize_event_recording()
@@ -1020,11 +1410,25 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                     draw_boxes=True,
                 )
     else:
+        # No movement — let the tracker tick "idle" so a stationary target's
+        # track doesn't accumulate `misses` while inference is gated off.
+        if _tracker is not None and tracker_enabled.value:
+            _tracker.tick_idle()
         if streaming_active.is_set():
-            # No movement — clear stale detections for the display.
-            with latest_ai_lock:
-                latest_ai_detections = []
-            detections_to_show = []
+            # Clear stale detections for the display, but respect the
+            # ghost-frame window so a momentary motion lull doesn't drop the
+            # boxes prematurely.  (latest_ai_detections is already declared
+            # `global` at the top of process_frame.)
+            ghost_window_ns = max(0, int(ghost_frames_ms.value)) * 1_000_000
+            now_mono_ns = time.monotonic_ns()
+            if ghost_window_ns > 0 and (now_mono_ns - _last_seen_monotonic_ns) <= ghost_window_ns:
+                with latest_ai_lock:
+                    detections_to_show = list(_last_seen_denormalized)
+                    latest_ai_detections = detections_to_show
+            else:
+                with latest_ai_lock:
+                    latest_ai_detections = []
+                detections_to_show = []
 
     # Update the shared latest_frame state only while a client is watching.
     if streaming_active.is_set():

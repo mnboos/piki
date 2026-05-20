@@ -36,7 +36,7 @@ export interface EventClipSchema {
      * @type {number}
      * @memberof EventClipSchema
      */
-    frame_count: number;
+    frameCount: number;
     /**
      * 
      * @type {string}
@@ -48,7 +48,7 @@ export interface EventClipSchema {
      * @type {number}
      * @memberof EventClipSchema
      */
-    video_id: number;
+    videoId: number;
 }
 
 /**
@@ -57,9 +57,9 @@ export interface EventClipSchema {
 export function instanceOfEventClipSchema(value: object): value is EventClipSchema {
     if (!('filename' in value) || value['filename'] === undefined) return false;
     if (!('file' in value) || value['file'] === undefined) return false;
-    if (!('frame_count' in value) || value['frame_count'] === undefined) return false;
+    if (!('frameCount' in value) || value['frameCount'] === undefined) return false;
     if (!('time' in value) || value['time'] === undefined) return false;
-    if (!('video_id' in value) || value['video_id'] === undefined) return false;
+    if (!('videoId' in value) || value['videoId'] === undefined) return false;
     return true;
 }
 
@@ -75,9 +75,9 @@ export function EventClipSchemaFromJSONTyped(json: any, ignoreDiscriminator: boo
         
         'filename': json['filename'],
         'file': json['file'],
-        'frame_count': json['frame_count'],
+        'frameCount': json['frame_count'],
         'time': json['time'],
-        'video_id': json['video_id'],
+        'videoId': json['video_id'],
     };
 }
 
@@ -94,9 +94,9 @@ export function EventClipSchemaToJSONTyped(value?: EventClipSchema | null, ignor
         
         'filename': value['filename'],
         'file': value['file'],
-        'frame_count': value['frame_count'],
+        'frame_count': value['frameCount'],
         'time': value['time'],
-        'video_id': value['video_id'],
+        'video_id': value['videoId'],
     };
 }
 

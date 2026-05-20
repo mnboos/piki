@@ -8,6 +8,7 @@ from ninja import NinjaAPI, PatchDict, Schema
 
 from .utils.shared import (
     app_settings,
+    bbox_ema_alpha,
     cv2,
     event_clip_queue,
     event_clip_queue_lock,
@@ -20,12 +21,15 @@ from .utils.shared import (
     event_trigger_classes,
     event_trigger_classes_lock,
     fps_counter,
+    ghost_frames_ms,
     is_object_detection_disabled,
     latest_debug_frame,
     latest_frame,
     mask_transparency,
+    min_consecutive_frames,
     motion_detector,
     prob_threshold,
+    prob_threshold_keep,
     recording_active,
     replaying_active,
     servo_dead_zone,
@@ -42,6 +46,10 @@ from .utils.shared import (
     splash_trigger_classes,
     splash_trigger_classes_lock,
     streaming_active,
+    tracker_confirm_hits,
+    tracker_enabled,
+    tracker_iou_threshold,
+    tracker_max_misses,
 )
 
 # api = NinjaAPI(csrf=True, auth=django_auth)
@@ -185,6 +193,22 @@ async def stream_camera():
             if abs(kp_x - ch_x) > 3 or abs(kp_y - ch_y) > 3:
                 cv2.line(draw_frame, (ch_x, ch_y), (kp_x, kp_y), (180, 180, 180), 1, cv2.LINE_AA)
 
+            # Exclusion zones — always visible (safety-critical, not optional).
+            # Drawn last so they sit on top of detection boxes and the crosshair.
+            from .utils import exclusion as _exclusion  # noqa: PLC0415
+
+            zone_polys = _exclusion.polygons_norm()
+            if zone_polys:
+                _zone_color = (60, 60, 220)  # dark red (BGR)
+                overlay = draw_frame.copy()
+                pts_int = [
+                    np.round(p * np.array([fw, fh], dtype=np.float32)).astype(np.int32)
+                    for p in zone_polys
+                ]
+                cv2.fillPoly(overlay, pts_int, color=_zone_color)
+                cv2.addWeighted(overlay, 0.30, draw_frame, 0.70, 0, draw_frame)
+                cv2.polylines(draw_frame, pts_int, isClosed=True, color=_zone_color, thickness=2)
+
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
             success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
             if success:
@@ -245,6 +269,14 @@ class PikiOptions(Schema):
     show_rois: bool = False
     show_seg: bool = False
     conf_threshold: Optional[float] = None
+    conf_threshold_keep: Optional[float] = None
+    min_consecutive_frames: Optional[int] = None
+    bbox_ema_alpha: Optional[float] = None
+    ghost_frames_ms: Optional[int] = None
+    tracker_enabled: Optional[bool] = None
+    tracker_iou_threshold: Optional[float] = None
+    tracker_max_misses: Optional[int] = None
+    tracker_confirm_hits: Optional[int] = None
     pixelcount_threshold: Optional[int] = None
     min_area: Optional[int] = None
     mog2_history: Optional[int] = None
@@ -272,6 +304,34 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
 
     if (v := options.get("conf_threshold")) is not None:
         prob_threshold.value = float(v)
+        # Keep the "keep" floor strictly ≤ the "enter" threshold so hysteresis
+        # remains well-formed when only the enter value is adjusted.
+        if prob_threshold_keep.value > prob_threshold.value:
+            prob_threshold_keep.value = prob_threshold.value
+
+    if (v := options.get("conf_threshold_keep")) is not None:
+        prob_threshold_keep.value = min(float(v), float(prob_threshold.value))
+
+    if (v := options.get("min_consecutive_frames")) is not None:
+        min_consecutive_frames.value = max(1, int(v))
+
+    if (v := options.get("bbox_ema_alpha")) is not None:
+        bbox_ema_alpha.value = max(0.0, min(1.0, float(v)))
+
+    if (v := options.get("ghost_frames_ms")) is not None:
+        ghost_frames_ms.value = max(0, int(v))
+
+    if (v := options.get("tracker_enabled")) is not None:
+        tracker_enabled.value = 1 if v else 0
+
+    if (v := options.get("tracker_iou_threshold")) is not None:
+        tracker_iou_threshold.value = max(0.0, min(1.0, float(v)))
+
+    if (v := options.get("tracker_max_misses")) is not None:
+        tracker_max_misses.value = max(0, int(v))
+
+    if (v := options.get("tracker_confirm_hits")) is not None:
+        tracker_confirm_hits.value = max(1, int(v))
 
     if (v := options.get("pixelcount_threshold")) is not None:
         settings.foreground_mask_options.pixelcount_threshold.value = int(v)
@@ -310,6 +370,14 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.show_rois = app_settings.debug_settings.show_rois
     config.show_seg = app_settings.debug_settings.show_seg
     config.conf_threshold = prob_threshold.value
+    config.conf_threshold_keep = prob_threshold_keep.value
+    config.min_consecutive_frames = min_consecutive_frames.value
+    config.bbox_ema_alpha = bbox_ema_alpha.value
+    config.ghost_frames_ms = ghost_frames_ms.value
+    config.tracker_enabled = bool(tracker_enabled.value)
+    config.tracker_iou_threshold = tracker_iou_threshold.value
+    config.tracker_max_misses = tracker_max_misses.value
+    config.tracker_confirm_hits = tracker_confirm_hits.value
     config.pixelcount_threshold = settings.foreground_mask_options.pixelcount_threshold.value
     config.min_area = settings.foreground_mask_options.min_area.value
     config.mog2_history = settings.foreground_mask_options.mog2_history.value
@@ -328,6 +396,14 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         show_rois=app_settings.debug_settings.show_rois,
         show_seg=app_settings.debug_settings.show_seg,
         conf_threshold=prob_threshold.value,
+        conf_threshold_keep=prob_threshold_keep.value,
+        min_consecutive_frames=min_consecutive_frames.value,
+        bbox_ema_alpha=bbox_ema_alpha.value,
+        ghost_frames_ms=ghost_frames_ms.value,
+        tracker_enabled=bool(tracker_enabled.value),
+        tracker_iou_threshold=tracker_iou_threshold.value,
+        tracker_max_misses=tracker_max_misses.value,
+        tracker_confirm_hits=tracker_confirm_hits.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
         mog2_history=settings.foreground_mask_options.mog2_history.value,
@@ -357,6 +433,14 @@ def get_options(request: HttpRequest):
         show_rois=app_settings.debug_settings.show_rois,
         show_seg=app_settings.debug_settings.show_seg,
         conf_threshold=prob_threshold.value,
+        conf_threshold_keep=prob_threshold_keep.value,
+        min_consecutive_frames=min_consecutive_frames.value,
+        bbox_ema_alpha=bbox_ema_alpha.value,
+        ghost_frames_ms=ghost_frames_ms.value,
+        tracker_enabled=bool(tracker_enabled.value),
+        tracker_iou_threshold=tracker_iou_threshold.value,
+        tracker_max_misses=tracker_max_misses.value,
+        tracker_confirm_hits=tracker_confirm_hits.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
         mog2_history=settings.foreground_mask_options.mog2_history.value,
@@ -520,6 +604,9 @@ class VideoInfo(Schema):
     size_bytes: int
     source: str
     created_at: str
+    # Empty for non-event recordings.
+    event_id: str = ""
+    has_log: bool = False
 
 
 class ReplayStatus(Schema):
@@ -618,6 +705,8 @@ def videos_list(request: HttpRequest):
                 size_bytes=v.size_bytes,
                 source=v.source,
                 created_at=v.created_at.isoformat(),
+                event_id=v.event_id or "",
+                has_log=bool(v.log_file and v.log_file.name),
             )
         )
     return results
@@ -648,7 +737,19 @@ def videos_upload(request: HttpRequest):
     )
 
 
-@api.get("/videos/{video_id}/download", response={200: None}, openapi_extra={"responses": {"200": {"content": {"application/octet-stream": {}}, "description": "Video file"}}})
+_VIDEO_BIN_RESPONSE = {
+    "responses": {
+        200: {
+            "description": "Video file",
+            "content": {
+                "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
+            },
+        },
+    },
+}
+
+
+@api.get("/videos/{video_id}/download", openapi_extra=_VIDEO_BIN_RESPONSE)
 def videos_download(request: HttpRequest, video_id: int):
     from django.http.response import FileResponse  # noqa: PLC0415
 
@@ -670,6 +771,79 @@ def videos_download(request: HttpRequest, video_id: int):
     )
 
 
+_LOG_DOWNLOAD_RESPONSE = {
+    "responses": {
+        200: {
+            "description": "Technical-log JSONL sidecar",
+            "content": {
+                "application/x-ndjson": {"schema": {"type": "string", "format": "binary"}},
+            },
+        },
+    },
+}
+
+
+class EventLogSummary(Schema):
+    event_id: Optional[str] = None
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    duration_seconds: float = 0.0
+    frames_total: int = 0
+    frames_prebuffer: int = 0
+    frames_live: int = 0
+    detections_total: int = 0
+    labels: dict = {}
+    splashes: int = 0
+    trigger: Optional[dict] = None
+    config_snapshot: Optional[dict] = None
+    unique_track_ids: list[int] = []
+
+
+@api.get("/videos/{video_id}/log", openapi_extra=_LOG_DOWNLOAD_RESPONSE)
+def videos_log_download(request: HttpRequest, video_id: int):
+    from django.http.response import FileResponse  # noqa: PLC0415
+
+    from .models import Video  # noqa: PLC0415
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        raise Http404("Video not found")
+    if not video.log_file or not video.log_file.name:
+        raise Http404("This recording has no technical log.")
+
+    file_path = Path(django_settings.MEDIA_ROOT) / video.log_file.name
+    if not file_path.exists():
+        raise Http404("Log file not found on disk")
+
+    return FileResponse(
+        file_path.open("rb"),
+        as_attachment=True,
+        filename=file_path.name,
+        content_type="application/x-ndjson",
+    )
+
+
+@api.get("/videos/{video_id}/log/summary", response=EventLogSummary)
+def videos_log_summary(request: HttpRequest, video_id: int):
+    from .models import Video  # noqa: PLC0415
+    from .utils.event_log import summarize_log  # noqa: PLC0415
+
+    try:
+        video = Video.objects.get(pk=video_id)
+    except Video.DoesNotExist:
+        raise Http404("Video not found")
+    if not video.log_file or not video.log_file.name:
+        raise Http404("This recording has no technical log.")
+
+    file_path = Path(django_settings.MEDIA_ROOT) / video.log_file.name
+    if not file_path.exists():
+        raise Http404("Log file not found on disk")
+
+    summary = summarize_log(str(file_path))
+    return EventLogSummary(**summary)
+
+
 @api.delete("/videos/{video_id}", response={200: dict})
 def videos_delete(request: HttpRequest, video_id: int):
     from .models import Video  # noqa: PLC0415
@@ -683,6 +857,12 @@ def videos_delete(request: HttpRequest, video_id: int):
     file_path = Path(django_settings.MEDIA_ROOT) / video.file.name
     if file_path.exists():
         file_path.unlink()
+
+    # Delete the JSONL log sidecar if present.
+    if video.log_file and video.log_file.name:
+        log_path = Path(django_settings.MEDIA_ROOT) / video.log_file.name
+        if log_path.exists():
+            log_path.unlink()
 
     video.delete()
     return {"status": "deleted"}
@@ -895,4 +1075,87 @@ def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSc
         duration_seconds=float(splash_duration.value),
         cooldown_seconds=float(splash_cooldown.value),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Exclusion zones                                                              #
+# --------------------------------------------------------------------------- #
+
+
+class ExclusionZoneSchema(Schema):
+    id: Optional[int] = None
+    name: str = "zone"
+    enabled: bool = True
+    # Normalized [0, 1] (x, y) points.  Must have at least 3.
+    points: list[tuple[float, float]]
+
+
+def _validate_points(points) -> list[list[float]]:
+    if not isinstance(points, (list, tuple)) or len(points) < 3:
+        raise Http404("Exclusion zone requires at least 3 points.")
+    clean: list[list[float]] = []
+    for pt in points:
+        if not (isinstance(pt, (list, tuple)) and len(pt) == 2):
+            raise Http404("Each point must be a [x, y] pair.")
+        x = max(0.0, min(1.0, float(pt[0])))
+        y = max(0.0, min(1.0, float(pt[1])))
+        clean.append([x, y])
+    return clean
+
+
+@api.get("/exclusion_zones", response=list[ExclusionZoneSchema])
+def list_exclusion_zones(request: HttpRequest):
+    from .models import ExclusionZone  # noqa: PLC0415
+
+    return [
+        ExclusionZoneSchema(id=z.id, name=z.name, enabled=z.enabled, points=z.points)
+        for z in ExclusionZone.objects.all()
+    ]
+
+
+@api.post("/exclusion_zones", response=ExclusionZoneSchema)
+def create_exclusion_zone(request: HttpRequest, payload: ExclusionZoneSchema):
+    from .models import ExclusionZone  # noqa: PLC0415
+    from .utils import exclusion  # noqa: PLC0415
+
+    zone = ExclusionZone.objects.create(
+        name=payload.name or "zone",
+        enabled=bool(payload.enabled),
+        points=_validate_points(payload.points),
+    )
+    exclusion.bump_generation()
+    return ExclusionZoneSchema(id=zone.id, name=zone.name, enabled=zone.enabled, points=zone.points)
+
+
+@api.patch("/exclusion_zones/{zone_id}", response=ExclusionZoneSchema)
+def update_exclusion_zone(request: HttpRequest, zone_id: int, payload: PatchDict[ExclusionZoneSchema]):
+    from .models import ExclusionZone  # noqa: PLC0415
+    from .utils import exclusion  # noqa: PLC0415
+
+    try:
+        zone = ExclusionZone.objects.get(pk=zone_id)
+    except ExclusionZone.DoesNotExist:
+        raise Http404("Exclusion zone not found")
+
+    if (v := payload.get("name")) is not None:
+        zone.name = str(v)[:64]
+    if (v := payload.get("enabled")) is not None:
+        zone.enabled = bool(v)
+    if (v := payload.get("points")) is not None:
+        zone.points = _validate_points(v)
+    zone.save()
+    exclusion.bump_generation()
+    return ExclusionZoneSchema(id=zone.id, name=zone.name, enabled=zone.enabled, points=zone.points)
+
+
+@api.delete("/exclusion_zones/{zone_id}")
+def delete_exclusion_zone(request: HttpRequest, zone_id: int):
+    from .models import ExclusionZone  # noqa: PLC0415
+    from .utils import exclusion  # noqa: PLC0415
+
+    deleted, _ = ExclusionZone.objects.filter(pk=zone_id).delete()
+    if not deleted:
+        raise Http404("Exclusion zone not found")
+    exclusion.bump_generation()
+    return {"ok": True}
 

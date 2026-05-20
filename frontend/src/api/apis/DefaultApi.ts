@@ -18,8 +18,11 @@ import type {
   AimConfigSchema,
   AimConfigSchemaPatch,
   EventClipSchema,
+  EventLogSummary,
   EventRecordingConfigSchema,
   EventRecordingConfigSchemaPatch,
+  ExclusionZoneSchema,
+  ExclusionZoneSchemaPatch,
   PikiOptions,
   PikiOptionsPatch,
   RecordingStatus,
@@ -38,10 +41,16 @@ import {
     AimConfigSchemaPatchToJSON,
     EventClipSchemaFromJSON,
     EventClipSchemaToJSON,
+    EventLogSummaryFromJSON,
+    EventLogSummaryToJSON,
     EventRecordingConfigSchemaFromJSON,
     EventRecordingConfigSchemaToJSON,
     EventRecordingConfigSchemaPatchFromJSON,
     EventRecordingConfigSchemaPatchToJSON,
+    ExclusionZoneSchemaFromJSON,
+    ExclusionZoneSchemaToJSON,
+    ExclusionZoneSchemaPatchFromJSON,
+    ExclusionZoneSchemaPatchToJSON,
     PikiOptionsFromJSON,
     PikiOptionsToJSON,
     PikiOptionsPatchFromJSON,
@@ -64,6 +73,14 @@ import {
     VideoInfoToJSON,
 } from '../models/index';
 
+export interface CoreApiCreateExclusionZoneRequest {
+    exclusionZoneSchema: ExclusionZoneSchema;
+}
+
+export interface CoreApiDeleteExclusionZoneRequest {
+    zoneId: number;
+}
+
 export interface CoreApiReplayStartRequest {
     videoId: number;
 }
@@ -78,6 +95,11 @@ export interface CoreApiUpdateAimConfigRequest {
 
 export interface CoreApiUpdateEventRecordingConfigRequest {
     eventRecordingConfigSchemaPatch: EventRecordingConfigSchemaPatch;
+}
+
+export interface CoreApiUpdateExclusionZoneRequest {
+    zoneId: number;
+    exclusionZoneSchemaPatch: ExclusionZoneSchemaPatch;
 }
 
 export interface CoreApiUpdateOptionsRequest {
@@ -96,10 +118,93 @@ export interface CoreApiVideosDownloadRequest {
     videoId: number;
 }
 
+export interface CoreApiVideosLogDownloadRequest {
+    videoId: number;
+}
+
+export interface CoreApiVideosLogSummaryRequest {
+    videoId: number;
+}
+
 /**
  * 
  */
 export class DefaultApi extends runtime.BaseAPI {
+
+    /**
+     * Create Exclusion Zone
+     */
+    async coreApiCreateExclusionZoneRaw(requestParameters: CoreApiCreateExclusionZoneRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ExclusionZoneSchema>> {
+        if (requestParameters['exclusionZoneSchema'] == null) {
+            throw new runtime.RequiredError(
+                'exclusionZoneSchema',
+                'Required parameter "exclusionZoneSchema" was null or undefined when calling coreApiCreateExclusionZone().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/exclusion_zones`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ExclusionZoneSchemaToJSON(requestParameters['exclusionZoneSchema']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ExclusionZoneSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Create Exclusion Zone
+     */
+    async coreApiCreateExclusionZone(requestParameters: CoreApiCreateExclusionZoneRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ExclusionZoneSchema> {
+        const response = await this.coreApiCreateExclusionZoneRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Delete Exclusion Zone
+     */
+    async coreApiDeleteExclusionZoneRaw(requestParameters: CoreApiDeleteExclusionZoneRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        if (requestParameters['zoneId'] == null) {
+            throw new runtime.RequiredError(
+                'zoneId',
+                'Required parameter "zoneId" was null or undefined when calling coreApiDeleteExclusionZone().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/exclusion_zones/{zone_id}`;
+        urlPath = urlPath.replace(`{${"zone_id"}}`, encodeURIComponent(String(requestParameters['zoneId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'DELETE',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     * Delete Exclusion Zone
+     */
+    async coreApiDeleteExclusionZone(requestParameters: CoreApiDeleteExclusionZoneRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.coreApiDeleteExclusionZoneRaw(requestParameters, initOverrides);
+    }
 
     /**
      * Return current servo aim configuration.
@@ -315,6 +420,35 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiGetYoloClasses(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<string>> {
         const response = await this.coreApiGetYoloClassesRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * List Exclusion Zones
+     */
+    async coreApiListExclusionZonesRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<ExclusionZoneSchema>>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/exclusion_zones`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(ExclusionZoneSchemaFromJSON));
+    }
+
+    /**
+     * List Exclusion Zones
+     */
+    async coreApiListExclusionZones(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<ExclusionZoneSchema>> {
+        const response = await this.coreApiListExclusionZonesRaw(initOverrides);
         return await response.value();
     }
 
@@ -654,6 +788,53 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
+     * Update Exclusion Zone
+     */
+    async coreApiUpdateExclusionZoneRaw(requestParameters: CoreApiUpdateExclusionZoneRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ExclusionZoneSchema>> {
+        if (requestParameters['zoneId'] == null) {
+            throw new runtime.RequiredError(
+                'zoneId',
+                'Required parameter "zoneId" was null or undefined when calling coreApiUpdateExclusionZone().'
+            );
+        }
+
+        if (requestParameters['exclusionZoneSchemaPatch'] == null) {
+            throw new runtime.RequiredError(
+                'exclusionZoneSchemaPatch',
+                'Required parameter "exclusionZoneSchemaPatch" was null or undefined when calling coreApiUpdateExclusionZone().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/exclusion_zones/{zone_id}`;
+        urlPath = urlPath.replace(`{${"zone_id"}}`, encodeURIComponent(String(requestParameters['zoneId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PATCH',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ExclusionZoneSchemaPatchToJSON(requestParameters['exclusionZoneSchemaPatch']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ExclusionZoneSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Update Exclusion Zone
+     */
+    async coreApiUpdateExclusionZone(requestParameters: CoreApiUpdateExclusionZoneRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ExclusionZoneSchema> {
+        const response = await this.coreApiUpdateExclusionZoneRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Update Options
      */
     async coreApiUpdateOptionsRaw(requestParameters: CoreApiUpdateOptionsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PikiOptions>> {
@@ -804,7 +985,7 @@ export class DefaultApi extends runtime.BaseAPI {
     /**
      * Videos Download
      */
-    async coreApiVideosDownloadRaw(requestParameters: CoreApiVideosDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+    async coreApiVideosDownloadRaw(requestParameters: CoreApiVideosDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
         if (requestParameters['videoId'] == null) {
             throw new runtime.RequiredError(
                 'videoId',
@@ -827,14 +1008,15 @@ export class DefaultApi extends runtime.BaseAPI {
             query: queryParameters,
         }, initOverrides);
 
-        return new runtime.VoidApiResponse(response);
+        return new runtime.BlobApiResponse(response);
     }
 
     /**
      * Videos Download
      */
-    async coreApiVideosDownload(requestParameters: CoreApiVideosDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
-        await this.coreApiVideosDownloadRaw(requestParameters, initOverrides);
+    async coreApiVideosDownload(requestParameters: CoreApiVideosDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
+        const response = await this.coreApiVideosDownloadRaw(requestParameters, initOverrides);
+        return await response.value();
     }
 
     /**
@@ -863,6 +1045,80 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiVideosList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<VideoInfo>> {
         const response = await this.coreApiVideosListRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Videos Log Download
+     */
+    async coreApiVideosLogDownloadRaw(requestParameters: CoreApiVideosLogDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
+        if (requestParameters['videoId'] == null) {
+            throw new runtime.RequiredError(
+                'videoId',
+                'Required parameter "videoId" was null or undefined when calling coreApiVideosLogDownload().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/videos/{video_id}/log`;
+        urlPath = urlPath.replace(`{${"video_id"}}`, encodeURIComponent(String(requestParameters['videoId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.BlobApiResponse(response);
+    }
+
+    /**
+     * Videos Log Download
+     */
+    async coreApiVideosLogDownload(requestParameters: CoreApiVideosLogDownloadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
+        const response = await this.coreApiVideosLogDownloadRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Videos Log Summary
+     */
+    async coreApiVideosLogSummaryRaw(requestParameters: CoreApiVideosLogSummaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<EventLogSummary>> {
+        if (requestParameters['videoId'] == null) {
+            throw new runtime.RequiredError(
+                'videoId',
+                'Required parameter "videoId" was null or undefined when calling coreApiVideosLogSummary().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/videos/{video_id}/log/summary`;
+        urlPath = urlPath.replace(`{${"video_id"}}`, encodeURIComponent(String(requestParameters['videoId'])));
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => EventLogSummaryFromJSON(jsonValue));
+    }
+
+    /**
+     * Videos Log Summary
+     */
+    async coreApiVideosLogSummary(requestParameters: CoreApiVideosLogSummaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<EventLogSummary> {
+        const response = await this.coreApiVideosLogSummaryRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

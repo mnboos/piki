@@ -14,11 +14,11 @@ const options = defineModel<PikiOptions>("options", { required: true });
 defineProps<{ classes: string[] }>();
 
 function toggleClass(cls: string) {
-    const idx = model.value.target_classes.indexOf(cls);
+    const idx = model.value.targetClasses.indexOf(cls);
     if (idx === -1) {
-        model.value.target_classes = [...model.value.target_classes, cls];
+        model.value.targetClasses = [...model.value.targetClasses, cls];
     } else {
-        model.value.target_classes = model.value.target_classes.filter(c => c !== cls);
+        model.value.targetClasses = model.value.targetClasses.filter(c => c !== cls);
     }
 }
 
@@ -74,19 +74,19 @@ const pidModeOptions = [
 ];
 
 const initialPreset = findMatchingPreset(
-    options.value.servo_pid_kp,
-    options.value.servo_pid_ki,
-    options.value.servo_pid_kd,
-    options.value.servo_dead_zone,
+    options.value.servoPidKp,
+    options.value.servoPidKi,
+    options.value.servoPidKd,
+    options.value.servoDeadZone,
 );
-const isDisabled = (options.value.servo_pid_kp ?? 1) === 1.0
-    && !(options.value.servo_pid_ki)
-    && !(options.value.servo_pid_kd)
+const isDisabled = (options.value.servoPidKp ?? 1) === 1.0
+    && !(options.value.servoPidKi)
+    && !(options.value.servoPidKd)
     && !findMatchingPreset(
-        options.value.servo_pid_kp,
-        options.value.servo_pid_ki,
-        options.value.servo_pid_kd,
-        options.value.servo_dead_zone,
+        options.value.servoPidKp,
+        options.value.servoPidKi,
+        options.value.servoPidKd,
+        options.value.servoDeadZone,
     );
 const pidMode = ref<"disabled" | "auto" | "manual">(
     isDisabled ? "disabled" : initialPreset ? "auto" : "manual"
@@ -96,26 +96,26 @@ const selectedPreset = ref<PidPreset | null>(initialPreset ?? PID_PRESETS[1]);
 // When a preset is chosen, push its values into options immediately.
 watch(selectedPreset, preset => {
     if (!preset) return;
-    options.value.servo_pid_kp = preset.kp;
-    options.value.servo_pid_ki = preset.ki;
-    options.value.servo_pid_kd = preset.kd;
-    options.value.servo_dead_zone = preset.deadZone;
+    options.value.servoPidKp = preset.kp;
+    options.value.servoPidKi = preset.ki;
+    options.value.servoPidKd = preset.kd;
+    options.value.servoDeadZone = preset.deadZone;
 });
 
 // If the user switches to Auto, apply the currently-selected preset.
 // If the user switches to Disabled, zero out all gains.
 watch(pidMode, mode => {
     if (mode === "auto" && selectedPreset.value) {
-        options.value.servo_pid_kp = selectedPreset.value.kp;
-        options.value.servo_pid_ki = selectedPreset.value.ki;
-        options.value.servo_pid_kd = selectedPreset.value.kd;
-        options.value.servo_dead_zone = selectedPreset.value.deadZone;
+        options.value.servoPidKp = selectedPreset.value.kp;
+        options.value.servoPidKi = selectedPreset.value.ki;
+        options.value.servoPidKd = selectedPreset.value.kd;
+        options.value.servoDeadZone = selectedPreset.value.deadZone;
     } else if (mode === "disabled") {
         // Kp=1, Ki=0, Kd=0 → servo snaps directly to target (no PID correction).
         // The engine comment documents this as "instant-snap behaviour".
-        options.value.servo_pid_kp = 1.0;
-        options.value.servo_pid_ki = 0;
-        options.value.servo_pid_kd = 0;
+        options.value.servoPidKp = 1.0;
+        options.value.servoPidKi = 0;
+        options.value.servoPidKd = 0;
     }
 });
 
@@ -128,13 +128,13 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
             <div class="panel-header">
                 <span class="panel-title">Servo Aiming</span>
                 <div class="toggle-row">
-                    <ToggleSwitch v-model="model.servo_enabled" input-id="servo-enabled" />
+                    <ToggleSwitch v-model="model.servoEnabled" input-id="servo-enabled" />
                     <label
                         for="servo-enabled"
                         class="toggle-label"
-                        :class="model.servo_enabled ? 'enabled' : 'disabled'"
+                        :class="model.servoEnabled ? 'enabled' : 'disabled'"
                     >
-                        {{ model.servo_enabled ? "Enabled" : "Disabled" }}
+                        {{ model.servoEnabled ? "Enabled" : "Disabled" }}
                     </label>
                 </div>
             </div>
@@ -142,15 +142,15 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
 
         <p class="hint">
             Aim at detections matching these classes
-            <span v-if="model.target_classes.length > 0" class="selected-count">
-                ({{ model.target_classes.length }} selected)
+            <span v-if="model.targetClasses.length > 0" class="selected-count">
+                ({{ model.targetClasses.length }} selected)
             </span>:
         </p>
         <div class="class-grid">
             <div v-for="cls in classes" :key="cls" class="class-item">
                 <Checkbox
                     :input-id="`cls-${cls}`"
-                    :model-value="model.target_classes.includes(cls)"
+                    :model-value="model.targetClasses.includes(cls)"
                     :binary="true"
                     @update:model-value="toggleClass(cls)"
                 />
@@ -162,7 +162,7 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
             <label for="target-lock-duration" class="lock-label">Target lock duration (s)</label>
             <InputNumber
                 input-id="target-lock-duration"
-                v-model="model.target_lock_duration"
+                v-model="model.targetLockDuration"
                 :min="0"
                 :max="60"
                 :step="0.5"
@@ -176,7 +176,7 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
             <label for="vertical-angle-offset" class="lock-label">Vertical angle offset (°)</label>
             <InputNumber
                 input-id="vertical-angle-offset"
-                v-model="model.vertical_angle_offset"
+                v-model="model.verticalAngleOffset"
                 :min="-30"
                 :max="30"
                 :step="0.5"
@@ -189,11 +189,11 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
 
         <div class="invert-row">
             <div class="invert-item">
-                <ToggleSwitch v-model="model.pan_invert" input-id="pan-invert" />
+                <ToggleSwitch v-model="model.panInvert" input-id="pan-invert" />
                 <label for="pan-invert" class="invert-label">Invert Pan</label>
             </div>
             <div class="invert-item">
-                <ToggleSwitch v-model="model.tilt_invert" input-id="tilt-invert" />
+                <ToggleSwitch v-model="model.tiltInvert" input-id="tilt-invert" />
                 <label for="tilt-invert" class="invert-label">Invert Tilt</label>
             </div>
         </div>
@@ -229,7 +229,7 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
                     <label for="pid-kp" class="pid-label">Kp <span class="pid-sub">(proportional)</span></label>
                     <InputNumber
                         input-id="pid-kp"
-                        v-model="options.servo_pid_kp"
+                        v-model="options.servoPidKp"
                         :min="0"
                         :max="20"
                         :step="0.1"
@@ -244,7 +244,7 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
                     <label for="pid-ki" class="pid-label">Ki <span class="pid-sub">(integral)</span></label>
                     <InputNumber
                         input-id="pid-ki"
-                        v-model="options.servo_pid_ki"
+                        v-model="options.servoPidKi"
                         :min="0"
                         :max="5"
                         :step="0.01"
@@ -259,7 +259,7 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
                     <label for="pid-kd" class="pid-label">Kd <span class="pid-sub">(derivative)</span></label>
                     <InputNumber
                         input-id="pid-kd"
-                        v-model="options.servo_pid_kd"
+                        v-model="options.servoPidKd"
                         :min="0"
                         :max="5"
                         :step="0.01"
@@ -274,7 +274,7 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
                     <label for="pid-dead-zone" class="pid-label">Dead zone <span class="pid-sub">(°)</span></label>
                     <InputNumber
                         input-id="pid-dead-zone"
-                        v-model="options.servo_dead_zone"
+                        v-model="options.servoDeadZone"
                         :min="0"
                         :max="10"
                         :step="0.1"

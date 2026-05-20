@@ -9,11 +9,12 @@ const model = defineModel<SplashConfigSchema>({ required: true });
 defineProps<{ classes: string[] }>();
 
 function toggleClass(cls: string) {
-    const idx = model.value.trigger_classes.indexOf(cls);
+    const current = model.value.triggerClasses ?? [];
+    const idx = current.indexOf(cls);
     if (idx === -1) {
-        model.value.trigger_classes = [...model.value.trigger_classes, cls];
+        model.value.triggerClasses = [...current, cls];
     } else {
-        model.value.trigger_classes = model.value.trigger_classes.filter(c => c !== cls);
+        model.value.triggerClasses = current.filter(c => c !== cls);
     }
 }
 </script>
@@ -38,15 +39,15 @@ function toggleClass(cls: string) {
 
         <p class="hint">
             Trigger splash on these classes
-            <span v-if="model.trigger_classes.length > 0" class="selected-count">
-                ({{ model.trigger_classes.length }} selected)
+            <span v-if="(model.triggerClasses?.length ?? 0) > 0" class="selected-count">
+                ({{ model.triggerClasses?.length ?? 0 }} selected)
             </span>:
         </p>
         <div class="class-grid">
             <div v-for="cls in classes" :key="cls" class="class-item">
                 <Checkbox
                     :input-id="`splash-cls-${cls}`"
-                    :model-value="model.trigger_classes.includes(cls)"
+                    :model-value="(model.triggerClasses ?? []).includes(cls)"
                     :binary="true"
                     @update:model-value="toggleClass(cls)"
                 />
@@ -59,7 +60,7 @@ function toggleClass(cls: string) {
                 <label for="splash-delay" class="timing-label">Delay (s)</label>
                 <InputNumber
                     input-id="splash-delay"
-                    v-model="model.delay_seconds"
+                    v-model="model.delaySeconds"
                     :min="0"
                     :max="30"
                     :step="0.1"
@@ -74,7 +75,7 @@ function toggleClass(cls: string) {
                 <label for="splash-duration" class="timing-label">Duration (s)</label>
                 <InputNumber
                     input-id="splash-duration"
-                    v-model="model.duration_seconds"
+                    v-model="model.durationSeconds"
                     :min="0.01"
                     :max="10"
                     :step="0.1"
@@ -89,7 +90,7 @@ function toggleClass(cls: string) {
                 <label for="splash-cooldown" class="timing-label">Cooldown (s)</label>
                 <InputNumber
                     input-id="splash-cooldown"
-                    v-model="model.cooldown_seconds"
+                    v-model="model.cooldownSeconds"
                     :min="0"
                     :max="600"
                     :step="1"

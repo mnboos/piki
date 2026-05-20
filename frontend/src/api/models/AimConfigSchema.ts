@@ -24,46 +24,46 @@ export interface AimConfigSchema {
      * @type {Array<string>}
      * @memberof AimConfigSchema
      */
-    target_classes: Array<string>;
+    targetClasses: Array<string>;
     /**
      * 
      * @type {boolean}
      * @memberof AimConfigSchema
      */
-    servo_enabled: boolean;
+    servoEnabled: boolean;
     /**
      * 
      * @type {number}
      * @memberof AimConfigSchema
      */
-    target_lock_duration: number;
+    targetLockDuration: number;
     /**
      * 
      * @type {number}
      * @memberof AimConfigSchema
      */
-    vertical_angle_offset?: number;
+    verticalAngleOffset?: number;
     /**
      * 
      * @type {boolean}
      * @memberof AimConfigSchema
      */
-    pan_invert?: boolean;
+    panInvert?: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof AimConfigSchema
      */
-    tilt_invert?: boolean;
+    tiltInvert?: boolean;
 }
 
 /**
  * Check if a given object implements the AimConfigSchema interface.
  */
 export function instanceOfAimConfigSchema(value: object): value is AimConfigSchema {
-    if (!('target_classes' in value) || value['target_classes'] === undefined) return false;
-    if (!('servo_enabled' in value) || value['servo_enabled'] === undefined) return false;
-    if (!('target_lock_duration' in value) || value['target_lock_duration'] === undefined) return false;
+    if (!('targetClasses' in value) || value['targetClasses'] === undefined) return false;
+    if (!('servoEnabled' in value) || value['servoEnabled'] === undefined) return false;
+    if (!('targetLockDuration' in value) || value['targetLockDuration'] === undefined) return false;
     return true;
 }
 
@@ -77,12 +77,12 @@ export function AimConfigSchemaFromJSONTyped(json: any, ignoreDiscriminator: boo
     }
     return {
         
-        'target_classes': json['target_classes'],
-        'servo_enabled': json['servo_enabled'],
-        'target_lock_duration': json['target_lock_duration'],
-        'vertical_angle_offset': json['vertical_angle_offset'] == null ? undefined : json['vertical_angle_offset'],
-        'pan_invert': json['pan_invert'] == null ? undefined : json['pan_invert'],
-        'tilt_invert': json['tilt_invert'] == null ? undefined : json['tilt_invert'],
+        'targetClasses': json['target_classes'],
+        'servoEnabled': json['servo_enabled'],
+        'targetLockDuration': json['target_lock_duration'],
+        'verticalAngleOffset': json['vertical_angle_offset'] == null ? undefined : json['vertical_angle_offset'],
+        'panInvert': json['pan_invert'] == null ? undefined : json['pan_invert'],
+        'tiltInvert': json['tilt_invert'] == null ? undefined : json['tilt_invert'],
     };
 }
 
@@ -97,12 +97,12 @@ export function AimConfigSchemaToJSONTyped(value?: AimConfigSchema | null, ignor
 
     return {
         
-        'target_classes': value['target_classes'],
-        'servo_enabled': value['servo_enabled'],
-        'target_lock_duration': value['target_lock_duration'],
-        'vertical_angle_offset': value['vertical_angle_offset'],
-        'pan_invert': value['pan_invert'],
-        'tilt_invert': value['tilt_invert'],
+        'target_classes': value['targetClasses'],
+        'servo_enabled': value['servoEnabled'],
+        'target_lock_duration': value['targetLockDuration'],
+        'vertical_angle_offset': value['verticalAngleOffset'],
+        'pan_invert': value['panInvert'],
+        'tilt_invert': value['tiltInvert'],
     };
 }
 

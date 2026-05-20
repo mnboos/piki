@@ -65,7 +65,24 @@ class CoreConfig(AppConfig):
         """Load persisted DetectionConfig from DB into shared memory."""
         try:
             from .models import DetectionConfig  # noqa: PLC0415
-            from .utils.shared import app_settings, mask_transparency, prob_threshold, servo_dead_zone, servo_pid_kd, servo_pid_ki, servo_pid_kp, settings  # noqa: PLC0415
+            from .utils.shared import (  # noqa: PLC0415
+                app_settings,
+                bbox_ema_alpha,
+                ghost_frames_ms,
+                mask_transparency,
+                min_consecutive_frames,
+                prob_threshold,
+                prob_threshold_keep,
+                servo_dead_zone,
+                servo_pid_kd,
+                servo_pid_ki,
+                servo_pid_kp,
+                settings,
+                tracker_confirm_hits,
+                tracker_enabled,
+                tracker_iou_threshold,
+                tracker_max_misses,
+            )
 
             config = DetectionConfig.load()
             app_settings.debug_settings.show_boxes = config.show_boxes
@@ -73,6 +90,14 @@ class CoreConfig(AppConfig):
             app_settings.debug_settings.show_rois = config.show_rois
             app_settings.debug_settings.show_seg = config.show_seg
             prob_threshold.value = config.conf_threshold
+            prob_threshold_keep.value = min(float(config.conf_threshold_keep), float(config.conf_threshold))
+            min_consecutive_frames.value = max(1, int(config.min_consecutive_frames))
+            bbox_ema_alpha.value = max(0.0, min(1.0, float(config.bbox_ema_alpha)))
+            ghost_frames_ms.value = max(0, int(config.ghost_frames_ms))
+            tracker_enabled.value = 1 if config.tracker_enabled else 0
+            tracker_iou_threshold.value = max(0.0, min(1.0, float(config.tracker_iou_threshold)))
+            tracker_max_misses.value = max(0, int(config.tracker_max_misses))
+            tracker_confirm_hits.value = max(1, int(config.tracker_confirm_hits))
             settings.foreground_mask_options.pixelcount_threshold.value = config.pixelcount_threshold
             settings.foreground_mask_options.min_area.value = config.min_area
             settings.foreground_mask_options.mog2_history.value = config.mog2_history
@@ -86,7 +111,12 @@ class CoreConfig(AppConfig):
             print(
                 f"[DJANGO STARTUP] Loaded detection config: show_boxes={config.show_boxes}, "
                 f"show_mask={config.show_mask}, show_rois={config.show_rois}, show_seg={config.show_seg}, "
-                f"conf={config.conf_threshold}, mog2_history={config.mog2_history}",
+                f"conf_enter={config.conf_threshold}, conf_keep={prob_threshold_keep.value}, "
+                f"min_streak={min_consecutive_frames.value}, ema_alpha={bbox_ema_alpha.value}, "
+                f"ghost_ms={ghost_frames_ms.value}, mog2_history={config.mog2_history}, "
+                f"tracker={'on' if tracker_enabled.value else 'off'} "
+                f"(iou={tracker_iou_threshold.value}, max_misses={tracker_max_misses.value}, "
+                f"confirm_hits={tracker_confirm_hits.value})",
                 flush=True,
             )
         except Exception:
@@ -98,9 +128,7 @@ class CoreConfig(AppConfig):
         """Load persisted AimConfig from DB into shared memory."""
         try:
             from .models import AimConfig  # noqa: PLC0415
-            from .utils.shared import app_settings  # noqa: PLC0415
-
-            from ..utils.shared import vertical_angle_offset  # noqa: PLC0415
+            from .utils.shared import app_settings, vertical_angle_offset  # noqa: PLC0415
 
             config = AimConfig.load()
             app_settings.aim_settings.target_classes = config.target_classes

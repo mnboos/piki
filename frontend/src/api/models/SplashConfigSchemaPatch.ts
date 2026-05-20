@@ -30,25 +30,25 @@ export interface SplashConfigSchemaPatch {
      * @type {Array<string>}
      * @memberof SplashConfigSchemaPatch
      */
-    trigger_classes?: Array<string> | null;
+    triggerClasses?: Array<string> | null;
     /**
      * 
      * @type {number}
      * @memberof SplashConfigSchemaPatch
      */
-    delay_seconds?: number | null;
+    delaySeconds?: number | null;
     /**
      * 
      * @type {number}
      * @memberof SplashConfigSchemaPatch
      */
-    duration_seconds?: number | null;
+    durationSeconds?: number | null;
     /**
      * 
      * @type {number}
      * @memberof SplashConfigSchemaPatch
      */
-    cooldown_seconds?: number | null;
+    cooldownSeconds?: number | null;
 }
 
 /**
@@ -69,10 +69,10 @@ export function SplashConfigSchemaPatchFromJSONTyped(json: any, ignoreDiscrimina
     return {
         
         'enabled': json['enabled'] == null ? undefined : json['enabled'],
-        'trigger_classes': json['trigger_classes'] == null ? undefined : json['trigger_classes'],
-        'delay_seconds': json['delay_seconds'] == null ? undefined : json['delay_seconds'],
-        'duration_seconds': json['duration_seconds'] == null ? undefined : json['duration_seconds'],
-        'cooldown_seconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
+        'triggerClasses': json['trigger_classes'] == null ? undefined : json['trigger_classes'],
+        'delaySeconds': json['delay_seconds'] == null ? undefined : json['delay_seconds'],
+        'durationSeconds': json['duration_seconds'] == null ? undefined : json['duration_seconds'],
+        'cooldownSeconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
     };
 }
 
@@ -88,10 +88,10 @@ export function SplashConfigSchemaPatchToJSONTyped(value?: SplashConfigSchemaPat
     return {
         
         'enabled': value['enabled'],
-        'trigger_classes': value['trigger_classes'],
-        'delay_seconds': value['delay_seconds'],
-        'duration_seconds': value['duration_seconds'],
-        'cooldown_seconds': value['cooldown_seconds'],
+        'trigger_classes': value['triggerClasses'],
+        'delay_seconds': value['delaySeconds'],
+        'duration_seconds': value['durationSeconds'],
+        'cooldown_seconds': value['cooldownSeconds'],
     };
 }
 

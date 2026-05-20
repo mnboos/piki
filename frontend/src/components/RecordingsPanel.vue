@@ -18,10 +18,14 @@ import {
 } from "@/queries/recordings";
 import Panel from "primevue/panel";
 import Button from "primevue/button";
+import Dialog from "primevue/dialog";
 import ToggleSwitch from "primevue/toggleswitch";
 import Checkbox from "primevue/checkbox";
 import InputNumber from "primevue/inputnumber";
 import Fieldset from "primevue/fieldset";
+import { DefaultApi, type EventLogSummary } from "@/api";
+
+const api = new DefaultApi();
 
 // ── Queries ───────────────────────────────────────────────────────────────
 
@@ -106,6 +110,32 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ── Technical-log viewer ──────────────────────────────────────────────────
+
+const logDialogOpen = ref(false);
+const logSummary = ref<EventLogSummary | null>(null);
+const logSummaryVideoId = ref<number | null>(null);
+const logSummaryError = ref<string>("");
+const logSummaryLoading = ref(false);
+
+async function openLog(v: VideoInfo) {
+  logSummaryVideoId.value = v.id;
+  logDialogOpen.value = true;
+  logSummary.value = null;
+  logSummaryError.value = "";
+  logSummaryLoading.value = true;
+  try {
+    logSummary.value = await api.coreApiVideosLogSummary({ videoId: v.id });
+  } catch (err) {
+    logSummaryError.value = err instanceof Error ? err.message : "Failed to load log summary";
+  } finally {
+    logSummaryLoading.value = false;
+  }
+}
+
+const summaryLabels = (s: EventLogSummary | null) =>
+  s && s.labels ? Object.entries(s.labels as Record<string, { count: number; peakConfidence: number }>) : [];
 </script>
 
 <template>
@@ -297,6 +327,14 @@ function formatSize(bytes: number): string {
             severity="info"
           />
           <Button
+            v-if="v.hasLog"
+            label="Log"
+            icon="pi pi-list"
+            size="small"
+            severity="help"
+            @click="openLog(v)"
+          />
+          <Button
             label="Delete"
             icon="pi pi-trash"
             size="small"
@@ -306,6 +344,59 @@ function formatSize(bytes: number): string {
         </div>
       </div>
     </Panel>
+
+    <!-- Technical log summary modal -->
+    <Dialog
+      v-model:visible="logDialogOpen"
+      modal
+      header="Technical log"
+      :style="{ width: 'min(640px, 95vw)' }"
+    >
+      <div v-if="logSummaryLoading" class="log-status">Loading…</div>
+      <div v-else-if="logSummaryError" class="log-status log-status--error">
+        {{ logSummaryError }}
+      </div>
+      <div v-else-if="logSummary" class="log-summary">
+        <div class="log-row"><span class="log-key">Event ID</span><code>{{ logSummary.eventId ?? "?" }}</code></div>
+        <div class="log-row"><span class="log-key">Started</span><span>{{ logSummary.startedAt ?? "—" }}</span></div>
+        <div class="log-row"><span class="log-key">Duration</span><span>{{ (logSummary.durationSeconds ?? 0).toFixed(2) }}s</span></div>
+        <div class="log-row"><span class="log-key">Frames</span>
+          <span>
+            {{ logSummary.framesTotal }}
+            <small>({{ logSummary.framesPrebuffer }} pre-buffer, {{ logSummary.framesLive }} live)</small>
+          </span>
+        </div>
+        <div class="log-row"><span class="log-key">Detections</span><span>{{ logSummary.detectionsTotal }}</span></div>
+        <div class="log-row"><span class="log-key">Splashes</span><span>{{ logSummary.splashes }}</span></div>
+
+        <div v-if="logSummary.trigger" class="log-row">
+          <span class="log-key">Trigger</span>
+          <span>
+            {{ logSummary.trigger.label }}
+            ({{ (logSummary.trigger.confidence * 100).toFixed(1) }}%)
+          </span>
+        </div>
+
+        <div v-if="summaryLabels(logSummary).length" class="log-section">
+          <div class="log-key">Labels seen</div>
+          <ul class="log-labels">
+            <li v-for="[lbl, stats] in summaryLabels(logSummary)" :key="lbl">
+              <strong>{{ lbl }}</strong> — {{ stats.count }} hits, peak {{ (stats.peakConfidence * 100).toFixed(1) }}%
+            </li>
+          </ul>
+        </div>
+
+        <Button
+          v-if="logSummaryVideoId != null"
+          as="a"
+          :href="'/api/videos/' + logSummaryVideoId + '/log'"
+          label="Download .jsonl"
+          icon="pi pi-download"
+          size="small"
+          severity="info"
+        />
+      </div>
+    </Dialog>
   </div>
 </template>
 
@@ -449,6 +540,38 @@ function formatSize(bytes: number): string {
 .replay-info {
   font-family: monospace;
   font-size: 0.875rem;
+}
+.log-status {
+  font-size: 0.9rem;
+  color: var(--p-text-muted-color);
+}
+.log-status--error {
+  color: var(--p-red-500);
+}
+.log-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.log-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.log-key {
+  min-width: 6.5rem;
+  color: var(--p-text-muted-color);
+  font-size: 0.85rem;
+}
+.log-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.log-labels {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.85rem;
 }
 .replay-hint {
   font-size: 0.8rem;

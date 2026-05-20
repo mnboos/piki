@@ -366,12 +366,23 @@ def aim_at(
     """
     global _last_aim_time  # noqa: PLW0603
 
+    # Belt-and-braces safety check: refuse to aim at a point inside any
+    # exclusion zone, even if upstream filtering let it through (stale lock
+    # bbox surviving a zone change, etc.).
+    from . import exclusion as _exclusion  # noqa: PLC0415
+
     if aim_center is not None:
+        if _exclusion.point_inside_any(aim_center):
+            logger.debug("Aim suppressed: centroid (%.3f, %.3f) inside exclusion zone", *aim_center)
+            return 0.0, 0.0
         cx_n, cy_n = aim_center
         pan_angle = (cx_n - 0.5) * SERVO_HFOV
         tilt_angle = (cy_n - 0.5) * SERVO_VFOV
         logger.debug("Aim override: centroid (%.3f, %.3f) → pan=%.1f° tilt=%.1f°", cx_n, cy_n, pan_angle, tilt_angle)
     else:
+        if _exclusion.bbox_centroid_inside_any(bbox_normalized):
+            logger.debug("Aim suppressed: bbox %s inside exclusion zone", bbox_normalized)
+            return 0.0, 0.0
         pan_angle, tilt_angle = bbox_to_angles(bbox_normalized)
     logger.debug("Target at pan=%.1f° tilt=%.1f°", pan_angle, tilt_angle)
 
