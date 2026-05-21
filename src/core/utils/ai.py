@@ -6,6 +6,7 @@ import time
 import traceback
 from pathlib import Path
 
+import cv2
 import numpy as np
 from hobot_dnn import pyeasy_dnn as dnn
 
@@ -260,6 +261,32 @@ _YV8_REG_MAX = 16
 _YV8_BINS = np.arange(_YV8_REG_MAX, dtype=np.float32)
 
 
+def _nms_per_class(boxes, confs, cls_ids, iou_thres):
+    """Per-class NMS via cv2.dnn.NMSBoxes → list of (label, score, [x1,y1,x2,y2])."""
+    # cv2.dnn.NMSBoxes expects xywh boxes
+    xywh = np.stack([
+        boxes[:, 0], boxes[:, 1],
+        boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1],
+    ], axis=1)
+
+    results = []
+    for c in np.unique(cls_ids):
+        idx = np.where(cls_ids == c)[0]
+        indices = cv2.dnn.NMSBoxes(
+            bboxes=xywh[idx].tolist(),
+            scores=confs[idx].astype(np.float32),
+            score_threshold=0.0,
+            nms_threshold=iou_thres,
+        )
+        if not len(indices):
+            continue
+        for i in indices.flatten():
+            k = idx[i]
+            label = CLASSES[int(c)].strip() if int(c) < len(CLASSES) else str(int(c))
+            results.append((label, float(confs[k]), boxes[k]))
+    return results
+
+
 def yolov8_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_thres=0.45):
     logit_thres = np.log(conf_thres / (1.0 - conf_thres))
     all_boxes, all_confs, all_cls = [], [], []
@@ -299,34 +326,53 @@ def yolov8_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_th
 
     if not all_boxes:
         return []
-    boxes = np.concatenate(all_boxes)
-    confs = np.concatenate(all_confs)
-    cls_ids = np.concatenate(all_cls)
+    return _nms_per_class(
+        np.concatenate(all_boxes), np.concatenate(all_confs),
+        np.concatenate(all_cls), iou_thres,
+    )
 
-    results = []
-    for c in np.unique(cls_ids):
-        idx = np.where(cls_ids == c)[0]
-        b, s = boxes[idx], confs[idx]
-        order = s.argsort()[::-1]
-        keep = []
-        while order.size:
-            i = order[0]
-            keep.append(i)
-            if order.size == 1:
-                break
-            ix1 = np.maximum(b[i, 0], b[order[1:], 0])
-            iy1 = np.maximum(b[i, 1], b[order[1:], 1])
-            ix2 = np.minimum(b[i, 2], b[order[1:], 2])
-            iy2 = np.minimum(b[i, 3], b[order[1:], 3])
-            inter = np.maximum(0, ix2 - ix1) * np.maximum(0, iy2 - iy1)
-            union = ((b[i, 2] - b[i, 0]) * (b[i, 3] - b[i, 1])
-                     + (b[order[1:], 2] - b[order[1:], 0]) * (b[order[1:], 3] - b[order[1:], 1])
-                     - inter)
-            order = order[1:][inter / np.maximum(union, 1e-6) < iou_thres]
-        for k in keep:
-            label = CLASSES[int(c)].strip() if int(c) < len(CLASSES) else str(int(c))
-            results.append((label, float(s[k]), b[k]))
-    return results
+
+# ---------------------------------------------------------------------------
+# YOLO26 post-processor (pure numpy)
+# Output format: 6 tensors alternating cls(1,H,W,80) / box(1,H,W,4), all
+# float32 (no quantization).  Unlike YOLOv8 there is no DFL — the box branch
+# regresses the four ltrb distances directly (in feature-map units, ×stride
+# to pixels).  The export is still a dense grid head, so per-class NMS runs on
+# CPU exactly as for YOLOv8.
+# ---------------------------------------------------------------------------
+def yolo26_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_thres=0.45):
+    logit_thres = np.log(conf_thres / (1.0 - conf_thres))
+    all_boxes, all_confs, all_cls = [], [], []
+
+    for si, stride in enumerate([8, 16, 32]):
+        cls_raw = outputs[si * 2].buffer.squeeze(0)      # (H, W, 80) float32 logits
+        box = outputs[si * 2 + 1].buffer.squeeze(0)      # (H, W, 4) float32 ltrb (grid units)
+
+        mask = cls_raw.max(axis=-1) > logit_thres
+        if not mask.any():
+            continue
+
+        cls_scores = 1.0 / (1.0 + np.exp(-cls_raw[mask]))  # sigmoid, (N, 80)
+        ltrb = box[mask] * stride                          # (N, 4) → pixels
+
+        ys, xs = np.where(mask)
+        cx = (xs + 0.5) * stride
+        cy = (ys + 0.5) * stride
+        x1 = np.clip(cx - ltrb[:, 0], 0, img_w)
+        y1 = np.clip(cy - ltrb[:, 1], 0, img_h)
+        x2 = np.clip(cx + ltrb[:, 2], 0, img_w)
+        y2 = np.clip(cy + ltrb[:, 3], 0, img_h)
+
+        all_boxes.append(np.stack([x1, y1, x2, y2], axis=1))
+        all_confs.append(cls_scores.max(-1))
+        all_cls.append(cls_scores.argmax(-1).astype(np.int32))
+
+    if not all_boxes:
+        return []
+    return _nms_per_class(
+        np.concatenate(all_boxes), np.concatenate(all_confs),
+        np.concatenate(all_cls), iou_thres,
+    )
 
 
 def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
@@ -382,7 +428,7 @@ try:
     model_file = (
         Path(model_file_env).resolve()
         if model_file_env
-        else Path("/app/model/basic/yolov8_640x640_nv12.bin")
+        else Path("/app/model/basic/yolo26n_detect_bayese_640x640_nv12.bin")
     )
 
     assert model_file.is_file(), f"Model file {model_file} not found!"
@@ -397,10 +443,17 @@ try:
     _input_type = model.inputs[0].properties.tensor_type
     _input_type_name = str(_input_type)
     MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type_name.upper() or "YUV" in _input_type_name.upper() else "BGR"
-    # YOLOv8 / YOLOv12n have 6 output tensors (alternating cls/box at 3 scales)
-    _USE_YOLOv8_DECODER = len(model.outputs) == 6
+    # Select the post-processor from the output layout.  YOLOv8/v12 and YOLO26
+    # both expose 6 tensors (cls/box at 3 scales); they differ in the box
+    # branch — YOLOv8 emits 64 channels (4×16 DFL bins), YOLO26 emits 4 (direct
+    # ltrb).  Anything else (1 tensor) falls back to the YOLOv5 libpostprocess.
+    if len(model.outputs) == 6:
+        _box_channels = int(model.outputs[1].properties.shape[-1])
+        _DECODER = "yolo26" if _box_channels == 4 else "yolov8"
+    else:
+        _DECODER = "yolov5"
     print(f"Model input type detected: {MODEL_INPUT_TYPE} (raw: {_input_type_name})")
-    print(f"Post-processor: {'yolov8 (numpy DFL)' if _USE_YOLOv8_DECODER else 'yolov5 (libpostprocess)'}")
+    print(f"Post-processor: {_DECODER}")
     print("done")
 
     worker_ready.set()
@@ -417,7 +470,9 @@ try:
         # boxes that on_done()'s hysteresis can still promote / maintain.
         conf = min(prob_threshold.value, prob_threshold_keep.value)
         t_dec = time.perf_counter()
-        if _USE_YOLOv8_DECODER:
+        if _DECODER == "yolo26":
+            results = yolo26_post_process(outputs=outputs, conf_thres=conf)
+        elif _DECODER == "yolov8":
             results = yolov8_post_process(outputs=outputs, conf_thres=conf)
         else:
             results = yolov10_post_process(outputs=outputs, score_threshold=conf)

@@ -107,7 +107,7 @@ export PYTHONUNBUFFERED=1
 ROS_IMAGE_TOPIC="/image_left_raw"
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
-export  MODEL_FILE=/app/model/basic/yolov8_640x640_nv12.bin
+export  MODEL_FILE=/app/model/basic/yolo26n_detect_bayese_640x640_nv12.bin
 
 python manage.py runserver --noreload 0.0.0.0:8000 &
 DJANGO_PID=$!
