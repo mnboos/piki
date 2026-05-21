@@ -926,6 +926,7 @@ def on_done(future: Future[InferenceOutput]):
                     elif time.time() - _s.splash_armed_at >= _s.splash_delay.value:
                         from .engine import activate_splash  # noqa: PLC0415
                         _s.splash_cooldown_until = time.time() + _s.splash_cooldown.value
+                        _s.splash_firing_until = time.time() + _s.splash_duration.value
                         _s.splash_armed_at = 0.0
                         activate_splash(_s.splash_duration.value)
                         logger.info("Splash fired for target=%s (duration=%.1fs, cooldown=%.1fs)",

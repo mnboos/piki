@@ -31,6 +31,7 @@ import type {
   ServoPositionSchema,
   SplashConfigSchema,
   SplashConfigSchemaPatch,
+  SplashStatus,
   SystemStatus,
   VideoInfo,
 } from '../models/index';
@@ -67,6 +68,8 @@ import {
     SplashConfigSchemaToJSON,
     SplashConfigSchemaPatchFromJSON,
     SplashConfigSchemaPatchToJSON,
+    SplashStatusFromJSON,
+    SplashStatusToJSON,
     SystemStatusFromJSON,
     SystemStatusToJSON,
     VideoInfoFromJSON,
@@ -358,6 +361,37 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiGetSplashConfig(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SplashConfigSchema> {
         const response = await this.coreApiGetSplashConfigRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Return live splash state for the frontend indicator.
+     * Get Splash Status
+     */
+    async coreApiGetSplashStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SplashStatus>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/splash_status`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => SplashStatusFromJSON(jsonValue));
+    }
+
+    /**
+     * Return live splash state for the frontend indicator.
+     * Get Splash Status
+     */
+    async coreApiGetSplashStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SplashStatus> {
+        const response = await this.coreApiGetSplashStatusRaw(initOverrides);
         return await response.value();
     }
 

@@ -1077,6 +1077,53 @@ def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSc
     )
 
 
+class SplashStatus(Schema):
+    state: str = "idle"
+    delay_remaining: float = 0.0
+    firing_remaining: float = 0.0
+    cooldown_remaining: float = 0.0
+    enabled: bool = False
+
+
+@api.get("/splash_status", response=SplashStatus)
+def get_splash_status(request: HttpRequest):
+    """Return live splash state for the frontend indicator."""
+    import time  # noqa: PLC0415
+
+    from .utils import shared as _s  # noqa: PLC0415
+
+    now = time.time()
+    is_enabled = _s.splash_enabled.is_set()
+
+    firing_until = _s.splash_firing_until
+    if firing_until > 0 and now < firing_until:
+        return SplashStatus(
+            state="firing",
+            firing_remaining=round(firing_until - now, 1),
+            enabled=is_enabled,
+        )
+
+    armed_at = _s.splash_armed_at
+    if armed_at > 0 and is_enabled:
+        elapsed = now - armed_at
+        remaining = max(0.0, float(_s.splash_delay.value) - elapsed)
+        return SplashStatus(
+            state="armed",
+            delay_remaining=round(remaining, 1),
+            enabled=is_enabled,
+        )
+
+    cooldown_until = _s.splash_cooldown_until
+    if cooldown_until > 0 and now < cooldown_until:
+        return SplashStatus(
+            state="cooldown",
+            cooldown_remaining=round(cooldown_until - now, 1),
+            enabled=is_enabled,
+        )
+
+    return SplashStatus(state="idle", enabled=is_enabled)
+
+
 # --------------------------------------------------------------------------- #
 # Exclusion zones                                                              #
 # --------------------------------------------------------------------------- #

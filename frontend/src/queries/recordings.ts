@@ -14,6 +14,17 @@ export function useTrackerStatusQuery() {
   });
 }
 
+// ── Splash status (polled, fast for responsive indicator) ─────────────────
+
+export function useSplashStatusQuery() {
+  return useQuery({
+    queryKey: ["splashStatus"],
+    queryFn: () => api.coreApiGetSplashStatus(),
+    refetchInterval: 500,
+    staleTime: 0,
+  });
+}
+
 // ── Event clips (polled, shared by RecordingsPanel list + HomeView toast) ──
 
 export function useEventClipsQuery() {

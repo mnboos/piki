@@ -8,6 +8,7 @@ import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import RecordingsPanel from "@/components/RecordingsPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
 import SplashPanel from "@/components/SplashPanel.vue";
+import SplashStatusIndicator from "@/components/SplashStatusIndicator.vue";
 import CameraFeed from "@/components/CameraFeed.vue";
 import ExclusionZoneOverlay from "@/components/ExclusionZoneOverlay.vue";
 import ExclusionZonesPanel from "@/components/ExclusionZonesPanel.vue";
@@ -165,6 +166,9 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
 <template>
     <div class="page">
         <Toast position="top-right" />
+        <div class="top-bar">
+            <SplashStatusIndicator />
+        </div>
         <Tabs value="camera">
             <TabList>
                 <Tab value="camera">Camera</Tab>
@@ -247,6 +251,11 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
     padding: 1rem;
     max-width: 900px;
     margin: 0 auto;
+}
+.top-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
 }
 .feed-wrapper {
     position: relative;

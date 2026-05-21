@@ -17,6 +17,7 @@ models/ServoMoveSchema.ts
 models/ServoPositionSchema.ts
 models/SplashConfigSchema.ts
 models/SplashConfigSchemaPatch.ts
+models/SplashStatus.ts
 models/SystemStatus.ts
 models/VideoInfo.ts
 models/index.ts

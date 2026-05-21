@@ -349,6 +349,7 @@ event_clip_queue_lock = threading.Lock()
 splash_enabled = threading.Event()
 splash_cooldown_until = 0.0
 splash_armed_at = 0.0
+splash_firing_until = 0.0
 splash_delay = mp.Value(c_float, 0.5)
 splash_duration = mp.Value(c_float, 1.0)
 splash_cooldown = mp.Value(c_float, 10.0)

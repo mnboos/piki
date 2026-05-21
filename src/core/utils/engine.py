@@ -42,7 +42,7 @@ SERVO_TILT_PIN: int = int(os.environ.get("SERVO_TILT_PIN", "33"))
 
 # GPIO pin for the splash relay/solenoid (digital output, not PWM).
 # Override with SPLASH_GPIO_PIN env var (physical pin number).
-SPLASH_GPIO_PIN: int = int(os.environ.get("SPLASH_GPIO_PIN", "36"))
+SPLASH_GPIO_PIN: int = int(os.environ.get("SPLASH_GPIO_PIN", "18"))
 
 # Standard 50 Hz servo PWM: 1.5 ms centre pulse → 7.5% duty cycle.
 # Mapping: angle [-90°, +90°] → duty cycle [2.5%, 12.5%]

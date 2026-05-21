@@ -16,5 +16,6 @@ export * from './ServoMoveSchema';
 export * from './ServoPositionSchema';
 export * from './SplashConfigSchema';
 export * from './SplashConfigSchemaPatch';
+export * from './SplashStatus';
 export * from './SystemStatus';
 export * from './VideoInfo';

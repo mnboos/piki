@@ -664,6 +664,26 @@
                 }
             }
         },
+        "/api/splash_status": {
+            "get": {
+                "operationId": "core_api_get_splash_status",
+                "summary": "Get Splash Status",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SplashStatus"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Return live splash state for the frontend indicator."
+            }
+        },
         "/api/exclusion_zones": {
             "get": {
                 "operationId": "core_api_list_exclusion_zones",
@@ -1893,6 +1913,37 @@
                     }
                 },
                 "title": "SplashConfigSchemaPatch",
+                "type": "object"
+            },
+            "SplashStatus": {
+                "properties": {
+                    "state": {
+                        "default": "idle",
+                        "title": "State",
+                        "type": "string"
+                    },
+                    "delay_remaining": {
+                        "default": 0.0,
+                        "title": "Delay Remaining",
+                        "type": "number"
+                    },
+                    "firing_remaining": {
+                        "default": 0.0,
+                        "title": "Firing Remaining",
+                        "type": "number"
+                    },
+                    "cooldown_remaining": {
+                        "default": 0.0,
+                        "title": "Cooldown Remaining",
+                        "type": "number"
+                    },
+                    "enabled": {
+                        "default": false,
+                        "title": "Enabled",
+                        "type": "boolean"
+                    }
+                },
+                "title": "SplashStatus",
                 "type": "object"
             },
             "ExclusionZoneSchema": {
