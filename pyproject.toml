@@ -12,7 +12,12 @@ dependencies = [
     "numpy>=1,<2",
     "opencv-contrib-python-headless>=4.11.0.86",
     "rich==14.2.0",
-    "rknn-toolkit-lite2==2.3.2 ; platform_machine == 'aarch64'",
+    "supervision>=0.24",
+]
+
+[tool.uv]
+override-dependencies = [
+    "opencv-python ; sys_platform == 'never'",
 ]
 
 [dependency-groups]
