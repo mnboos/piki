@@ -365,10 +365,10 @@ def slice_roi_into_tiles(
                     maybe_add_to_tiles(tx, ty)
                     if tx >= rx + rw - tile_size or tx >= buffer_w - tile_size:
                         break
-                    x += tile_size - int(tile_size * 0.1)
+                    x += tile_size - int(tile_size * 0.25)
                 if ty >= ry + rh - tile_size or ty >= buffer_h - tile_size:
                     break
-                y += tile_size - int(tile_size * 0.1)
+                y += tile_size - int(tile_size * 0.25)
 
     return tiles
 

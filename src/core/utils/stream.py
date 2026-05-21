@@ -563,70 +563,12 @@ def run_object_detection(
                 ]
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
-        # Collect tile origins and boundaries for edge-proximity check.
-        seen_origins: set[tuple[int, int]] = set()
-        tile_edges: list[tuple[int, int, int, int]] = []  # (left, top, right, bottom)
-        for _, tx, ty in tiles:
-            seen_origins.add((tx, ty))
-            tile_edges.append((tx, ty, tx + ai_input_size, ty + ai_input_size))
-
         _t = time.perf_counter()
         all_detections = _nms_detections(all_detections, iou_threshold=0.45)
         if _profile:
             logger.info("PERF stage=cross_tile_nms ms=%.2f", (time.perf_counter() - _t) * 1000)
 
-        # --- Second pass: re-detect objects that touch a tile boundary ----------
-        EDGE_MARGIN = 32  # pixels — ~5 % of a 640 px tile
-
-        extra_tiles: list[tuple[int, int]] = []
-        for det in all_detections:
-            x1 = int(det.bbox[1] * frame_w)
-            y1 = int(det.bbox[0] * frame_h)
-            x2 = int(det.bbox[3] * frame_w)
-            y2 = int(det.bbox[2] * frame_h)
-
-            for left, top, right, bottom in tile_edges:
-                if (abs(x1 - left) <= EDGE_MARGIN
-                        or abs(x2 - right) <= EDGE_MARGIN
-                        or abs(y1 - top) <= EDGE_MARGIN
-                        or abs(y2 - bottom) <= EDGE_MARGIN):
-                    cx = (x1 + x2) // 2
-                    cy = (y1 + y2) // 2
-                    new_tx = max(0, min(cx - ai_input_size // 2, frame_w - ai_input_size))
-                    new_ty = max(0, min(cy - ai_input_size // 2, frame_h - ai_input_size))
-                    if (new_tx, new_ty) not in seen_origins:
-                        extra_tiles.append((new_tx, new_ty))
-                        seen_origins.add((new_tx, new_ty))
-                    break  # one matching edge is enough
-
-        if extra_tiles:
-            from .func import _slice_nv12_tile  # noqa: PLC0415
-
-            for tx, ty in extra_tiles:
-                tile_img = _slice_nv12_tile(
-                    nv12=frame_hires, buffer_h=frame_h, tx=tx, ty=ty, tile_size=ai_input_size,
-                )
-                duration, detections = detect_objects(tile_img)
-                total_duration += duration
-
-                for label, confidence, local_pixel_bbox in detections:
-                    lx1, ly1, lx2, ly2 = local_pixel_bbox
-                    all_detections.append(Detection(
-                        label=label,
-                        confidence=confidence,
-                        bbox=[
-                            (ly1 + ty) / frame_h,
-                            (lx1 + tx) / frame_w,
-                            (ly2 + ty) / frame_h,
-                            (lx2 + tx) / frame_w,
-                        ],
-                    ))
-
-            all_detections = _nms_detections(all_detections, iou_threshold=0.45)
-
-        # -----------------------------------------------------------------------
-
-        avg_duration = 0 if not tiles else total_duration // (len(tiles) + len(extra_tiles))
+        avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
             timestamp=timestamp,
