@@ -13,6 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from multiprocessing import Lock, Semaphore
 from typing import IO, Any, Optional
 
+import norfair
 import numpy as np
 import rclpy
 from sensor_msgs.msg import Image as RosImage
@@ -135,9 +136,15 @@ _event_video_path: str = ""
 _latest_inference_log_entries: list[dict] = []
 _latest_inference_lock = threading.Lock()
 
-# Module-level tracker instance, lazily constructed on first inference so
-# the module can be imported in contexts that don't need it.
-_tracker: "Optional[object]" = None
+# Module-level Norfair tracker, lazily constructed on first inference so the
+# module can be imported in contexts that don't need it.  Norfair matches
+# within the same label (IoU distance + Kalman), the same behavior as the
+# bespoke tracker it replaces.
+_tracker: "Optional[norfair.Tracker]" = None
+# (iou_threshold, max_misses, confirm_hits) the live tracker was built with.
+# Norfair has no live setters (max_time_lost/initialization are fixed in
+# __init__), so a knob change requires re-instantiation (track ids reset).
+_tracker_params: "Optional[tuple[float, int, int]]" = None
 
 
 def _foreground_centroid(
@@ -711,80 +718,96 @@ def on_done(future: Future[InferenceOutput]):
                 n_dropped_by_zone, n_dropped_by_zone + len(kept),
             )
 
-        # --- SORT-style tracker (Phase B) ---
+        # --- Norfair tracker (Phase B) ---
         # When enabled, replace the raw detection list with the tracker's
         # confirmed tracks.  Track ids / ages are stamped onto the matching
         # log entries so the per-event JSONL can reconstruct identities.
-        global _tracker
+        # Norfair runs in normalized [0, 1] space — bbox is
+        # [ymin, xmin, ymax, xmax]; the built-in "iou" distance reads the
+        # two-point [[x1,y1],[x2,y2]] form as a box.  It fills brief detection
+        # gaps by predicting through the Kalman estimate (same as the old
+        # tracker), so a confirmed track without a match this frame still
+        # contributes.
+        global _tracker, _tracker_params
         tracker_on = bool(tracker_enabled.value)
         if tracker_on:
-            from . import tracking as _tracking  # noqa: PLC0415
-
-            if _tracker is None:
-                _tracker = _tracking.IouTracker(
-                    iou_threshold=float(tracker_iou_threshold.value),
-                    max_misses=int(tracker_max_misses.value),
-                    confirm_hits=int(tracker_confirm_hits.value),
+            desired_params = (
+                float(tracker_iou_threshold.value),
+                int(tracker_max_misses.value),
+                max(1, int(tracker_confirm_hits.value)),
+            )
+            if _tracker is None or _tracker_params != desired_params:
+                # Norfair has no live setters — re-instantiate on knob change
+                # (track ids reset; acceptable for tuning sessions).  IoU
+                # distance is 1 - IoU, so distance_threshold = 1 - iou_thresh.
+                # initialization_delay must stay below hit_counter_max.
+                _tracker = norfair.Tracker(
+                    distance_function="iou",
+                    distance_threshold=1.0 - desired_params[0],
+                    hit_counter_max=desired_params[1],
+                    initialization_delay=min(desired_params[2], max(0, desired_params[1] - 1)),
                 )
-            else:
-                _tracker.iou_threshold = float(tracker_iou_threshold.value)
-                _tracker.max_misses = int(tracker_max_misses.value)
-                _tracker.confirm_hits = int(tracker_confirm_hits.value)
+                _tracker_params = desired_params
 
-            tracks = _tracker.update(detections)
+            norfair_dets = [
+                norfair.Detection(
+                    points=np.array([[xmin, ymin], [xmax, ymax]], dtype=np.float32),
+                    scores=np.array([conf, conf], dtype=np.float32),
+                    label=label,
+                )
+                for label, conf, (ymin, xmin, ymax, xmax) in detections
+            ]
+            tracked = _tracker.update(detections=norfair_dets)
+            # Identity set of detections matched this frame — Norfair stores the
+            # exact Detection instance as `obj.last_detection` on a match, so a
+            # tracked object whose last_detection isn't in this frame's batch is
+            # a Kalman prediction (gap fill), i.e. the old tracker's `misses>0`.
+            matched_ids = {id(d) for d in norfair_dets}
 
-            # Hide tracks whose predicted bbox center is inside an exclusion
-            # zone from downstream consumers (display, aim, recording, log
-            # annotation).  The track stays alive in the tracker so it can be
-            # re-acquired with the same id when the target leaves the zone —
-            # we just suppress its output while it's still predicting inside
-            # the carve-out.
-            #
-            # Strict mode (zones active): we also drop tracks that didn't
-            # match a real detection this frame (`misses > 0`).  Kalman state
-            # carries the pre-zone velocity and can extrapolate the predicted
-            # bbox *past* the zone boundary, which would defeat the centroid
-            # check on its own and let the servo keep tracking through the
-            # zone.  This trades the tracker's single-frame-gap fill for
-            # honest zone enforcement — the user explicitly chose that
-            # priority by drawing a zone.
-            if zones_active:
-                visible_tracks = [
-                    t for t in tracks
-                    if t.misses == 0
-                    and not _exclusion.bbox_centroid_inside_any(t.bbox_norm)
-                ]
-            else:
-                visible_tracks = tracks
+            # Project tracked objects to (label, conf, bbox_norm, track_id, age),
+            # dropping any whose centroid sits inside an exclusion zone.  In
+            # strict mode (zones active) we also drop prediction-only tracks:
+            # the Kalman estimate can extrapolate *past* a zone boundary, which
+            # would defeat the centroid check and let the servo track through
+            # the carve-out — the user chose that priority by drawing a zone.
+            visible: list[tuple[str, float, list[float], int, int]] = []
+            for obj in tracked:
+                if obj.id is None:
+                    continue
+                matched_now = id(obj.last_detection) in matched_ids
+                if zones_active and not matched_now:
+                    continue
+                est = obj.estimate
+                x1, x2 = float(est[0][0]), float(est[1][0])
+                y1, y2 = float(est[0][1]), float(est[1][1])
+                bbox_norm = [min(y1, y2), min(x1, x2), max(y1, y2), max(x1, x2)]
+                if zones_active and _exclusion.bbox_centroid_inside_any(bbox_norm):
+                    continue
+                label = str(obj.last_detection.label)
+                scores = obj.last_detection.scores
+                conf = float(np.mean(scores)) if scores is not None else 0.0
+                visible.append((label, conf, bbox_norm, int(obj.id), int(obj.age)))
 
             # Annotate log entries with their matching track (best IoU, same
-            # label).  Unmatched detections (e.g. very low IoU vs all tracks)
-            # keep track_id=None.
+            # label).  Unmatched detections keep track_id=None.
             for ent in log_entries:
                 if ent["inside_exclusion"]:
                     continue
                 best_iou = 0.3
-                best_t = None
+                best: Optional[tuple[int, int]] = None
                 lbl_lc = ent["label"].strip().lower()
-                for t in visible_tracks:
-                    if t.label.strip().lower() != lbl_lc:
+                for label, _conf, bbox_norm, tid, age in visible:
+                    if label.strip().lower() != lbl_lc:
                         continue
-                    iou_v = _tracking._iou(ent["bbox_norm"], t.bbox_norm)
+                    iou_v = _compute_iou(ent["bbox_norm"], bbox_norm)
                     if iou_v > best_iou:
                         best_iou = iou_v
-                        best_t = t
-                if best_t is not None:
-                    ent["track_id"] = int(best_t.id)
-                    ent["track_age_frames"] = int(best_t.age_frames)
+                        best = (tid, age)
+                if best is not None:
+                    ent["track_id"] = int(best[0])
+                    ent["track_age_frames"] = int(best[1])
 
-            # Replace `detections` with the confirmed tracks for downstream.
-            # The tracker fills brief detection gaps by predicting through
-            # `bbox_norm`, so a confirmed track without a match this frame
-            # still contributes — fixing the single-frame-miss jitter.
-            detections = [
-                (t.label, float(t.last_confidence), list(t.bbox_norm))
-                for t in visible_tracks if t.confirmed
-            ]
+            detections = [(label, conf, bbox_norm) for label, conf, bbox_norm, _tid, _age in visible]
 
         with _latest_inference_lock:
             global _latest_inference_log_entries
@@ -1410,10 +1433,10 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                     draw_boxes=True,
                 )
     else:
-        # No movement — let the tracker tick "idle" so a stationary target's
-        # track doesn't accumulate `misses` while inference is gated off.
+        # No movement — age the tracker with an empty update so a stationary
+        # target's track expires consistently while inference is gated off.
         if _tracker is not None and tracker_enabled.value:
-            _tracker.tick_idle()
+            _tracker.update(detections=[])
         if streaming_active.is_set():
             # Clear stale detections for the display, but respect the
             # ghost-frame window so a momentary motion lull doesn't drop the

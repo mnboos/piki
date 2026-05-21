@@ -2,7 +2,6 @@ import asyncio
 from typing import Optional
 
 import numpy as np
-import supervision as sv
 from django.http import HttpRequest
 from django.http.response import StreamingHttpResponse
 from ninja import NinjaAPI, PatchDict, Schema
@@ -73,40 +72,14 @@ _YOLO_CLASSES: list[str] = [
     "hair drier", "toothbrush",
 ]
 
-# Detection-box annotators (supervision).  Single fixed colour matches the
-# previous manual cv2 drawing: BGR (0, 255, 128) == RGB (128, 255, 0).  The
-# scene is an OpenCV BGR ndarray, which supervision annotates in place.
-_BOX_RGB = sv.Color(r=128, g=255, b=0)
-_box_annotator = sv.BoxAnnotator(color=_BOX_RGB, thickness=2)
-_label_annotator = sv.LabelAnnotator(
-    color=_BOX_RGB, text_color=sv.Color.BLACK, text_scale=0.5, text_padding=4,
-)
-
-
-def _detections_to_sv(detections) -> sv.Detections:
-    """Build an ``sv.Detections`` from the stream's ``Detection`` tuples.
-
-    ``detection.bbox`` is ``(left, top, w, h)`` in pixel coordinates; convert
-    to the ``xyxy`` supervision expects.  Labels/confidences ride along in
-    ``.data`` so the annotators can render them.
-    """
-    if not detections:
-        return sv.Detections.empty()
-    xyxy = np.array(
-        [[d.bbox[0], d.bbox[1], d.bbox[0] + d.bbox[2], d.bbox[1] + d.bbox[3]] for d in detections],
-        dtype=np.float32,
-    )
-    out = sv.Detections(
-        xyxy=xyxy,
-        confidence=np.array([float(d.confidence) for d in detections], dtype=np.float32),
-        class_id=np.zeros(len(detections), dtype=int),
-    )
-    out.data["label"] = np.array([d.label for d in detections])
-    return out
-
 
 async def stream_camera():
     """Video streaming generator function with corrected drawing logic."""
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.5
+    box_color = (0, 255, 128)  # A nice green for the boxes
+    thickness = 2
+
     is_object_detection_disabled.clear()
     streaming_active.set()
     try:
@@ -130,17 +103,32 @@ async def stream_camera():
             else:
                 draw_frame = np.array(frame)  # writable copy if already BGR
 
-            # Draw detection boxes + labels via supervision annotators.
-            if app_settings.debug_settings.show_boxes and detections:
-                sv_dets = _detections_to_sv(detections)
-                draw_frame = _box_annotator.annotate(scene=draw_frame, detections=sv_dets)
-                labels = [
-                    f"{label} ({conf:.0%})"
-                    for label, conf in zip(sv_dets.data["label"], sv_dets.confidence)
-                ]
-                draw_frame = _label_annotator.annotate(
-                    scene=draw_frame, detections=sv_dets, labels=labels,
-                )
+            # Draw detections on the frame
+            if app_settings.debug_settings.show_boxes:
+                for detection in detections:
+                    left, top, w, h = detection.bbox
+                    left, top, w, h = int(left), int(top), int(w), int(h)
+                    right = left + w
+                    bottom = top + h
+
+                    cv2.rectangle(draw_frame, (left, top), (right, bottom), box_color, thickness)
+
+                    text_to_draw = f"{detection.label} ({detection.confidence:.1%})"
+                    (text_w, text_h), _ = cv2.getTextSize(text_to_draw, font, font_scale, thickness)
+                    text_bg_rect_start = (left, top - text_h - 7)
+                    text_bg_rect_end = (left + text_w, top)
+                    cv2.rectangle(draw_frame, text_bg_rect_start, text_bg_rect_end, box_color, -1)
+
+                    cv2.putText(
+                        draw_frame,
+                        text_to_draw,
+                        (left, top - 5),
+                        font,
+                        font_scale,
+                        (0, 0, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
             # Draw segmentation mask overlay when available.
             if app_settings.debug_settings.show_seg:
