@@ -76,10 +76,13 @@ from .utils.shared import (
     tracker_drawables,
     settings,
     pump_duty,
+    splash_armed_at,
     splash_cooldown,
+    splash_cooldown_until,
     splash_delay,
     splash_duration,
     splash_enabled,
+    splash_firing_until,
     streaming_active,
     tracker_confirm_hits,
     tracker_enabled,
@@ -1097,9 +1100,9 @@ def get_splash_status(request: HttpRequest):
 
 
     now = time.time()
-    is_enabled = _s.splash_enabled.is_set()
+    is_enabled = splash_enabled.is_set()
 
-    firing_until = _s.splash_firing_until
+    firing_until = splash_firing_until
     if firing_until > 0 and now < firing_until:
         return SplashStatus(
             state="firing",
@@ -1107,17 +1110,17 @@ def get_splash_status(request: HttpRequest):
             enabled=is_enabled,
         )
 
-    armed_at = _s.splash_armed_at
+    armed_at = splash_armed_at
     if armed_at > 0 and is_enabled:
         elapsed = now - armed_at
-        remaining = max(0.0, float(_s.splash_delay.value) - elapsed)
+        remaining = max(0.0, float(splash_delay.value) - elapsed)
         return SplashStatus(
             state="armed",
             delay_remaining=round(remaining, 1),
             enabled=is_enabled,
         )
 
-    cooldown_until = _s.splash_cooldown_until
+    cooldown_until = splash_cooldown_until
     if cooldown_until > 0 and now < cooldown_until:
         return SplashStatus(
             state="cooldown",

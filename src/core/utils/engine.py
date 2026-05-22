@@ -698,6 +698,15 @@ def _init_pump() -> bool:
     try:
         import Hobot.GPIO as GPIO  # noqa: PLC0415
 
+        # May be called from a different thread — ensure the channel mode
+        # is set after any cleanup (cleanup resets internal state).
+        try:
+            GPIO.cleanup([SPLASH_GPIO_PIN, PUMP_IN1_PIN, PUMP_IN2_PIN])
+        except Exception:
+            pass
+        GPIO.setmode(GPIO.BOARD)
+        GPIO.setwarnings(False)
+
         GPIO.setup(PUMP_IN1_PIN, GPIO.OUT)
         GPIO.output(PUMP_IN1_PIN, GPIO.HIGH)
         GPIO.setup(PUMP_IN2_PIN, GPIO.OUT)
