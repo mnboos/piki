@@ -1,11 +1,39 @@
 import asyncio
+import logging
+import time
 from typing import Optional
 
+import norfair
 import numpy as np
 from django.http import HttpRequest
-from django.http.response import StreamingHttpResponse
+from norfair import Palette
+from django.http.response import FileResponse, StreamingHttpResponse
 from ninja import NinjaAPI, PatchDict, Schema
 
+from .models import (
+    AimConfig,
+    DetectionConfig,
+    EventRecordingConfig,
+    ExclusionZone,
+    SplashConfig,
+    Video,
+)
+from .utils import exclusion
+from .utils.engine import move_to
+from .utils.event_log import summarize_log
+from .utils.recording import (
+    get_recording_stats,
+    is_recording,
+    pre_buffer_clear,
+    start_recording,
+    stop_recording,
+)
+from .utils.replay import (
+    get_replay_stats,
+    is_replaying,
+    start_replay,
+    stop_replay,
+)
 from .utils.shared import (
     app_settings,
     bbox_ema_alpha,
@@ -32,14 +60,20 @@ from .utils.shared import (
     prob_threshold_keep,
     recording_active,
     replaying_active,
+    servo_aim_confidence,
     servo_dead_zone,
     servo_kalman_meas_noise,
+    servo_kalman_pan,
     servo_kalman_process_noise,
+    servo_kalman_tilt,
     servo_pan,
+    servo_pan_invert,
     servo_pid_kd,
     servo_pid_ki,
     servo_pid_kp,
     servo_tilt,
+    servo_tilt_invert,
+    tracker_drawables,
     settings,
     pump_duty,
     splash_cooldown,
@@ -51,6 +85,7 @@ from .utils.shared import (
     tracker_enabled,
     tracker_iou_threshold,
     tracker_max_misses,
+    vertical_angle_offset,
 )
 
 # api = NinjaAPI(csrf=True, auth=django_auth)
@@ -108,30 +143,43 @@ async def stream_camera():
 
             # Draw detections with Norfair — drawable objects are pre-built
             # in stream.py so we just pass them through to draw_boxes.
-            from .utils.shared import tracker_drawables  # noqa: PLC0415
-
             if app_settings.debug_settings.show_boxes and tracker_drawables:
                 try:
-                    import norfair  # noqa: PLC0415
-                    from norfair import Palette  # noqa: PLC0415
-
                     Palette.set("tab10")
                     norfair.draw_boxes(
                         draw_frame,
                         drawables=tracker_drawables,
-                        color="by_id",
+                        color="by_label",
                         draw_ids=True,
-                        draw_labels=True,
-                        draw_scores=True,
+                        draw_labels=False,
+                        draw_scores=False,
                     )
+                    # Norfair doesn't clamp labels to frame boundaries.
+                    # Draw them ourselves with proper clamping.
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.45
+                    for d in tracker_drawables:
+                        x, y = int(d.points[0, 0]), int(d.points[0, 1])
+                        tid = getattr(d, 'id', None)
+                        label = getattr(d, 'label', '')
+                        score = float(np.mean(d.scores)) if d.scores is not None else 0.0
+                        text = f"#{tid} {label} ({score:.1%})" if tid else f"{label} ({score:.1%})"
+                        (tw, th), _ = cv2.getTextSize(text, font, font_scale, 1)
+                        # Clamp: prefer above the box; fall inside if near top edge
+                        if y > th + 4:
+                            text_y = y - 4
+                            bg_y1, bg_y2 = y - th - 6, y
+                        else:
+                            text_y = y + th + 2
+                            bg_y1, bg_y2 = y, y + th + 4
+                        cv2.rectangle(draw_frame, (x, bg_y1), (x + tw, bg_y2), (0, 0, 0), -1)
+                        cv2.putText(draw_frame, text, (x, text_y), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
                 except Exception:
-                    import logging  # noqa: PLC0415
                     logging.getLogger(__name__).exception("Norfair draw_boxes failed")
 
             # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
             # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
             from .utils.engine import SERVO_HFOV, SERVO_VFOV  # noqa: PLC0415
-            from .utils.shared import servo_kalman_pan, servo_kalman_tilt  # noqa: PLC0415
             fh, fw = draw_frame.shape[:2]
 
             def _angle_to_px(pan: float, tilt: float) -> tuple[int, int]:
@@ -264,7 +312,6 @@ class PikiOptions(Schema):
 
 @api.patch("/update_options", response=PikiOptions)
 def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
-    from .models import DetectionConfig  # noqa: PLC0415
 
     if (v := options.get("show_boxes")) is not None:
         app_settings.debug_settings.show_boxes = v
@@ -447,7 +494,6 @@ class AimConfigSchema(Schema):
 @api.get("/aim_config", response=AimConfigSchema)
 def get_aim_config(request: HttpRequest):
     """Return current servo aim configuration."""
-    from .utils.shared import servo_aim_confidence, vertical_angle_offset  # noqa: PLC0415
 
     return AimConfigSchema(
         target_classes=list(app_settings.aim_settings.target_classes or []),
@@ -463,13 +509,6 @@ def get_aim_config(request: HttpRequest):
 @api.patch("/aim_config", response=AimConfigSchema)
 def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema]):
     """Update servo aim configuration and persist to database."""
-    from .models import AimConfig  # noqa: PLC0415
-    from .utils.shared import (  # noqa: PLC0415
-        servo_aim_confidence,
-        servo_pan_invert,
-        servo_tilt_invert,
-        vertical_angle_offset,
-    )
 
     config = AimConfig.load()
 
@@ -550,7 +589,6 @@ class ServoPositionSchema(Schema):
 @api.post("/servo/move", response=ServoPositionSchema)
 def servo_move(request: HttpRequest, payload: ServoMoveSchema):
     """Manually command both servos to explicit angles (debug / calibration mode)."""
-    from .utils.engine import move_to  # noqa: PLC0415
 
     pan, tilt = move_to(payload.pan_angle, payload.tilt_angle)
     return ServoPositionSchema(pan_angle=pan, tilt_angle=tilt)
@@ -615,7 +653,6 @@ class ReplayStatus(Schema):
 
 @api.post("/recording/start", response={200: RecordingStatus, 409: dict})
 def recording_start(request: HttpRequest):
-    from .utils.recording import get_recording_stats, is_recording, start_recording  # noqa: PLC0415
 
     if replaying_active.is_set():
         return 409, {"detail": "Cannot record while replaying."}
@@ -645,8 +682,6 @@ def recording_start(request: HttpRequest):
 
 @api.post("/recording/stop", response=RecordingStatus)
 def recording_stop(request: HttpRequest):
-    from .models import Video  # noqa: PLC0415
-    from .utils.recording import get_recording_stats, stop_recording  # noqa: PLC0415
 
     recording_active.clear()
     path, frame_count, error = stop_recording()
@@ -670,9 +705,7 @@ def recording_stop(request: HttpRequest):
 
 @api.get("/recording/status", response=RecordingStatus)
 def recording_status(request: HttpRequest):
-    import time  # noqa: PLC0415
 
-    from .utils.recording import get_recording_stats, is_recording  # noqa: PLC0415
 
     cooldown_remaining = max(0.0, event_recording_cooldown_until - time.time())
     event_fields = {
@@ -689,7 +722,6 @@ def recording_status(request: HttpRequest):
 
 @api.get("/videos", response=list[VideoInfo])
 def videos_list(request: HttpRequest):
-    from .models import Video  # noqa: PLC0415
 
     results = []
     for v in Video.objects.all():
@@ -710,7 +742,6 @@ def videos_list(request: HttpRequest):
 
 @api.post("/videos/upload", response=VideoInfo)
 def videos_upload(request: HttpRequest):
-    from .models import Video  # noqa: PLC0415
 
     uploaded = request.FILES.get("file")
     if not uploaded:
@@ -747,9 +778,7 @@ _VIDEO_BIN_RESPONSE = {
 
 @api.get("/videos/{video_id}/download", openapi_extra=_VIDEO_BIN_RESPONSE)
 def videos_download(request: HttpRequest, video_id: int):
-    from django.http.response import FileResponse  # noqa: PLC0415
 
-    from .models import Video  # noqa: PLC0415
 
     try:
         video = Video.objects.get(pk=video_id)
@@ -797,9 +826,7 @@ class EventLogSummary(Schema):
 
 @api.get("/videos/{video_id}/log", openapi_extra=_LOG_DOWNLOAD_RESPONSE)
 def videos_log_download(request: HttpRequest, video_id: int):
-    from django.http.response import FileResponse  # noqa: PLC0415
 
-    from .models import Video  # noqa: PLC0415
 
     try:
         video = Video.objects.get(pk=video_id)
@@ -822,8 +849,6 @@ def videos_log_download(request: HttpRequest, video_id: int):
 
 @api.get("/videos/{video_id}/log/summary", response=EventLogSummary)
 def videos_log_summary(request: HttpRequest, video_id: int):
-    from .models import Video  # noqa: PLC0415
-    from .utils.event_log import summarize_log  # noqa: PLC0415
 
     try:
         video = Video.objects.get(pk=video_id)
@@ -842,7 +867,6 @@ def videos_log_summary(request: HttpRequest, video_id: int):
 
 @api.delete("/videos/{video_id}", response={200: dict})
 def videos_delete(request: HttpRequest, video_id: int):
-    from .models import Video  # noqa: PLC0415
 
     try:
         video = Video.objects.get(pk=video_id)
@@ -866,8 +890,6 @@ def videos_delete(request: HttpRequest, video_id: int):
 
 @api.post("/replay/start/{video_id}", response={200: ReplayStatus, 409: dict})
 def replay_start(request: HttpRequest, video_id: int):
-    from .models import Video  # noqa: PLC0415
-    from .utils.replay import start_replay, is_replaying, get_replay_stats  # noqa: PLC0415
 
     if recording_active.is_set():
         return 409, {"detail": "Cannot replay while recording."}
@@ -889,7 +911,6 @@ def replay_start(request: HttpRequest, video_id: int):
     replaying_active.set()
     start_replay(str(file_path), filename=video.filename)
 
-    import time  # noqa: PLC0415
     time.sleep(0.1)
 
     stats = get_replay_stats()
@@ -898,7 +919,6 @@ def replay_start(request: HttpRequest, video_id: int):
 
 @api.post("/replay/stop", response={200: dict})
 def replay_stop(request: HttpRequest):
-    from .utils.replay import stop_replay  # noqa: PLC0415
 
     stop_replay()
     replaying_active.clear()
@@ -907,7 +927,6 @@ def replay_stop(request: HttpRequest):
 
 @api.get("/replay/status", response=ReplayStatus)
 def replay_status(request: HttpRequest):
-    from .utils.replay import get_replay_stats, is_replaying  # noqa: PLC0415
 
     if not is_replaying():
         return ReplayStatus(is_replaying=False)
@@ -937,8 +956,6 @@ def get_event_recording_config(request: HttpRequest):
 @api.patch("/event_recording_config", response=EventRecordingConfigSchema)
 def update_event_recording_config(request: HttpRequest, payload: PatchDict[EventRecordingConfigSchema]):
     """Update event-triggered recording configuration and persist to DB."""
-    from .models import EventRecordingConfig  # noqa: PLC0415
-    from .utils.recording import pre_buffer_clear  # noqa: PLC0415
 
     config = EventRecordingConfig.load()
 
@@ -1025,7 +1042,6 @@ def get_splash_config(request: HttpRequest):
 @api.patch("/splash_config", response=SplashConfigSchema)
 def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSchema]):
     """Update splash configuration and persist to database."""
-    from .models import SplashConfig  # noqa: PLC0415
 
     config = SplashConfig.load()
 
@@ -1078,9 +1094,7 @@ class SplashStatus(Schema):
 @api.get("/splash_status", response=SplashStatus)
 def get_splash_status(request: HttpRequest):
     """Return live splash state for the frontend indicator."""
-    import time  # noqa: PLC0415
 
-    from .utils import shared as _s  # noqa: PLC0415
 
     now = time.time()
     is_enabled = _s.splash_enabled.is_set()
@@ -1142,7 +1156,6 @@ def _validate_points(points) -> list[list[float]]:
 
 @api.get("/exclusion_zones", response=list[ExclusionZoneSchema])
 def list_exclusion_zones(request: HttpRequest):
-    from .models import ExclusionZone  # noqa: PLC0415
 
     return [
         ExclusionZoneSchema(id=z.id, name=z.name, enabled=z.enabled, points=z.points)
@@ -1152,8 +1165,6 @@ def list_exclusion_zones(request: HttpRequest):
 
 @api.post("/exclusion_zones", response=ExclusionZoneSchema)
 def create_exclusion_zone(request: HttpRequest, payload: ExclusionZoneSchema):
-    from .models import ExclusionZone  # noqa: PLC0415
-    from .utils import exclusion  # noqa: PLC0415
 
     zone = ExclusionZone.objects.create(
         name=payload.name or "zone",
@@ -1166,8 +1177,6 @@ def create_exclusion_zone(request: HttpRequest, payload: ExclusionZoneSchema):
 
 @api.patch("/exclusion_zones/{zone_id}", response=ExclusionZoneSchema)
 def update_exclusion_zone(request: HttpRequest, zone_id: int, payload: PatchDict[ExclusionZoneSchema]):
-    from .models import ExclusionZone  # noqa: PLC0415
-    from .utils import exclusion  # noqa: PLC0415
 
     try:
         zone = ExclusionZone.objects.get(pk=zone_id)
@@ -1187,8 +1196,6 @@ def update_exclusion_zone(request: HttpRequest, zone_id: int, payload: PatchDict
 
 @api.delete("/exclusion_zones/{zone_id}")
 def delete_exclusion_zone(request: HttpRequest, zone_id: int):
-    from .models import ExclusionZone  # noqa: PLC0415
-    from .utils import exclusion  # noqa: PLC0415
 
     deleted, _ = ExclusionZone.objects.filter(pk=zone_id).delete()
     if not deleted:

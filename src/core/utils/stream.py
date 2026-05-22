@@ -8,24 +8,37 @@ import subprocess
 import threading
 import time
 import traceback
+import uuid
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime
 from multiprocessing import Lock, Semaphore
+from pathlib import Path
 from typing import IO, Any, Optional
 
 import norfair
 import numpy as np
 import rclpy
+from django.conf import settings as django_settings
 from sensor_msgs.msg import Image as RosImage
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
+from . import shared as _s
+from .ai import MODEL_INPUT_TYPE, detect_objects
+from .event_log import EventLogger
 from .func import (
     slice_roi_into_tiles,
 )
 from .interfaces import Box, DoubleBuffer
 from .metrics import LiveMetricsDashboard
+from .recording import (
+    EventClipRecorder,
+    pre_buffer_append,
+    pre_buffer_snapshot,
+    write_frame,
+)
 from .shared import (
     NUM_AI_WORKERS,
     Detection,
@@ -325,7 +338,6 @@ def run_object_detection(
         frame_w = frame_hires.shape[1]
         frame_h = frame_hires.shape[0] * 2 // 3
 
-        from .ai import MODEL_INPUT_TYPE, detect_objects  # noqa: PLC0415
 
         _t = time.perf_counter()
         tiles = slice_roi_into_tiles(
@@ -628,7 +640,6 @@ def on_done(future: Future[InferenceOutput]):
             _prev_aim_bbox = smoothed_bbox
 
             # --- Splash logic: fire relay when a splash-class target is locked ---
-            from . import shared as _s  # noqa: PLC0415
 
             if _s.splash_enabled.is_set() and time.time() > _s.splash_cooldown_until:
                 splash_classes = target_classes
@@ -667,8 +678,6 @@ def on_done(future: Future[InferenceOutput]):
                 lores_shape = lowres_frame_cache.pop(timestamp, None)
 
             detections_denormalized: list[Detection] = []
-            from . import shared as _s  # noqa: PLC0415
-            import norfair as _norfair  # noqa: PLC0415
 
             _s.tracker_drawables.clear()
             for entry in detections:
@@ -688,7 +697,7 @@ def on_done(future: Future[InferenceOutput]):
                 detections_denormalized.append(
                     Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
                 )
-                d = _norfair.Detection(
+                d = norfair.Detection(
                     points=np.array([[x, y], [x + w, y + h]], dtype=np.float32),
                     scores=np.array([confidence], dtype=np.float32),
                     label=label,
@@ -757,7 +766,6 @@ def _log_live_event_frame(mask) -> None:
     with _latest_inference_lock:
         detections_payload = list(_latest_inference_log_entries)
     motion_px = int(cv2.countNonZero(mask)) if mask is not None else 0
-    from . import shared as _s  # noqa: PLC0415
     locked_label = _locked_target_label
     if _locked_target_lost_since is not None:
         lost_ms = int((time.time() - _locked_target_lost_since) * 1000)
@@ -782,14 +790,8 @@ def _log_live_event_frame(mask) -> None:
 def _start_event_recording() -> None:
     global _event_recorder, _event_clip_until
     global _event_logger, _event_frame_idx, _event_started_monotonic, _event_video_path
-    import uuid  # noqa: PLC0415
-    from datetime import datetime  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
 
-    from django.conf import settings as django_settings  # noqa: PLC0415
 
-    from .event_log import EventLogger  # noqa: PLC0415
-    from .recording import EventClipRecorder, pre_buffer_snapshot  # noqa: PLC0415
 
     pre_frames = pre_buffer_snapshot()
 
@@ -807,7 +809,6 @@ def _start_event_recording() -> None:
 
     actual_fps = fps_counter.fps if fps_counter.fps > 0 else 30.0
 
-    from . import shared as _s  # noqa: PLC0415
 
     with event_trigger_classes_lock:
         trigger_classes_snapshot = list(event_trigger_classes)
@@ -883,10 +884,7 @@ def _start_event_recording() -> None:
 
 def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
     global _event_recorder, _event_clip_until, _event_logger, _event_frame_idx
-    from datetime import datetime  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
 
-    from django.conf import settings as django_settings  # noqa: PLC0415
 
     with _event_recorder_lock:
         if _event_recorder is None:
@@ -901,7 +899,6 @@ def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
 
     _event_clip_until = 0.0
     event_recording_active.clear()
-    from . import shared as _s  # noqa: PLC0415
     _s.event_recording_cooldown_until = time.time() + event_cooldown_seconds.value
 
     # Capture log_path and event_id BEFORE close() so post-close attribute
@@ -985,11 +982,9 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     frame_bgr = cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR)
 
     if event_recording_enabled.is_set():
-        from .recording import pre_buffer_append  # noqa: PLC0415
         pre_buffer_append(frame_bgr, event_pre_buffer_seconds.value)
 
     if recording_active.is_set():
-        from .recording import write_frame  # noqa: PLC0415
         write_frame(frame_bgr)
 
     if event_recording_active.is_set():
