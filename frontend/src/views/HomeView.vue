@@ -192,7 +192,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                             <button :class="['ot-btn', { active: options.showMask }]"
                                 @click="options.showMask = !options.showMask">Mask</button>
                             <button :class="['ot-btn', { active: options.showRois }]"
-                                @click="options.showRois = !options.showRois">ROIs</button>
+                                @click="options.showRois = !options.showRois">Tiles / ROIs</button>
                         </div>
                     </div>
                 </TabPanel>
@@ -223,7 +223,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                             <button :class="['ot-btn', { active: options.showMask }]"
                                 @click="options.showMask = !options.showMask">Mask</button>
                             <button :class="['ot-btn', { active: options.showRois }]"
-                                @click="options.showRois = !options.showRois">ROIs</button>
+                                @click="options.showRois = !options.showRois">Tiles / ROIs</button>
                             <button :class="['ot-btn', { active: editingZones }]"
                                 @click="editingZones = !editingZones">Zones</button>
                         </div>

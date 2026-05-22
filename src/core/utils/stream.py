@@ -1007,7 +1007,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                     mask=mask,
                     overlay_color_rgb=(147, 20, 255),
                     transparency_factor=mask_transparency.value,
-                    draw_boxes=True,
+                    draw_boxes=False,
                 )
     elif has_movement:
         try:
@@ -1040,7 +1040,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
                     mask=mask,
                     overlay_color_rgb=(147, 20, 255),
                     transparency_factor=mask_transparency.value,
-                    draw_boxes=True,
+                    draw_boxes=False,
                 )
     else:
         # No movement — age the tracker with an empty update so a stationary

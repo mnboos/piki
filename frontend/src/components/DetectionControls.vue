@@ -202,9 +202,9 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                             <div class="toggle-group">
                                 <ToggleButton v-model="model.showBoxes" on-label="Boxes" off-label="Boxes" class="tb-btn" />
                                 <ToggleButton v-model="model.showMask" on-label="Mask" off-label="Mask" class="tb-btn" />
-                                <ToggleButton v-model="model.showRois" on-label="ROIs" off-label="ROIs" class="tb-btn" />
+                                <ToggleButton v-model="model.showRois" on-label="Tiles / ROIs" off-label="Tiles / ROIs" class="tb-btn" />
                             </div>
-                            <p class="help-text">Toggle overlays independently. <strong>Boxes</strong>: YOLO detection boxes. <strong>Mask</strong>: motion foreground mask. <strong>ROIs</strong>: tile rectangles sent to the detector.</p>
+                            <p class="help-text">Toggle overlays independently. <strong>Boxes</strong>: YOLO detection boxes. <strong>Mask</strong>: motion foreground mask. <strong>Tiles / ROIs</strong>: motion-detection tile rectangles sent to the detector.</p>
                         </div>
 
                         <div class="control-item">
