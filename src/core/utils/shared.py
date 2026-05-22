@@ -354,5 +354,6 @@ splash_firing_until = 0.0
 splash_delay = mp.Value(c_float, 0.5)
 splash_duration = mp.Value(c_float, 1.0)
 splash_cooldown = mp.Value(c_float, 10.0)
+pump_duty = mp.Value(c_float, 100.0)               # PWM duty cycle for pump (0–100%)
 
 motion_detector = MotionDetector()

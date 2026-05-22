@@ -1838,6 +1838,11 @@
                         "default": 10.0,
                         "title": "Cooldown Seconds",
                         "type": "number"
+                    },
+                    "pump_duty": {
+                        "default": 100.0,
+                        "title": "Pump Duty",
+                        "type": "number"
                     }
                 },
                 "title": "SplashConfigSchema",
@@ -1888,6 +1893,17 @@
                             }
                         ],
                         "title": "Cooldown Seconds"
+                    },
+                    "pump_duty": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Pump Duty"
                     }
                 },
                 "title": "SplashConfigSchemaPatch",

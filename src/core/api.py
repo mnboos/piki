@@ -39,6 +39,7 @@ from .utils.shared import (
     servo_pid_kp,
     servo_tilt,
     settings,
+    pump_duty,
     splash_cooldown,
     splash_delay,
     splash_duration,
@@ -986,6 +987,7 @@ class SplashConfigSchema(Schema):
     delay_seconds: float = 0.5
     duration_seconds: float = 1.0
     cooldown_seconds: float = 10.0
+    pump_duty: float = 100.0
 
 
 @api.get("/splash_config", response=SplashConfigSchema)
@@ -996,6 +998,7 @@ def get_splash_config(request: HttpRequest):
         delay_seconds=float(splash_delay.value),
         duration_seconds=float(splash_duration.value),
         cooldown_seconds=float(splash_cooldown.value),
+        pump_duty=float(pump_duty.value),
     )
 
 
@@ -1028,6 +1031,11 @@ def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSc
         config.cooldown_seconds = clamped
         splash_cooldown.value = clamped
 
+    if (v := payload.get("pump_duty")) is not None:
+        clamped = max(0.0, min(100.0, float(v)))
+        config.pump_duty = clamped
+        pump_duty.value = clamped
+
     config.save()
 
     return SplashConfigSchema(
@@ -1035,6 +1043,7 @@ def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSc
         delay_seconds=float(splash_delay.value),
         duration_seconds=float(splash_duration.value),
         cooldown_seconds=float(splash_cooldown.value),
+        pump_duty=float(pump_duty.value),
     )
 
 

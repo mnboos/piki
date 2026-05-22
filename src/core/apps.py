@@ -189,6 +189,7 @@ class CoreConfig(AppConfig):
         try:
             from .models import SplashConfig  # noqa: PLC0415
             from .utils.shared import (  # noqa: PLC0415
+                pump_duty,
                 splash_cooldown,
                 splash_delay,
                 splash_duration,
@@ -203,10 +204,11 @@ class CoreConfig(AppConfig):
             splash_delay.value = float(config.delay_seconds)
             splash_duration.value = float(config.duration_seconds)
             splash_cooldown.value = float(config.cooldown_seconds)
+            pump_duty.value = float(config.pump_duty)
             print(
                 f"[DJANGO STARTUP] Loaded splash config: enabled={config.enabled}, "
                 f"delay={config.delay_seconds}s, duration={config.duration_seconds}s, "
-                f"cooldown={config.cooldown_seconds}s",
+                f"cooldown={config.cooldown_seconds}s, pump_duty={config.pump_duty}%",
                 flush=True,
             )
         except Exception:

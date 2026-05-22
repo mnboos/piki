@@ -43,6 +43,12 @@ export interface SplashConfigSchema {
      * @memberof SplashConfigSchema
      */
     cooldownSeconds?: number;
+    /**
+     *
+     * @type {number}
+     * @memberof SplashConfigSchema
+     */
+    pumpDuty?: number;
 }
 
 /**
@@ -66,6 +72,7 @@ export function SplashConfigSchemaFromJSONTyped(json: any, ignoreDiscriminator: 
         'delaySeconds': json['delay_seconds'] == null ? undefined : json['delay_seconds'],
         'durationSeconds': json['duration_seconds'] == null ? undefined : json['duration_seconds'],
         'cooldownSeconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
+        'pumpDuty': json['pump_duty'] == null ? undefined : json['pump_duty'],
     };
 }
 
@@ -79,11 +86,12 @@ export function SplashConfigSchemaToJSONTyped(value?: SplashConfigSchema | null,
     }
 
     return {
-        
+
         'enabled': value['enabled'],
         'delay_seconds': value['delaySeconds'],
         'duration_seconds': value['durationSeconds'],
         'cooldown_seconds': value['cooldownSeconds'],
+        'pump_duty': value['pumpDuty'],
     };
 }
 

@@ -54,6 +54,7 @@ const splashConfig = ref<SplashConfigSchema>({
     delaySeconds: 0.5,
     durationSeconds: 1.0,
     cooldownSeconds: 10.0,
+    pumpDuty: 100.0,
 });
 
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
@@ -153,6 +154,7 @@ onMounted(async () => {
         delaySeconds: splash.delaySeconds ?? 0.5,
         durationSeconds: splash.durationSeconds ?? 1.0,
         cooldownSeconds: splash.cooldownSeconds ?? 10.0,
+        pumpDuty: splash.pumpDuty ?? 100.0,
     };
 });
 

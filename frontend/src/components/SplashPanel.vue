@@ -3,6 +3,7 @@ import { type SplashConfigSchema } from "@/api";
 import Panel from "primevue/panel";
 import ToggleSwitch from "primevue/toggleswitch";
 import InputNumber from "primevue/inputnumber";
+import Slider from "primevue/slider";
 
 const model = defineModel<SplashConfigSchema>({ required: true });
 </script>
@@ -26,6 +27,17 @@ const model = defineModel<SplashConfigSchema>({ required: true });
         </template>
 
         <p class="hint">Uses the same classes configured in Servo Aiming above.</p>
+
+        <div class="pump-row">
+            <label for="pump-duty" class="timing-label">Pump power: {{ model.pumpDuty ?? 100 }}%</label>
+            <Slider
+                v-model="model.pumpDuty"
+                :min="0"
+                :max="100"
+                :step="5"
+                class="pump-slider"
+            />
+        </div>
 
         <div class="timing-grid">
             <div class="timing-item">
@@ -106,6 +118,13 @@ const model = defineModel<SplashConfigSchema>({ required: true });
     font-size: 0.8rem;
     color: var(--p-text-muted-color);
     margin: 0.5rem 0;
+}
+.pump-row {
+    margin: 0.75rem 0;
+}
+.pump-slider {
+    width: 100%;
+    margin-top: 0.25rem;
 }
 .timing-grid {
     display: flex;

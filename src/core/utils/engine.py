@@ -24,6 +24,10 @@ SERVO_TILT_PIN: int = int(os.environ.get("SERVO_TILT_PIN", "33"))
 
 SPLASH_GPIO_PIN: int = int(os.environ.get("SPLASH_GPIO_PIN", "18"))
 
+# L298N motor driver direction pins for the pump.
+PUMP_IN1_PIN: int = int(os.environ.get("PUMP_IN1_PIN", "16"))
+PUMP_IN2_PIN: int = int(os.environ.get("PUMP_IN2_PIN", "22"))
+
 # Decoupled servo loop rate (Hz). Higher = smoother, more CPU. 60Hz is roughly
 # the max useful rate for a 50Hz hobby servo (the PWM period itself is 20ms).
 SERVO_LOOP_HZ: float = float(os.environ.get("SERVO_LOOP_HZ", "60.0"))
@@ -251,7 +255,7 @@ _gpio_initialised = False
 
 @atexit.register
 def _cleanup_gpio() -> None:
-    global _pan_pwm, _tilt_pwm, _splash_pin  # noqa: PLW0603
+    global _pan_pwm, _tilt_pwm, _pump_pwm  # noqa: PLW0603
     try:
         stop_servo_loop()
     except Exception:
@@ -261,7 +265,7 @@ def _cleanup_gpio() -> None:
         time.sleep(0.3)
     except Exception:
         pass
-    for attr, pwm in (("_pan_pwm", _pan_pwm), ("_tilt_pwm", _tilt_pwm)):
+    for attr, pwm in (("_pan_pwm", _pan_pwm), ("_tilt_pwm", _tilt_pwm), ("_pump_pwm", _pump_pwm)):
         if pwm is not None:
             try:
                 pwm.stop()
@@ -269,13 +273,11 @@ def _cleanup_gpio() -> None:
                 pass
     _pan_pwm = None
     _tilt_pwm = None
+    _pump_pwm = None
     if _gpio_initialised:
         try:
             import Hobot.GPIO as GPIO  # noqa: PLC0415
-            pins = [SERVO_PAN_PIN, SERVO_TILT_PIN]
-            if _splash_pin is not None:
-                GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
-                pins.append(SPLASH_GPIO_PIN)
+            pins = [SERVO_PAN_PIN, SERVO_TILT_PIN, SPLASH_GPIO_PIN, PUMP_IN1_PIN, PUMP_IN2_PIN]
             GPIO.cleanup(pins)
         except Exception:
             pass
@@ -639,45 +641,60 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------------------
-# Splash relay — digital GPIO output for a solenoid / water valve.
+# Pump — L298N motor driver with hardware PWM speed control.
+#
+#   ENA  →  pin 18 (GPIO24)  —  hardware PWM  (GPIO.PWM, 1 kHz)
+#   IN1  →  pin 16 (GPIO23)  —  digital HIGH  (forward)
+#   IN2  →  pin 22 (GPIO25)  —  digital LOW
 # ---------------------------------------------------------------------------
-_splash_pin = None
+_PUMP_PWM_FREQ = 1000
+_pump_pwm = None
+_pump_initialised = False
 
 
-def _init_splash_gpio() -> bool:
-    global _splash_pin  # noqa: PLW0603
-    if _splash_pin is not None:
+def _init_pump() -> bool:
+    global _pump_pwm, _pump_initialised  # noqa: PLW0603
+    if _pump_initialised:
         return True
     if not _init_gpio():
         return False
     try:
         import Hobot.GPIO as GPIO  # noqa: PLC0415
-        GPIO.setup(SPLASH_GPIO_PIN, GPIO.OUT)
-        GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
-        _splash_pin = True
-        logger.info("Splash relay initialised on physical pin %d", SPLASH_GPIO_PIN)
+
+        GPIO.setup(PUMP_IN1_PIN, GPIO.OUT)
+        GPIO.output(PUMP_IN1_PIN, GPIO.HIGH)
+        GPIO.setup(PUMP_IN2_PIN, GPIO.OUT)
+        GPIO.output(PUMP_IN2_PIN, GPIO.LOW)
+
+        _pump_pwm = GPIO.PWM(SPLASH_GPIO_PIN, _PUMP_PWM_FREQ)
+        _pump_pwm.start(0)
+
+        _pump_initialised = True
+        logger.info("Pump initialised: ENA=pwm@%dHz on pin %d, IN1=HIGH on pin %d, IN2=LOW on pin %d",
+                    _PUMP_PWM_FREQ, SPLASH_GPIO_PIN, PUMP_IN1_PIN, PUMP_IN2_PIN)
     except Exception:
-        logger.warning("Splash relay unavailable on pin %d", SPLASH_GPIO_PIN, exc_info=True)
-        _splash_pin = None
-    return _splash_pin is not None
+        logger.warning("Pump unavailable on pin %d", SPLASH_GPIO_PIN, exc_info=True)
+        _pump_pwm = None
+    return _pump_initialised
 
 
-def activate_splash(duration_s: float) -> None:
-    """Activate the splash relay for *duration_s* seconds, non-blocking."""
-    if not _init_splash_gpio():
+def activate_pump(duration_s: float, duty_pct: float = 100.0) -> None:
+    """Run the pump at *duty_pct* % for *duration_s* seconds, non-blocking."""
+    if not _init_pump():
         return
     import Hobot.GPIO as GPIO  # noqa: PLC0415
 
-    GPIO.output(SPLASH_GPIO_PIN, GPIO.HIGH)
-    logger.info("Splash relay ON (duration=%.1fs)", duration_s)
+    duty = max(0.0, min(100.0, duty_pct))
+    _pump_pwm.ChangeDutyCycle(duty)
+    logger.info("Pump ON (duty=%.0f%%, duration=%.1fs)", duty, duration_s)
 
     def _deactivate() -> None:
         time.sleep(duration_s)
         try:
-            GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
-            logger.info("Splash relay OFF")
+            _pump_pwm.ChangeDutyCycle(0)
+            logger.info("Pump OFF")
         except Exception:
-            logger.exception("Failed to deactivate splash relay")
+            logger.exception("Failed to deactivate pump")
 
-    t = threading.Thread(target=_deactivate, daemon=True, name="splash-timer")
+    t = threading.Thread(target=_deactivate, daemon=True, name="pump-timer")
     t.start()

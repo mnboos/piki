@@ -703,11 +703,11 @@ def on_done(future: Future[InferenceOutput]):
                         _s.splash_armed_at = time.time()
                         logger.info("Splash armed for target=%s (delay=%.1fs)", chosen_label, _s.splash_delay.value)
                     elif time.time() - _s.splash_armed_at >= _s.splash_delay.value:
-                        from .engine import activate_splash  # noqa: PLC0415
+                        from .engine import activate_pump  # noqa: PLC0415
                         _s.splash_cooldown_until = time.time() + _s.splash_cooldown.value
                         _s.splash_firing_until = time.time() + _s.splash_duration.value
                         _s.splash_armed_at = 0.0
-                        activate_splash(_s.splash_duration.value)
+                        activate_pump(_s.splash_duration.value, _s.pump_duty.value)
                         logger.info("Splash fired for target=%s (duration=%.1fs, cooldown=%.1fs)",
                                     chosen_label, _s.splash_duration.value, _s.splash_cooldown.value)
                         if _event_logger is not None:

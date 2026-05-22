@@ -109,6 +109,7 @@ class SplashConfig(models.Model):
     delay_seconds = models.FloatField(default=0.5)
     duration_seconds = models.FloatField(default=1.0)
     cooldown_seconds = models.FloatField(default=10.0)
+    pump_duty = models.FloatField(default=100.0)
 
     class Meta:
         verbose_name = "Splash Config"
