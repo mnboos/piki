@@ -74,6 +74,7 @@ logger = logging.getLogger(__name__)
 _locked_target_bbox: list[float] | None = None   # normalized [ymin, xmin, ymax, xmax]
 _locked_target_label: str | None = None
 _locked_target_lost_since: float | None = None   # time.time() when target was last seen
+_prev_aim_bbox: list[float] | None = None        # 1-frame delay buffer for servo feed
 
 # --- Phase A stability state (hysteresis, min-streak, ghost frames) ---
 _label_streak: dict[str, int] = {}
@@ -309,73 +310,6 @@ def _compute_iou(a: Sequence[float], b: Sequence[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _nms_detections(
-    detections: "list[Detection]",
-    iou_threshold: float = 0.45,
-    containment_threshold: float = 0.6,
-) -> "list[Detection]":
-    if len(detections) <= 1:
-        return detections
-
-    def _overlap(a: Sequence[float], b: Sequence[float]) -> tuple[float, float]:
-        inter_h = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
-        inter_w = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-        inter = inter_h * inter_w
-        area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
-        area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
-        union = area_a + area_b - inter
-        iou = inter / union if union > 0 else 0.0
-        iom = inter / min(area_a, area_b) if min(area_a, area_b) > 0 else 0.0
-        return iou, iom
-
-    def _greedy_nms(indices: list[int]) -> list[int]:
-        sorted_by_conf = sorted(indices, key=lambda i: detections[i].confidence, reverse=True)
-        suppressed: set[int] = set()
-        kept: list[int] = []
-        for i in sorted_by_conf:
-            if i in suppressed:
-                continue
-            kept.append(i)
-            for j in sorted_by_conf:
-                if j == i or j in suppressed:
-                    continue
-                iou, iom = _overlap(detections[i].bbox, detections[j].bbox)
-                if iou >= iou_threshold or iom >= containment_threshold:
-                    suppressed.add(j)
-        return kept
-
-    from collections import defaultdict  # noqa: PLC0415
-    by_label: dict[str, list[int]] = defaultdict(list)
-    for i, det in enumerate(detections):
-        by_label[det.label].append(i)
-
-    after_per_class: list[int] = []
-    for indices in by_label.values():
-        if len(indices) == 1:
-            after_per_class.extend(indices)
-        else:
-            after_per_class.extend(_greedy_nms(indices))
-
-    if len(after_per_class) <= 1:
-        kept_set = set(after_per_class)
-        return [det for i, det in enumerate(detections) if i in kept_set]
-
-    sorted_all = sorted(after_per_class, key=lambda i: detections[i].confidence, reverse=True)
-    suppressed: set[int] = set()
-    for idx, i in enumerate(sorted_all):
-        if i in suppressed:
-            continue
-        for j in sorted_all[idx + 1:]:
-            if j in suppressed:
-                continue
-            _, iom = _overlap(detections[i].bbox, detections[j].bbox)
-            if iom >= containment_threshold:
-                suppressed.add(j)
-
-    final_kept = set(i for i in after_per_class if i not in suppressed)
-    return [det for i, det in enumerate(detections) if i in final_kept]
-
-
 def run_object_detection(
     frame_hires: np.ndarray,
     rois: list[Box],
@@ -428,11 +362,6 @@ def run_object_detection(
                 ]
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
-        _t = time.perf_counter()
-        all_detections = _nms_detections(all_detections, iou_threshold=0.45)
-        if _profile:
-            logger.info("PERF stage=cross_tile_nms ms=%.2f", (time.perf_counter() - _t) * 1000)
-
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
@@ -466,7 +395,7 @@ def denormalize(*, bbox_normalized: Sequence[int], frame_shape: Sequence[int]) -
 
 def on_done(future: Future[InferenceOutput]):
     """Handle completed inference."""
-    global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since
+    global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since, _prev_aim_bbox
     active_futures.remove(future)
     try:
         worker_pid, timestamp, inference_time, detections = future.result()
@@ -626,6 +555,7 @@ def on_done(future: Future[InferenceOutput]):
             _locked_target_bbox = None
             _locked_target_label = None
             _locked_target_lost_since = None
+            _prev_aim_bbox = None
             if aim_enabled:
                 _release_servo_lock()
 
@@ -659,6 +589,7 @@ def on_done(future: Future[InferenceOutput]):
                     _locked_target_bbox = None
                     _locked_target_label = None
                     _locked_target_lost_since = None
+                    _prev_aim_bbox = None
                     if aim_enabled:
                         _release_servo_lock()
 
@@ -683,15 +614,18 @@ def on_done(future: Future[InferenceOutput]):
 
             smoothed_bbox = list(_locked_target_bbox)
 
-            # Feed the latest measurement into the servo loop. The decoupled
-            # loop in engine.py reads this at ~30Hz and commands the servo.
+            # Feed the servo loop with a 1-frame delay so single-frame
+            # detection outliers never reach the Kalman.  At 30 fps that
+            # is 33 ms — imperceptible to a human observer.
             if aim_enabled:
                 from .engine import feed_target  # noqa: PLC0415
 
+                aim_bbox = _prev_aim_bbox if _prev_aim_bbox is not None else smoothed_bbox
                 _aim_center = None
                 if _latest_mask is not None:
-                    _aim_center = _foreground_centroid(smoothed_bbox, _latest_mask, _latest_mask_shape)
-                feed_target(bbox_normalized=smoothed_bbox, aim_center=_aim_center)
+                    _aim_center = _foreground_centroid(aim_bbox, _latest_mask, _latest_mask_shape)
+                feed_target(bbox_normalized=aim_bbox, aim_center=_aim_center)
+            _prev_aim_bbox = smoothed_bbox
 
             # --- Splash logic: fire relay when a splash-class target is locked ---
             from . import shared as _s  # noqa: PLC0415

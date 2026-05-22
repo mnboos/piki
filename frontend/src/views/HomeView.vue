@@ -37,6 +37,8 @@ const options = ref<PikiOptions>({
     servoPidKi: 0.0,
     servoPidKd: 0.0,
     servoDeadZone: 1.5,
+    servoKalmanProcessNoise: 10.0,
+    servoKalmanMeasNoise: 5.0,
 });
 
 const aimConfig = ref<AimConfigSchema>({
@@ -135,6 +137,8 @@ onMounted(async () => {
         servoPidKi: current.servoPidKi,
         servoPidKd: current.servoPidKd,
         servoDeadZone: current.servoDeadZone,
+        servoKalmanProcessNoise: current.servoKalmanProcessNoise ?? 10.0,
+        servoKalmanMeasNoise: current.servoKalmanMeasNoise ?? 5.0,
     };
 
     const aim = await api.coreApiGetAimConfig();

@@ -16,8 +16,10 @@ source /opt/tros/humble/setup.bash
 # Kill any stale ROS2 nodes from a previous crashed/unclean run.
 # mipi_cam holds the MIPI hardware exclusively — if it's still alive from a
 # prior run the new instance will fail with "rcl node's context is invalid".
-echo "[piki] Cleaning up stale ROS2 nodes..."
+echo "[piki] Cleaning up stale processes..."
 pkill -x mipi_cam 2>/dev/null || true
+pkill -f "manage.py runserver" 2>/dev/null || true
+sleep 0.5
 
 # ── Fix tros.b runtime directories ───────────────────────────────────────────
 # tros.b nodes write logs to /userdata/.roslog — create it if absent.

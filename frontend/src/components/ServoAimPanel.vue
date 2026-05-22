@@ -26,26 +26,28 @@ interface PidPreset {
     description: string;
 }
 
+// kp is a positional gain (0-1, where 1.0 = instant snap to target).
+// ki/kd are velocity-form — their contribution is scaled by dt internally.
 const PID_PRESETS: PidPreset[] = [
     {
         label: "Slow & Stable",
-        kp: 0.5, ki: 0.0, kd: 0.0, deadZone: 3.0,
-        description: "Gentle tracking for slow-moving targets. Large dead zone suppresses jitter from noisy detections.",
+        kp: 0.05, ki: 0.0, kd: 0.01, deadZone: 3.0,
+        description: "Very smooth tracking. 5 % error correction per tick — settles in ~1 s. Large dead zone.",
     },
     {
         label: "Balanced",
-        kp: 1.0, ki: 0.0, kd: 0.05, deadZone: 1.5,
-        description: "Good all-round starting point. Moderate response with light derivative damping to prevent overshoot.",
+        kp: 0.1, ki: 0.0, kd: 0.03, deadZone: 1.5,
+        description: "Good all-round starting point. 10 % per tick settles in ~0.5 s. Light derivative damping.",
     },
     {
         label: "Responsive",
-        kp: 2.0, ki: 0.0, kd: 0.1, deadZone: 1.0,
-        description: "Faster tracking for targets that move quickly. Higher gain with damping keeps it stable.",
+        kp: 0.2, ki: 0.0, kd: 0.05, deadZone: 1.0,
+        description: "Faster tracking for moving targets. 20 % per tick settles in ~0.25 s. Stronger damping.",
     },
     {
         label: "Aggressive",
-        kp: 4.0, ki: 0.05, kd: 0.2, deadZone: 0.5,
-        description: "Maximum responsiveness. Minimal dead zone and integral correction for near-zero steady-state error.",
+        kp: 0.5, ki: 0.02, kd: 0.1, deadZone: 0.5,
+        description: "Maximum responsiveness. 50 % per tick — nearly instant. Tiny dead zone, integral correction.",
     },
 ];
 
@@ -113,6 +115,16 @@ watch(pidMode, mode => {
 });
 
 const presetDescription = computed(() => selectedPreset.value?.description ?? "");
+
+// Kalman filter tuning (always active, independent of PID mode)
+const kalmanProcessNoise = computed({
+    get: () => options.value.servoKalmanProcessNoise ?? 10.0,
+    set: (v: number) => { options.value.servoKalmanProcessNoise = v; },
+});
+const kalmanMeasNoise = computed({
+    get: () => options.value.servoKalmanMeasNoise ?? 5.0,
+    set: (v: number) => { options.value.servoKalmanMeasNoise = v; },
+});
 </script>
 
 <template>
@@ -290,6 +302,41 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
                     <p class="pid-help">Tracking errors smaller than this angle are ignored, suppressing jitter from noisy detections. Set to 0 to disable.</p>
                 </div>
             </div>
+
+            <!-- Kalman filter (always visible — runs regardless of PID mode) -->
+            <div class="kalman-section">
+                <p class="kalman-label">Kalman Filter</p>
+                <div class="kalman-grid">
+                    <div class="pid-item">
+                        <label for="kalman-process" class="pid-label">Process noise <span class="pid-sub">(deg/s²)</span></label>
+                        <InputNumber
+                            input-id="kalman-process"
+                            v-model="kalmanProcessNoise"
+                            :min="0.1"
+                            :max="50"
+                            :step="0.5"
+                            :min-fraction-digits="1"
+                            :max-fraction-digits="1"
+                            class="pid-input"
+                        />
+                        <p class="pid-help">How quickly target velocity may change. Higher = more responsive to sudden movement. Lower = smoother but laggier.</p>
+                    </div>
+                    <div class="pid-item">
+                        <label for="kalman-meas" class="pid-label">Measurement noise <span class="pid-sub">(deg)</span></label>
+                        <InputNumber
+                            input-id="kalman-meas"
+                            v-model="kalmanMeasNoise"
+                            :min="0.1"
+                            :max="50"
+                            :step="0.5"
+                            :min-fraction-digits="1"
+                            :max-fraction-digits="1"
+                            class="pid-input"
+                        />
+                        <p class="pid-help">Position measurement uncertainty. Lower = trust detections more (faster response, more jitter). Higher = smoother but laggier.</p>
+                    </div>
+                </div>
+            </div>
         </Fieldset>
     </Panel>
 </template>
@@ -435,5 +482,21 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
     font-weight: 600;
     user-select: none;
     cursor: pointer;
+}
+.kalman-section {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--p-surface-200, #333);
+}
+.kalman-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: var(--p-text-muted-color);
+}
+.kalman-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
 }
 </style>

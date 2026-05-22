@@ -151,6 +151,18 @@ export interface PikiOptionsPatch {
      * @memberof PikiOptionsPatch
      */
     servoDeadZone?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoKalmanProcessNoise?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof PikiOptionsPatch
+     */
+    servoKalmanMeasNoise?: number | null;
 }
 
 /**
@@ -192,6 +204,8 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
         'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
         'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
         'servoDeadZone': json['servo_dead_zone'] == null ? undefined : json['servo_dead_zone'],
+        'servoKalmanProcessNoise': json['servo_kalman_process_noise'] == null ? undefined : json['servo_kalman_process_noise'],
+        'servoKalmanMeasNoise': json['servo_kalman_meas_noise'] == null ? undefined : json['servo_kalman_meas_noise'],
     };
 }
 
@@ -228,6 +242,8 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
         'servo_pid_ki': value['servoPidKi'],
         'servo_pid_kd': value['servoPidKd'],
         'servo_dead_zone': value['servoDeadZone'],
+        'servo_kalman_process_noise': value['servoKalmanProcessNoise'],
+        'servo_kalman_meas_noise': value['servoKalmanMeasNoise'],
     };
 }
 

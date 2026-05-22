@@ -64,15 +64,20 @@ servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
 servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
 servo_kalman_pan = mp.Value(c_float, 0.0)   # Kalman predicted pan (lookahead target)
 servo_kalman_tilt = mp.Value(c_float, 0.0)  # Kalman predicted tilt (lookahead target)
-servo_pid_kp = mp.Value(c_float, 1.0)  # proportional gain (1.0 = instant, like previous default)
+servo_pid_kp = mp.Value(c_float, 1.0)  # positional gain (1.0 = snap directly to target)
 servo_pid_ki = mp.Value(c_float, 0.0)  # integral gain
 servo_pid_kd = mp.Value(c_float, 0.0)  # derivative gain (raise to reduce jitter)
 servo_dead_zone = mp.Value(c_float, 1.5)      # degrees: changes smaller than this in both axes are ignored
-servo_kalman_process_noise = mp.Value(c_float, 10.0)   # deg/s² — how quickly velocity may change
-servo_kalman_meas_noise = mp.Value(c_float, 5.0)       # deg   — position measurement uncertainty
+servo_kalman_process_noise = mp.Value(c_float, 10.0)   # deg/s² — how quickly velocity may change (lower = less jitter)
+servo_kalman_meas_noise = mp.Value(c_float, 5.0)       # deg   — position measurement uncertainty (higher = smoother)
 servo_kalman_lookahead_ms = mp.Value(c_float, 50.0)    # ms    — servo lag to compensate for (0 = off)
 vertical_angle_offset = mp.Value(c_float, 0.0)          # deg   — tilt offset to compensate for mounting height
 servo_aim_confidence = mp.Value(c_float, 0.4)            # minimum confidence to lock onto a target
+# Servo direction inversion, mirrored from app_settings.aim_settings into shared
+# memory so the 60Hz servo loop reads them without a SyncManager IPC round-trip
+# (mp.Value has no bool type, so 0/1 ints — same pattern as tracker_enabled).
+servo_pan_invert = mp.Value("i", 0)
+servo_tilt_invert = mp.Value("i", 0)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
@@ -175,7 +180,7 @@ prob_threshold_keep = mp.Value(c_float, 0.25)
 min_consecutive_frames = mp.Value("i", 2)
 
 # Exponential-moving-average factor for smoothing the locked-target bbox.
-bbox_ema_alpha = mp.Value(c_float, 0.4)
+bbox_ema_alpha = mp.Value(c_float, 0.7)
 
 # Display-only persistence window after the last real detection (ms).
 ghost_frames_ms = mp.Value("i", 300)

@@ -74,6 +74,8 @@ class CoreConfig(AppConfig):
                 prob_threshold,
                 prob_threshold_keep,
                 servo_dead_zone,
+                servo_kalman_meas_noise,
+                servo_kalman_process_noise,
                 servo_pid_kd,
                 servo_pid_ki,
                 servo_pid_kp,
@@ -107,6 +109,8 @@ class CoreConfig(AppConfig):
             servo_pid_ki.value = config.servo_pid_ki
             servo_pid_kd.value = config.servo_pid_kd
             servo_dead_zone.value = config.servo_dead_zone
+            servo_kalman_process_noise.value = max(0.01, float(config.servo_kalman_process_noise))
+            servo_kalman_meas_noise.value = max(0.01, float(config.servo_kalman_meas_noise))
             print(
                 f"[DJANGO STARTUP] Loaded detection config: show_boxes={config.show_boxes}, "
                 f"show_mask={config.show_mask}, show_rois={config.show_rois}, "
@@ -115,7 +119,9 @@ class CoreConfig(AppConfig):
                 f"ghost_ms={ghost_frames_ms.value}, mog2_history={config.mog2_history}, "
                 f"tracker={'on' if tracker_enabled.value else 'off'} "
                 f"(iou={tracker_iou_threshold.value}, max_misses={tracker_max_misses.value}, "
-                f"confirm_hits={tracker_confirm_hits.value})",
+                f"confirm_hits={tracker_confirm_hits.value}), "
+                f"kalman(proc={servo_kalman_process_noise.value}, "
+                f"meas={servo_kalman_meas_noise.value})",
                 flush=True,
             )
         except Exception:
@@ -127,7 +133,13 @@ class CoreConfig(AppConfig):
         """Load persisted AimConfig from DB into shared memory."""
         try:
             from .models import AimConfig  # noqa: PLC0415
-            from .utils.shared import app_settings, servo_aim_confidence, vertical_angle_offset  # noqa: PLC0415
+            from .utils.shared import (  # noqa: PLC0415
+                app_settings,
+                servo_aim_confidence,
+                servo_pan_invert,
+                servo_tilt_invert,
+                vertical_angle_offset,
+            )
 
             config = AimConfig.load()
             app_settings.aim_settings.target_classes = config.target_classes
@@ -138,6 +150,8 @@ class CoreConfig(AppConfig):
             vertical_angle_offset.value = float(config.vertical_angle_offset)
             app_settings.aim_settings.pan_invert = bool(config.pan_invert)
             app_settings.aim_settings.tilt_invert = bool(config.tilt_invert)
+            servo_pan_invert.value = 1 if config.pan_invert else 0
+            servo_tilt_invert.value = 1 if config.tilt_invert else 0
             print(
                 f"[DJANGO STARTUP] Loaded aim config: servo_enabled={config.servo_enabled}, "
                 f"classes={config.target_classes}, target_lock_duration={config.target_lock_duration}s, "
@@ -220,52 +234,56 @@ class CoreConfig(AppConfig):
         # The `runserver` command runs this method twice. We use an environment
         # variable to ensure our setup code only runs in the main process.
         print("sys.argv: ", sys.argv, flush=True)
-        is_running_main = os.environ.get("RUN_MAIN") or "--noreload" in sys.argv
-        pid = os.getpid()
-        ppid = os.getppid()
-        print(f"[Django-{pid}, ppid={ppid}] RUN_MAIN:  ", is_running_main)
+        # Only run heavy startup for runserver, not for migrate/shell/test/etc.
+        if len(sys.argv) < 2 or sys.argv[1] != "runserver":
+            return
 
-        if is_running_main:
-            # Load persisted settings from DB into shared memory.
-            self._load_detection_config()
-            self._load_aim_config()
-            self._load_event_recording_config()
-            self._load_splash_config()
+        # With --noreload, runserver runs ready() once. Without --noreload, the
+        # autoreloader's parent process also runs it; RUN_MAIN distinguishes the worker.
+        is_worker = "--noreload" in sys.argv or os.environ.get("RUN_MAIN") == "true"
+        if not is_worker:
+            return
 
-            # monkey_patch_reloader()
+        # Load persisted settings from DB into shared memory.
+        self._load_detection_config()
+        self._load_aim_config()
+        self._load_event_recording_config()
+        self._load_splash_config()
 
-            # print("environ: ", os.environ, flush=True)
+        # monkey_patch_reloader()
 
-            print("[DJANGO STARTUP] Initializing camera and AI workers...")
+        # print("environ: ", os.environ, flush=True)
 
-            if len(sys.argv) >= 2 and sys.argv[1] == "runserver":
-                import threading
+        print("[DJANGO STARTUP] Initializing camera and AI workers...")
 
-                from .utils.metrics import queue_manager, retrieve_queue
+        if len(sys.argv) >= 2 and sys.argv[1] == "runserver":
+            import threading
 
-                # queue_manager.start() forks a child process — must happen in the
-                # main thread before any other threads are spawned to avoid deadlock.
-                print("Starting queue manager.....")
-                queue_manager.start()
-                atexit.register(queue_manager.shutdown)
+            from .utils.metrics import queue_manager, retrieve_queue
 
-                def _start_background():
-                    # stream.py has heavy ROS2 imports at module level — import it
-                    # here in the background thread so it never blocks the main thread.
-                    from .utils.stream import stream_nonblocking  # noqa: PLC0415
+            # queue_manager.start() forks a child process — must happen in the
+            # main thread before any other threads are spawned to avoid deadlock.
+            print("Starting queue manager.....")
+            queue_manager.start()
+            atexit.register(queue_manager.shutdown)
 
-                    retrieve_queue()
-                    print("Queue manager started.")
-                    stream_nonblocking()
-                    print("Start streaming...")
+            def _start_background():
+                # stream.py has heavy ROS2 imports at module level — import it
+                # here in the background thread so it never blocks the main thread.
+                from .utils.stream import stream_nonblocking  # noqa: PLC0415
 
-                threading.Thread(target=_start_background, daemon=True, name="piki-startup").start()
+                retrieve_queue()
+                print("Queue manager started.")
+                stream_nonblocking()
+                print("Start streaming...")
 
-            # def cleanup():
-            #     print("[DJANGO SHUTDOWN] Stopping processes...")
-            #     stream.executor.shutdown()
-            #     if stream.camera:
-            #         stream.camera.close()
-            #     print("[DJANGO SHUTDOWN] Processes stopped.")
-            #
-            # atexit.register(cleanup)
+            threading.Thread(target=_start_background, daemon=True, name="piki-startup").start()
+
+        # def cleanup():
+        #     print("[DJANGO SHUTDOWN] Stopping processes...")
+        #     stream.executor.shutdown()
+        #     if stream.camera:
+        #         stream.camera.close()
+        #     print("[DJANGO SHUTDOWN] Processes stopped.")
+        #
+        # atexit.register(cleanup)

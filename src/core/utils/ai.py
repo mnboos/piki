@@ -1,109 +1,19 @@
-import ctypes
-import json
 import logging
 import os
 import time
 import traceback
 from pathlib import Path
 
-import cv2
 import numpy as np
-from hobot_dnn import pyeasy_dnn as dnn
+from hbm_runtime import HB_HBMRuntime
 
 from .shared import prob_threshold, prob_threshold_keep, worker_ready
 
 logger = logging.getLogger(__name__)
 
-QUANTIZE_ON = True
-
-OBJ_THRESH = 0.25
-NMS_THRESH = 0.45
 IMG_SIZE = 640
+NMS_THRESH = 0.45
 
-# CLASSES = (
-#     "person",
-#     "bicycle",
-#     "car",
-#     "motorbike ",
-#     "aeroplane ",
-#     "bus ",
-#     "train",
-#     "truck ",
-#     "boat",
-#     "traffic light",
-#     "fire hydrant",
-#     "stop sign ",
-#     "parking meter",
-#     "bench",
-#     "bird",
-#     "cat",
-#     "dog ",
-#     "horse ",
-#     "sheep",
-#     "cow",
-#     "elephant",
-#     "bear",
-#     "zebra ",
-#     "giraffe",
-#     "backpack",
-#     "umbrella",
-#     "handbag",
-#     "tie",
-#     "suitcase",
-#     "frisbee",
-#     "skis",
-#     "snowboard",
-#     "sports ball",
-#     "kite",
-#     "baseball bat",
-#     "baseball glove",
-#     "skateboard",
-#     "surfboard",
-#     "tennis racket",
-#     "bottle",
-#     "wine glass",
-#     "cup",
-#     "fork",
-#     "knife ",
-#     "spoon",
-#     "bowl",
-#     "banana",
-#     "apple",
-#     "sandwich",
-#     "orange",
-#     "broccoli",
-#     "carrot",
-#     "hot dog",
-#     "pizza ",
-#     "donut",
-#     "cake",
-#     "chair",
-#     "sofa",
-#     "pottedplant",
-#     "bed",
-#     "diningtable",
-#     "toilet ",
-#     "tvmonitor",
-#     "laptop	",
-#     "mouse	",
-#     "remote ",
-#     "keyboard ",
-#     "cell phone",
-#     "microwave ",
-#     "oven ",
-#     "toaster",
-#     "sink",
-#     "refrigerator ",
-#     "book",
-#     "clock",
-#     "vase",
-#     "scissors ",
-#     "teddy bear ",
-#     "hair drier",
-#     "toothbrush ",
-# )
-
-# You still need your list of class names from the COCO dataset
 CLASSES = (
     "person",
     "bicycle",
@@ -188,238 +98,69 @@ CLASSES = (
 )
 
 
-libpostprocess = ctypes.CDLL("/usr/lib/libpostprocess.so")
-
-
-class hbSysMem_t(ctypes.Structure):
-    _fields_ = [("phyAddr", ctypes.c_double), ("virAddr", ctypes.c_void_p), ("memSize", ctypes.c_int)]
-
-
-class hbDNNQuantiShift_yt(ctypes.Structure):
-    _fields_ = [("shiftLen", ctypes.c_int), ("shiftData", ctypes.c_char_p)]
-
-
-class hbDNNQuantiScale_t(ctypes.Structure):
-    _fields_ = [
-        ("scaleLen", ctypes.c_int),
-        ("scaleData", ctypes.POINTER(ctypes.c_float)),
-        ("zeroPointLen", ctypes.c_int),
-        ("zeroPointData", ctypes.c_char_p),
-    ]
-
-
-class hbDNNTensorShape_t(ctypes.Structure):
-    _fields_ = [("dimensionSize", ctypes.c_int * 8), ("numDimensions", ctypes.c_int)]
-
-
-class hbDNNTensorProperties_t(ctypes.Structure):
-    _fields_ = [
-        ("validShape", hbDNNTensorShape_t),
-        ("alignedShape", hbDNNTensorShape_t),
-        ("tensorLayout", ctypes.c_int),
-        ("tensorType", ctypes.c_int),
-        ("shift", hbDNNQuantiShift_yt),
-        ("scale", hbDNNQuantiScale_t),
-        ("quantiType", ctypes.c_int),
-        ("quantizeAxis", ctypes.c_int),
-        ("alignedByteSize", ctypes.c_int),
-        ("stride", ctypes.c_int * 8),
-    ]
-
-
-class hbDNNTensor_t(ctypes.Structure):
-    _fields_ = [("sysMem", hbSysMem_t * 4), ("properties", hbDNNTensorProperties_t)]
-
-
-class Yolov5PostProcessInfo_t(ctypes.Structure):
-    _fields_ = [
-        ("height", ctypes.c_int),
-        ("width", ctypes.c_int),
-        ("ori_height", ctypes.c_int),
-        ("ori_width", ctypes.c_int),
-        ("score_threshold", ctypes.c_float),
-        ("nms_threshold", ctypes.c_float),
-        ("nms_top_k", ctypes.c_int),
-        ("is_pad_resize", ctypes.c_int),
-    ]
-
-
-get_Postprocess_result = libpostprocess.Yolov5PostProcess
-get_Postprocess_result.argtypes = [ctypes.POINTER(Yolov5PostProcessInfo_t)]
-get_Postprocess_result.restype = ctypes.c_char_p
-
-
-def get_TensorLayout(layout: str):
-    return 2 if layout == "NCHW" else 0
-
-
 # ---------------------------------------------------------------------------
-# YOLOv8 / YOLOv12n post-processor (pure numpy, ~5ms)
-# Output format: 6 tensors alternating cls(float32) / box-DFL(int32) at 3 scales
+# Inline YOLO26 post-processing — adapted from RDK model zoo post_utils.
 # ---------------------------------------------------------------------------
-_YV8_REG_MAX = 16
-_YV8_BINS = np.arange(_YV8_REG_MAX, dtype=np.float32)
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
 
 
-def _nms_per_class(boxes, confs, cls_ids, iou_thres):
-    """Per-class NMS via cv2.dnn.NMSBoxes → list of (label, score, [x1,y1,x2,y2])."""
-    # cv2.dnn.NMSBoxes expects xywh boxes
-    xywh = np.stack([
-        boxes[:, 0], boxes[:, 1],
-        boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1],
-    ], axis=1)
+def _filter_classification(cls_output: np.ndarray, conf_thres_raw: float):
+    """Threshold raw logits, apply sigmoid, return (scores, class_ids, flat_indices)."""
+    h, w, c = cls_output.shape
+    flat = cls_output.reshape(-1, c)
+    max_raw = flat.max(axis=-1)
+    valid = np.where(max_raw >= conf_thres_raw)[0]
+    if not valid.size:
+        return np.empty(0), np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
+    ids = flat[valid].argmax(axis=-1).astype(np.int32)
+    scores = _sigmoid(max_raw[valid])
+    return scores, ids, valid
 
-    results = []
+
+def _decode_ltrb_boxes(flat_indices: np.ndarray, ltrb: np.ndarray,
+                        stride: int, grid_h: int, grid_w: int) -> np.ndarray:
+    """Convert LTRB deltas + grid-centre anchors → xyxy pixel boxes."""
+    ys = (flat_indices // grid_w + 0.5) * stride
+    xs = (flat_indices % grid_w + 0.5) * stride
+    valid_ltrb = ltrb.reshape(-1, 4)[flat_indices] * stride
+    x1 = np.clip(xs - valid_ltrb[:, 0], 0, IMG_SIZE)
+    y1 = np.clip(ys - valid_ltrb[:, 1], 0, IMG_SIZE)
+    x2 = np.clip(xs + valid_ltrb[:, 2], 0, IMG_SIZE)
+    y2 = np.clip(ys + valid_ltrb[:, 3], 0, IMG_SIZE)
+    return np.stack([x1, y1, x2, y2], axis=1)
+
+
+def _nms_per_class(boxes: np.ndarray, scores: np.ndarray, cls_ids: np.ndarray,
+                    iou_thres: float) -> list[int]:
+    """Per-class greedy NMS — returns flat list of kept indices."""
+    kept: list[int] = []
     for c in np.unique(cls_ids):
         idx = np.where(cls_ids == c)[0]
-        indices = cv2.dnn.NMSBoxes(
-            bboxes=xywh[idx].tolist(),
-            scores=confs[idx].astype(np.float32),
-            score_threshold=0.0,
-            nms_threshold=iou_thres,
-        )
-        if not len(indices):
-            continue
-        for i in indices.flatten():
-            k = idx[i]
-            label = CLASSES[int(c)].strip() if int(c) < len(CLASSES) else str(int(c))
-            results.append((label, float(confs[k]), boxes[k]))
-    return results
-
-
-def yolov8_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_thres=0.45):
-    logit_thres = np.log(conf_thres / (1.0 - conf_thres))
-    all_boxes, all_confs, all_cls = [], [], []
-
-    for si, stride in enumerate([8, 16, 32]):
-        cls_raw = outputs[si * 2].buffer.squeeze(0)       # (H, W, 80) float32 logits
-        box_int = outputs[si * 2 + 1].buffer.squeeze(0)  # (H, W, 64) int32 quantized DFL
-        scale = outputs[si * 2 + 1].properties.scale_data  # 4 floats, one per ltrb direction
-
-        # Pre-filter: only process grid cells with a confident detection
-        mask = cls_raw.max(axis=-1) > logit_thres
-        if not mask.any():
-            continue
-
-        cls_scores = 1.0 / (1.0 + np.exp(-cls_raw[mask]))  # sigmoid, shape (N, 80)
-
-        # Dequantize + DFL softmax weighted sum → ltrb in pixels
-        box_f = box_int[mask].astype(np.float32).reshape(-1, 4, _YV8_REG_MAX)  # (N, 4, 16)
-        for d in range(4):
-            box_f[:, d, :] *= scale[d]
-        box_f -= box_f.max(-1, keepdims=True)
-        np.exp(box_f, out=box_f)
-        box_f /= box_f.sum(-1, keepdims=True)
-        ltrb = (box_f * _YV8_BINS).sum(-1) * stride  # (N, 4)
-
-        ys, xs = np.where(mask)
-        cx = (xs + 0.5) * stride
-        cy = (ys + 0.5) * stride
-        x1 = np.clip(cx - ltrb[:, 0], 0, img_w)
-        y1 = np.clip(cy - ltrb[:, 1], 0, img_h)
-        x2 = np.clip(cx + ltrb[:, 2], 0, img_w)
-        y2 = np.clip(cy + ltrb[:, 3], 0, img_h)
-
-        all_boxes.append(np.stack([x1, y1, x2, y2], axis=1))
-        all_confs.append(cls_scores.max(-1))
-        all_cls.append(cls_scores.argmax(-1).astype(np.int32))
-
-    if not all_boxes:
-        return []
-    return _nms_per_class(
-        np.concatenate(all_boxes), np.concatenate(all_confs),
-        np.concatenate(all_cls), iou_thres,
-    )
+        order = idx[np.argsort(-scores[idx])]
+        while len(order):
+            i = int(order[0])
+            kept.append(i)
+            if len(order) == 1:
+                break
+            b = boxes[i]
+            rest = boxes[order[1:]]
+            ix1 = np.maximum(b[0], rest[:, 0])
+            iy1 = np.maximum(b[1], rest[:, 1])
+            ix2 = np.minimum(b[2], rest[:, 2])
+            iy2 = np.minimum(b[3], rest[:, 3])
+            inter = np.maximum(0, ix2 - ix1) * np.maximum(0, iy2 - iy1)
+            area_i = (b[2] - b[0]) * (b[3] - b[1])
+            area_o = (rest[:, 2] - rest[:, 0]) * (rest[:, 3] - rest[:, 1])
+            iou = inter / (area_i + area_o - inter + 1e-9)
+            order = order[1:][iou < iou_thres]
+    return kept
 
 
 # ---------------------------------------------------------------------------
-# YOLO26 post-processor (pure numpy)
-# Output format: 6 tensors alternating cls(1,H,W,80) / box(1,H,W,4), all
-# float32 (no quantization).  Unlike YOLOv8 there is no DFL — the box branch
-# regresses the four ltrb distances directly (in feature-map units, ×stride
-# to pixels).  The export is still a dense grid head, so per-class NMS runs on
-# CPU exactly as for YOLOv8.
+# Model loading + inference
 # ---------------------------------------------------------------------------
-def yolo26_post_process(*, outputs, img_w=640, img_h=640, conf_thres=0.5, iou_thres=0.45):
-    logit_thres = np.log(conf_thres / (1.0 - conf_thres))
-    all_boxes, all_confs, all_cls = [], [], []
-
-    for si, stride in enumerate([8, 16, 32]):
-        cls_raw = outputs[si * 2].buffer.squeeze(0)      # (H, W, 80) float32 logits
-        box = outputs[si * 2 + 1].buffer.squeeze(0)      # (H, W, 4) float32 ltrb (grid units)
-
-        mask = cls_raw.max(axis=-1) > logit_thres
-        if not mask.any():
-            continue
-
-        cls_scores = 1.0 / (1.0 + np.exp(-cls_raw[mask]))  # sigmoid, (N, 80)
-        ltrb = box[mask] * stride                          # (N, 4) → pixels
-
-        ys, xs = np.where(mask)
-        cx = (xs + 0.5) * stride
-        cy = (ys + 0.5) * stride
-        x1 = np.clip(cx - ltrb[:, 0], 0, img_w)
-        y1 = np.clip(cy - ltrb[:, 1], 0, img_h)
-        x2 = np.clip(cx + ltrb[:, 2], 0, img_w)
-        y2 = np.clip(cy + ltrb[:, 3], 0, img_h)
-
-        all_boxes.append(np.stack([x1, y1, x2, y2], axis=1))
-        all_confs.append(cls_scores.max(-1))
-        all_cls.append(cls_scores.argmax(-1).astype(np.int32))
-
-    if not all_boxes:
-        return []
-    return _nms_per_class(
-        np.concatenate(all_boxes), np.concatenate(all_confs),
-        np.concatenate(all_cls), iou_thres,
-    )
-
-
-def yolov10_post_process(*, outputs, img_size=640, score_threshold=0.25):
-    yolov5_postprocess_info = Yolov5PostProcessInfo_t()
-    yolov5_postprocess_info.height = img_size
-    yolov5_postprocess_info.width = img_size
-    yolov5_postprocess_info.ori_height = img_size
-    yolov5_postprocess_info.ori_width = img_size
-    yolov5_postprocess_info.score_threshold = 0.4
-    yolov5_postprocess_info.nms_threshold = 0.45
-    yolov5_postprocess_info.nms_top_k = 20
-    yolov5_postprocess_info.is_pad_resize = 0
-
-    output_tensors = (hbDNNTensor_t * len(models[0].outputs))()
-    for i in range(len(models[0].outputs)):
-        output_tensors[i].properties.tensorLayout = get_TensorLayout(outputs[i].properties.layout)
-        # print(output_tensors[i].properties.tensorLayout)
-        if len(outputs[i].properties.scale_data) == 0:
-            output_tensors[i].properties.quantiType = 0
-            output_tensors[i].sysMem[0].virAddr = ctypes.cast(
-                outputs[i].buffer.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.c_void_p
-            )
-        else:
-            output_tensors[i].properties.quantiType = 2
-            output_tensors[i].properties.scale.scaleData = outputs[i].properties.scale_data.ctypes.data_as(
-                ctypes.POINTER(ctypes.c_float)
-            )
-            output_tensors[i].sysMem[0].virAddr = ctypes.cast(
-                outputs[i].buffer.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), ctypes.c_void_p
-            )
-
-        for j in range(len(outputs[i].properties.shape)):
-            output_tensors[i].properties.validShape.dimensionSize[j] = outputs[i].properties.shape[j]
-
-        libpostprocess.Yolov5doProcess(output_tensors[i], ctypes.pointer(yolov5_postprocess_info), i)
-
-    result_str = get_Postprocess_result(ctypes.pointer(yolov5_postprocess_info)).decode("utf-8")
-
-    data = json.loads(result_str[16:])  # strip "YOLOV5_RESULT:" prefix
-
-    results = []
-    for det in data:
-        label = CLASSES[det["id"]] if det["id"] < len(CLASSES) else str(det["id"])
-        bbox = det["bbox"]  # [x1, y1, x2, y2]
-        results.append((label.strip(), float(det["score"]), np.array(bbox)))
-    return results
-
 
 try:
     print("Loading model...")
@@ -433,55 +174,63 @@ try:
 
     assert model_file.is_file(), f"Model file {model_file} not found!"
 
-    # Load Hobot model
-    print("--> Loading model via pyeasy_dnn")
-    models = dnn.load(str(model_file.absolute()))
-    model = models[0]
+    print("--> Loading model via hbm_runtime")
+    _runtime = HB_HBMRuntime(str(model_file.absolute()))
+    _model_name = next(iter(_runtime.input_names))
+    _input_name = _runtime.input_names[_model_name][0]
+    _output_names = _runtime.output_names[_model_name]
 
-    # Detect whether the model was compiled with NV12 input or BGR/RGB.
-    # NV12 models skip CPU colorspace conversion — the BPU handles it internally.
-    _input_type = model.inputs[0].properties.tensor_type
-    _input_type_name = str(_input_type)
-    MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type_name.upper() or "YUV" in _input_type_name.upper() else "BGR"
-    # Select the post-processor from the output layout.  YOLOv8/v12 and YOLO26
-    # both expose 6 tensors (cls/box at 3 scales); they differ in the box
-    # branch — YOLOv8 emits 64 channels (4×16 DFL bins), YOLO26 emits 4 (direct
-    # ltrb).  Anything else (1 tensor) falls back to the YOLOv5 libpostprocess.
-    if len(model.outputs) == 6:
-        _box_channels = int(model.outputs[1].properties.shape[-1])
-        _DECODER = "yolo26" if _box_channels == 4 else "yolov8"
-    else:
-        _DECODER = "yolov5"
-    print(f"Model input type detected: {MODEL_INPUT_TYPE} (raw: {_input_type_name})")
-    print(f"Post-processor: {_DECODER}")
+    # Detect NV12 vs BGR input from model metadata.
+    _input_type = str(_runtime.input_type[_model_name]) if hasattr(_runtime, "input_type") else ""
+    MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type.upper() or "YUV" in _input_type.upper() else "BGR"
+    print(f"Model input type: {MODEL_INPUT_TYPE} (raw: {_input_type})")
     print("done")
 
     worker_ready.set()
 
     def detect_objects(image: np.ndarray) -> tuple[int, list]:
-        _profile = bool(os.environ.get("PIKI_PROFILE"))
+        """Run inference on a single 640×640 tile; return (elapsed_ms, detections).
 
-        t_fwd = time.perf_counter()
-        outputs = model.forward(image)
-        if _profile:
-            logger.info("PERF stage=bpu_forward ms=%.2f", (time.perf_counter() - t_fwd) * 1000)
+        Each detection is ``(label_str, confidence, np.array([x1,y1,x2,y2]))``
+        in pixel coordinates relative to the 640×640 tile.
+        """
+        t0 = time.perf_counter()
+        outputs = _runtime.run({_model_name: {_input_name: image}})
+        outputs = outputs[_model_name]
 
-        # Use the lower "keep" threshold so the post-processor emits candidate
-        # boxes that on_done()'s hysteresis can still promote / maintain.
+        # Use the lower "keep" threshold so on_done()'s hysteresis still
+        # receives low-confidence candidates.
         conf = min(prob_threshold.value, prob_threshold_keep.value)
-        t_dec = time.perf_counter()
-        if _DECODER == "yolo26":
-            results = yolo26_post_process(outputs=outputs, conf_thres=conf)
-        elif _DECODER == "yolov8":
-            results = yolov8_post_process(outputs=outputs, conf_thres=conf)
-        else:
-            results = yolov10_post_process(outputs=outputs, score_threshold=conf)
-        if _profile:
-            logger.info("PERF stage=yolov8_decode ms=%.2f", (time.perf_counter() - t_dec) * 1000)
+        conf_raw = -np.log(1.0 / max(conf, 1e-6) - 1.0)
 
-        tt = round((time.perf_counter() - t_fwd) * 1000)
-        logger.debug(f"results: {results}")
+        all_boxes, all_scores, all_cls = [], [], []
+        for si, stride in enumerate([8, 16, 32]):
+            cls_out = outputs[_output_names[si * 2]].squeeze(0)      # (H, W, 80)
+            box_out = outputs[_output_names[si * 2 + 1]].squeeze(0)  # (H, W, 4)
+            gh, gw = cls_out.shape[:2]
+
+            scores, ids, valid = _filter_classification(cls_out, conf_raw)
+            if not valid.size:
+                continue
+            boxes = _decode_ltrb_boxes(valid, box_out, stride, gh, gw)
+            all_boxes.append(boxes)
+            all_scores.append(scores)
+            all_cls.append(ids)
+
+        if not all_boxes:
+            return round((time.perf_counter() - t0) * 1000), []
+
+        boxes = np.concatenate(all_boxes)
+        scores = np.concatenate(all_scores)
+        cls_ids = np.concatenate(all_cls)
+        indices = _nms_per_class(boxes, scores, cls_ids, NMS_THRESH)
+        results = [
+            (CLASSES[cls_ids[i]].strip(), float(scores[i]), boxes[i])
+            for i in indices
+        ]
+        tt = round((time.perf_counter() - t0) * 1000)
         return tt, results
-except:
+
+except Exception:
     traceback.print_exc()
     raise

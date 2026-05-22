@@ -33,6 +33,8 @@ from .utils.shared import (
     recording_active,
     replaying_active,
     servo_dead_zone,
+    servo_kalman_meas_noise,
+    servo_kalman_process_noise,
     servo_pan,
     servo_pid_kd,
     servo_pid_ki,
@@ -259,6 +261,8 @@ class PikiOptions(Schema):
     servo_pid_ki: Optional[float] = None
     servo_pid_kd: Optional[float] = None
     servo_dead_zone: Optional[float] = None
+    servo_kalman_process_noise: Optional[float] = None
+    servo_kalman_meas_noise: Optional[float] = None
 
 
 @api.patch("/update_options", response=PikiOptions)
@@ -333,6 +337,12 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     if (v := options.get("servo_dead_zone")) is not None:
         servo_dead_zone.value = max(0.0, float(v))
 
+    if (v := options.get("servo_kalman_process_noise")) is not None:
+        servo_kalman_process_noise.value = max(0.01, float(v))
+
+    if (v := options.get("servo_kalman_meas_noise")) is not None:
+        servo_kalman_meas_noise.value = max(0.01, float(v))
+
     # Persist all current values to DB so they survive restarts.
     config = DetectionConfig.load()
     config.show_boxes = app_settings.debug_settings.show_boxes
@@ -357,6 +367,8 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.servo_pid_ki = servo_pid_ki.value
     config.servo_pid_kd = servo_pid_kd.value
     config.servo_dead_zone = servo_dead_zone.value
+    config.servo_kalman_process_noise = servo_kalman_process_noise.value
+    config.servo_kalman_meas_noise = servo_kalman_meas_noise.value
     config.save()
 
     return PikiOptions(
@@ -382,6 +394,8 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         servo_pid_ki=servo_pid_ki.value,
         servo_pid_kd=servo_pid_kd.value,
         servo_dead_zone=servo_dead_zone.value,
+        servo_kalman_process_noise=servo_kalman_process_noise.value,
+        servo_kalman_meas_noise=servo_kalman_meas_noise.value,
     )
 
 
@@ -418,6 +432,8 @@ def get_options(request: HttpRequest):
         servo_pid_ki=servo_pid_ki.value,
         servo_pid_kd=servo_pid_kd.value,
         servo_dead_zone=servo_dead_zone.value,
+        servo_kalman_process_noise=servo_kalman_process_noise.value,
+        servo_kalman_meas_noise=servo_kalman_meas_noise.value,
     )
 
 
@@ -451,7 +467,12 @@ def get_aim_config(request: HttpRequest):
 def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema]):
     """Update servo aim configuration and persist to database."""
     from .models import AimConfig  # noqa: PLC0415
-    from .utils.shared import servo_aim_confidence, vertical_angle_offset  # noqa: PLC0415
+    from .utils.shared import (  # noqa: PLC0415
+        servo_aim_confidence,
+        servo_pan_invert,
+        servo_tilt_invert,
+        vertical_angle_offset,
+    )
 
     config = AimConfig.load()
 
@@ -482,10 +503,12 @@ def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema])
 
     if (v := payload.get("pan_invert")) is not None:
         app_settings.aim_settings.pan_invert = bool(v)
+        servo_pan_invert.value = 1 if v else 0
         config.pan_invert = bool(v)
 
     if (v := payload.get("tilt_invert")) is not None:
         app_settings.aim_settings.tilt_invert = bool(v)
+        servo_tilt_invert.value = 1 if v else 0
         config.tilt_invert = bool(v)
 
     config.save()

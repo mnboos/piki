@@ -14,8 +14,28 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-manager = Manager()
-atexit.register(manager.shutdown)
+_manager = None
+
+def _get_manager():
+    """Lazily create the multiprocessing Manager.
+
+    Created on first use rather than at import time, so management commands
+    that don't actually need shared state don't spawn an unused server process.
+    """
+    global _manager
+    if _manager is None:
+        _manager = Manager()
+        atexit.register(_manager.shutdown)
+    return _manager
+
+
+class _ManagerProxy:
+    """Backwards-compat shim so `manager.dict()` still works at module level."""
+    def __getattr__(self, name):
+        return getattr(_get_manager(), name)
+
+
+manager = _ManagerProxy()
 
 
 def is_shared_memory_subclass(cls: type):

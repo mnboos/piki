@@ -23,6 +23,10 @@ class DetectionConfig(models.Model):
     servo_pid_ki = models.FloatField(default=0.0)
     servo_pid_kd = models.FloatField(default=0.0)
     servo_dead_zone = models.FloatField(default=1.5)
+    # Kalman filter tuning — also written to mp.Value shared memory for the
+    # 60 Hz servo loop (no SyncManager round-trip).
+    servo_kalman_process_noise = models.FloatField(default=10.0)
+    servo_kalman_meas_noise = models.FloatField(default=5.0)
 
     # --- Detection stability (Phase A: hysteresis, min-streak, EMA, ghost) ---
     # conf_threshold above acts as the "enter" threshold (lock entry, event trigger).
@@ -34,7 +38,7 @@ class DetectionConfig(models.Model):
     min_consecutive_frames = models.IntegerField(default=2)
     # EMA factor for the locked-target bbox: new = (1-α)·old + α·measured.
     # Lower = smoother (more lag); higher = more responsive (more jitter).
-    bbox_ema_alpha = models.FloatField(default=0.4)
+    bbox_ema_alpha = models.FloatField(default=0.7)
     # Window after the last real detection during which the previous detection
     # set is still drawn on the MJPEG stream for visual continuity.
     ghost_frames_ms = models.IntegerField(default=300)

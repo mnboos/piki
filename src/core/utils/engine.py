@@ -186,7 +186,6 @@ _last_measurement: Optional[tuple[float, float]] = None
 @dataclass
 class _TargetState:
     active: bool = False         # True when a lock is being fed
-    home_pending: bool = False   # True when a release was requested
     last_pan: float = 0.0
     last_tilt: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -207,7 +206,14 @@ def _pid_step(
     """Advance the PID controller by one step and return the new commanded angles."""
     with _pid.lock:
         now = time.monotonic()
-        dt = max(now - _pid.last_time, 1e-3)
+        # Kp is a direct (positional) gain:  new = current + kp * error
+        # (no dt scaling).  Ki and Kd remain velocity-form — their
+        # contribution is still scaled by dt so integral/derivative behave
+        # consistently regardless of tick rate.
+        # We still clamp dt for integral/derivative stability when the
+        # loop jitters.
+        _T = 1.0 / max(1.0, SERVO_LOOP_HZ)
+        dt = min(max(now - _pid.last_time, 0.5 * _T), 2.0 * _T)
         _pid.last_time = now
 
         new_pan = current_pan
@@ -225,8 +231,9 @@ def _pid_step(
             last_error = getattr(_pid, le_attr)
             derivative = (error - last_error) / dt
             setattr(_pid, le_attr, error)
-            output = kp * error + ki * integral + kd * derivative
-            commanded = max(-90.0, min(90.0, current + output))
+            # kp is positional (no dt scaling); ki/kd are velocity-form
+            commanded = max(-90.0, min(90.0,
+                current + kp * error + (ki * integral + kd * derivative) * dt))
             if axis == 0:
                 new_pan = commanded
             else:
@@ -350,10 +357,15 @@ def bbox_to_angles(bbox_normalized: list[float]) -> tuple[float, float]:
 
 def _command_servos(pan_new: float, tilt_new: float, pan_clamped: float, tilt_clamped: float) -> None:
     """Write PWM duty cycles for the given commanded angles."""
-    from ..utils.shared import app_settings, vertical_angle_offset  # noqa: PLC0415
+    # Read direction/offset from shared-memory mp.Value rather than the app_settings
+    # SyncManager proxy: this runs on every PWM write in the 60Hz servo loop, and a
+    # DictProxy lookup is a blocking IPC round-trip to the manager process whose latency
+    # varies under load — which jitters the loop timing (and thus the servo). mp.Value
+    # is local shared memory. Mirrored on change in apps._load_aim_config / api.update_aim_config.
+    from ..utils.shared import servo_pan_invert, servo_tilt_invert, vertical_angle_offset  # noqa: PLC0415
 
-    pan_inv = app_settings.aim_settings.pan_invert
-    tilt_inv = app_settings.aim_settings.tilt_invert
+    pan_inv = bool(servo_pan_invert.value)
+    tilt_inv = bool(servo_tilt_invert.value)
     tilt_offset = vertical_angle_offset.value
 
     pan_pwm = _get_pan_pwm()
@@ -441,7 +453,6 @@ def feed_target(
 
     with _target.lock:
         _target.active = True
-        _target.home_pending = False
         _target.last_pan = pan_angle
         _target.last_tilt = tilt_angle
 
@@ -449,10 +460,9 @@ def feed_target(
 
 
 def release_target() -> None:
-    """Signal the servo loop that the lock is gone — it will home the servos."""
+    """Signal the servo loop that the lock is gone — it holds its last position."""
     with _target.lock:
         _target.active = False
-        _target.home_pending = True
     _kalman.reset()
     _pid_reset()
     global _last_measurement, _last_measurement_time  # noqa: PLW0603
@@ -488,44 +498,39 @@ def _servo_loop() -> None:
         servo_tilt,
     )
 
+    _PWM_MIN_INTERVAL = 0.05  # throttle PWM writes to 20 Hz max
+    _last_pwm_time = 0.0
     next_tick = time.monotonic()
+
+    # Opt-in timing profile (PIKI_SERVO_PROFILE=1): every ~2s log the distribution of
+    # the loop's actual tick interval and per-tick work time. A healthy loop shows dt
+    # p99 ≈ the nominal period; jitter from contention/IPC shows up as a high p99/max.
+    _profile = os.environ.get("PIKI_SERVO_PROFILE") == "1"
+    _prof_dt: list[float] = []
+    _prof_work: list[float] = []
+    _prof_prev = time.monotonic()
+    _prof_report = _prof_prev
+    _iter_start = _prof_prev
 
     while not _loop_stop.is_set():
         try:
+            if _profile:
+                _iter_start = time.monotonic()
+                _prof_dt.append(_iter_start - _prof_prev)
+                _prof_prev = _iter_start
+
             # --- Snapshot target state ---
             with _target.lock:
                 active = _target.active
-                home_pending = _target.home_pending
 
-            if home_pending:
-                # Lock released — drive servos to neutral, bypassing dead zone.
-                pan_new, tilt_new = _pid_step(
-                    0.0, 0.0,
-                    servo_pan.value, servo_tilt.value,
-                    servo_pid_kp.value, servo_pid_ki.value, servo_pid_kd.value,
-                )
-                _command_servos(pan_new, tilt_new, 0.0, 0.0)
-                servo_pan.value = pan_new
-                servo_tilt.value = tilt_new
-                servo_kalman_pan.value = 0.0
-                servo_kalman_tilt.value = 0.0
-                # Consume home_pending only once the servos are near neutral,
-                # so the PID has enough ticks to actually get there.
-                if abs(pan_new) < 0.5 and abs(tilt_new) < 0.5:
-                    with _target.lock:
-                        _target.home_pending = False
-
-            elif active and _kalman.is_initialised():
-                # Extrapolate by a FIXED lookahead only (servo-lag compensation),
-                # read-only from the last measurement-updated state.  Do NOT scale
-                # the horizon by time-since-measurement: motion-gated inference stops
-                # feeding the filter when the scene goes still, so an elapsed-scaled
-                # horizon would keep marching the aim point in the last-known velocity
-                # direction every tick — the stepwise "wander".  With a fixed horizon a
-                # frozen state gives a constant prediction (and v≈0 ⇒ it holds still).
-                # State is advanced only by feed_target()/update(), once per measurement.
-                lookahead_s = servo_kalman_lookahead_ms.value / 1000.0
-                predicted_pan, predicted_tilt = _kalman.predict_lookahead(lookahead_s)
+            if active and _kalman.is_initialised():
+                # Read the filtered position directly — no lookahead projection.
+                # The PID loop runs at 60 Hz and already tracks the target; the
+                # derivative term handles following a moving target.  Lookahead
+                # over-compensates by projecting velocity forward, which causes
+                # the predicted aim-point to drift ahead of the measurements
+                # when the Kalman velocity estimate is noisy.
+                predicted_pan, predicted_tilt = _kalman.predict_lookahead(0.0)
 
                 pan_clamped = max(-90.0, min(90.0, predicted_pan))
                 tilt_clamped = max(-90.0, min(90.0, predicted_tilt))
@@ -533,24 +538,50 @@ def _servo_loop() -> None:
                 servo_kalman_pan.value = predicted_pan
                 servo_kalman_tilt.value = predicted_tilt
 
-                # Dead zone check on the loop's commanded position so we don't
-                # spam ChangeDutyCycle for sub-degree moves.
+                # Dead zone check + PWM throttle so we don't spam
+                # ChangeDutyCycle faster than the servo can track.
                 dead_zone = servo_dead_zone.value
-                if (abs(pan_clamped - servo_pan.value) >= dead_zone
-                        or abs(tilt_clamped - servo_tilt.value) >= dead_zone):
+                now = time.monotonic()
+                if (now - _last_pwm_time >= _PWM_MIN_INTERVAL
+                        and (abs(pan_clamped - servo_pan.value) >= dead_zone
+                             or abs(tilt_clamped - servo_tilt.value) >= dead_zone)):
                     pan_new, tilt_new = _pid_step(
                         pan_clamped, tilt_clamped,
                         servo_pan.value, servo_tilt.value,
                         servo_pid_kp.value, servo_pid_ki.value, servo_pid_kd.value,
                     )
-                    _command_servos(pan_new, tilt_new, pan_clamped, tilt_clamped)
+                    # Round only for the PWM command, not for state tracking.
+                    # The PID state must keep float precision so sub-degree
+                    # corrections accumulate across ticks instead of being
+                    # discarded by rounding every iteration.
+                    _command_servos(round(pan_new), round(tilt_new), pan_clamped, tilt_clamped)
                     servo_pan.value = pan_new
                     servo_tilt.value = tilt_new
+                    _last_pwm_time = now
 
-            # else: no active lock and no home request — sit idle, don't touch PWM
+            # else: no active lock — sit idle and hold the last position (don't touch PWM)
 
         except Exception:
             logger.exception("Servo loop iteration failed")
+
+        if _profile:
+            _now = time.monotonic()
+            _prof_work.append(_now - _iter_start)
+            if _now - _prof_report >= 2.0 and _prof_dt:
+                _dt_ms = np.array(_prof_dt) * 1e3
+                _wk_ms = np.array(_prof_work) * 1e3
+                logger.info(
+                    "[servo-profile] %d ticks/%.1fs  dt(ms) p50=%.1f p99=%.1f max=%.1f "
+                    "nominal=%.1f  work(ms) p50=%.2f p99=%.2f max=%.2f",
+                    len(_prof_dt), _now - _prof_report,
+                    float(np.percentile(_dt_ms, 50)), float(np.percentile(_dt_ms, 99)),
+                    float(_dt_ms.max()), period * 1e3,
+                    float(np.percentile(_wk_ms, 50)), float(np.percentile(_wk_ms, 99)),
+                    float(_wk_ms.max()),
+                )
+                _prof_dt.clear()
+                _prof_work.clear()
+                _prof_report = _now
 
         # Sleep until next tick.
         next_tick += period
@@ -605,10 +636,16 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
     """Directly command both servos to the given angles (manual / debug mode).
 
     Bypasses Kalman / PID / dead zone — used by the debug panel and cleanup.
-    For normal lock-release homing the servo loop PID-steps to neutral.
     """
+    # Disable tracking so the servo loop doesn't overwrite this manual move
+    # on the very next tick.
+    with _target.lock:
+        _target.active = False
+
     pan_clamped = max(-90.0, min(90.0, float(pan_angle)))
     tilt_clamped = max(-90.0, min(90.0, float(tilt_angle)))
+    pan_clamped = round(pan_clamped)
+    tilt_clamped = round(tilt_clamped)
 
     logger.info("Manual move → pan=%.1f° tilt=%.1f°", pan_clamped, tilt_clamped)
 
