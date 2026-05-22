@@ -22,7 +22,9 @@ SERVO_VFOV: float = float(os.environ.get("SERVO_VFOV", "100.0"))
 SERVO_PAN_PIN: int = int(os.environ.get("SERVO_PAN_PIN", "32"))
 SERVO_TILT_PIN: int = int(os.environ.get("SERVO_TILT_PIN", "33"))
 
-SPLASH_GPIO_PIN: int = int(os.environ.get("SPLASH_GPIO_PIN", "18"))
+# Pump ENA — physical pin 27 (PWM5 on controller 34160000). Pin 18 (34150000)
+# was unusable: its PWM pads are shared with SPI1, which we keep enabled.
+SPLASH_GPIO_PIN: int = int(os.environ.get("SPLASH_GPIO_PIN", "27"))
 
 # L298N motor driver direction pins for the pump.
 PUMP_IN1_PIN: int = int(os.environ.get("PUMP_IN1_PIN", "16"))
@@ -262,7 +264,7 @@ _gpio_initialised = False
 
 @atexit.register
 def _cleanup_gpio() -> None:
-    global _pan_pwm, _tilt_pwm, _pump_pwm  # noqa: PLW0603
+    global _pan_pwm, _tilt_pwm  # noqa: PLW0603
     try:
         stop_servo_loop()
     except Exception:
@@ -272,7 +274,11 @@ def _cleanup_gpio() -> None:
         time.sleep(0.3)
     except Exception:
         pass
-    for attr, pwm in (("_pan_pwm", _pan_pwm), ("_tilt_pwm", _tilt_pwm), ("_pump_pwm", _pump_pwm)):
+    # Stop the software-PWM pump thread (leaves ENA low in its finally block).
+    _pump_pwm_stop.set()
+    if _pump_pwm_thread is not None:
+        _pump_pwm_thread.join(timeout=1.0)
+    for attr, pwm in (("_pan_pwm", _pan_pwm), ("_tilt_pwm", _tilt_pwm)):
         if pwm is not None:
             try:
                 pwm.stop()
@@ -280,7 +286,6 @@ def _cleanup_gpio() -> None:
                 pass
     _pan_pwm = None
     _tilt_pwm = None
-    _pump_pwm = None
     if _gpio_initialised:
         try:
             import Hobot.GPIO as GPIO  # noqa: PLC0415
@@ -355,8 +360,19 @@ def bbox_to_angles(bbox_normalized: list[float]) -> tuple[float, float]:
     return pan_angle, tilt_angle
 
 
+_SERVO_LOG_INTERVAL_NS = 1_000_000_000  # throttle per-write servo debug logs to ~1/s
+_last_servo_log_ns = 0
+
+
 def _command_servos(pan_new: float, tilt_new: float, pan_clamped: float, tilt_clamped: float) -> None:
     """Write PWM duty cycles for the given commanded angles."""
+    global _last_servo_log_ns  # noqa: PLW0603
+    # The servo loop runs at 60 Hz; logging every write floods the log. Only emit
+    # the (debug) position lines at most once per second.
+    _now_ns = time.monotonic_ns()
+    _log_move = logger.isEnabledFor(logging.DEBUG) and (_now_ns - _last_servo_log_ns) >= _SERVO_LOG_INTERVAL_NS
+    if _log_move:
+        _last_servo_log_ns = _now_ns
     # Read direction/offset from shared-memory mp.Value rather than the app_settings
     # SyncManager proxy: this runs on every PWM write in the 60Hz servo loop, and a
     # DictProxy lookup is a blocking IPC round-trip to the manager process whose latency
@@ -373,7 +389,8 @@ def _command_servos(pan_new: float, tilt_new: float, pan_clamped: float, tilt_cl
         try:
             pan_dc = -pan_new if not pan_inv else pan_new
             pan_pwm.ChangeDutyCycle(_angle_to_dc(pan_dc))
-            logger.debug("Pan servo → %.1f° (target %.1f°)", pan_new, pan_clamped)
+            if _log_move:
+                logger.debug("Pan servo → %.1f° (target %.1f°)", pan_new, pan_clamped)
         except Exception:
             logger.exception("Failed to move pan servo")
 
@@ -382,7 +399,8 @@ def _command_servos(pan_new: float, tilt_new: float, pan_clamped: float, tilt_cl
         try:
             tilt_out = (tilt_new + tilt_offset) if not tilt_inv else -(tilt_new + tilt_offset)
             tilt_pwm.ChangeDutyCycle(_angle_to_dc(tilt_out))
-            logger.debug("Tilt servo → %.1f° (target %.1f° offset=%.1f°)", tilt_out, tilt_clamped, tilt_offset)
+            if _log_move:
+                logger.debug("Tilt servo → %.1f° (target %.1f° offset=%.1f°)", tilt_out, tilt_clamped, tilt_offset)
         except Exception:
             logger.exception("Failed to move tilt servo")
 
@@ -678,19 +696,27 @@ def move_to(pan_angle: float, tilt_angle: float) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------------------
-# Pump — L298N motor driver with hardware PWM speed control.
+# Pump — L298N motor driver with *software* PWM speed control.
 #
-#   ENA  →  pin 18 (GPIO24)  —  hardware PWM  (GPIO.PWM, 1 kHz)
-#   IN1  →  pin 16 (GPIO23)  —  digital HIGH  (forward)
-#   IN2  →  pin 22 (GPIO25)  —  digital LOW
+#   ENA  →  pin 27 (digital GPIO)  —  bit-banged PWM (~100 Hz) for speed
+#   IN1  →  pin 16 (GPIO23)        —  digital HIGH  (forward)
+#   IN2  →  pin 22 (GPIO25)        —  digital LOW
+#
+# Hardware PWM is not used: pin 27 is the ID_SD pad whose PWM5 alternate
+# function is never muxed by the device tree (Hobot.GPIO does no pin-muxing of
+# its own — it's pure sysfs — so GPIO.PWM exported the channel but no waveform
+# reached the pad). Driving ENA as a plain GPIO and toggling it in software
+# sidesteps the missing pad-mux while keeping variable speed; a DC pump through
+# an L298N doesn't care about the lower frequency / timing jitter.
 # ---------------------------------------------------------------------------
-_PUMP_PWM_FREQ = 1000
-_pump_pwm = None
+_PUMP_SOFT_PWM_HZ = 100          # software-PWM carrier frequency
 _pump_initialised = False
+_pump_pwm_stop = threading.Event()
+_pump_pwm_thread = None
 
 
 def _init_pump() -> bool:
-    global _pump_pwm, _pump_initialised  # noqa: PLW0603
+    global _pump_initialised  # noqa: PLW0603
     if _pump_initialised:
         return True
     if not _init_gpio():
@@ -712,35 +738,68 @@ def _init_pump() -> bool:
         GPIO.setup(PUMP_IN2_PIN, GPIO.OUT)
         GPIO.output(PUMP_IN2_PIN, GPIO.LOW)
 
-        _pump_pwm = GPIO.PWM(SPLASH_GPIO_PIN, _PUMP_PWM_FREQ)
-        _pump_pwm.start(0)
+        # ENA as a plain digital output, held low (pump off) until activated.
+        GPIO.setup(SPLASH_GPIO_PIN, GPIO.OUT)
+        GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
 
         _pump_initialised = True
-        logger.info("Pump initialised: ENA=pwm@%dHz on pin %d, IN1=HIGH on pin %d, IN2=LOW on pin %d",
-                    _PUMP_PWM_FREQ, SPLASH_GPIO_PIN, PUMP_IN1_PIN, PUMP_IN2_PIN)
+        logger.info("Pump initialised: ENA=soft-PWM@%dHz on pin %d (digital GPIO), "
+                    "IN1=HIGH on pin %d, IN2=LOW on pin %d",
+                    _PUMP_SOFT_PWM_HZ, SPLASH_GPIO_PIN, PUMP_IN1_PIN, PUMP_IN2_PIN)
     except Exception:
         logger.warning("Pump unavailable on pin %d", SPLASH_GPIO_PIN, exc_info=True)
-        _pump_pwm = None
     return _pump_initialised
+
+
+def _pump_pwm_loop(duty: float, duration_s: float, stop: threading.Event) -> None:
+    """Bit-bang ENA at *duty* % for *duration_s* s, then leave it low."""
+    import Hobot.GPIO as GPIO  # noqa: PLC0415
+
+    period = 1.0 / _PUMP_SOFT_PWM_HZ
+    frac = max(0.0, min(1.0, duty / 100.0))
+    on_s = period * frac
+    off_s = period - on_s
+    deadline = time.perf_counter() + duration_s
+    try:
+        while not stop.is_set() and time.perf_counter() < deadline:
+            if frac >= 1.0:                       # full speed → steady high
+                GPIO.output(SPLASH_GPIO_PIN, GPIO.HIGH)
+                stop.wait(period)
+            elif frac <= 0.0:                     # off → steady low
+                GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+                stop.wait(period)
+            else:
+                GPIO.output(SPLASH_GPIO_PIN, GPIO.HIGH)
+                if stop.wait(on_s):
+                    break
+                GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+                stop.wait(off_s)
+    finally:
+        try:
+            GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+        except Exception:
+            logger.exception("Failed to drive pump ENA low")
+        logger.info("Pump OFF")
 
 
 def activate_pump(duration_s: float, duty_pct: float = 100.0) -> None:
     """Run the pump at *duty_pct* % for *duration_s* seconds, non-blocking."""
+    global _pump_pwm_thread  # noqa: PLW0603
     if not _init_pump():
         return
-    import Hobot.GPIO as GPIO  # noqa: PLC0415
 
     duty = max(0.0, min(100.0, duty_pct))
-    _pump_pwm.ChangeDutyCycle(duty)
-    logger.info("Pump ON (duty=%.0f%%, duration=%.1fs)", duty, duration_s)
 
-    def _deactivate() -> None:
-        time.sleep(duration_s)
-        try:
-            _pump_pwm.ChangeDutyCycle(0)
-            logger.info("Pump OFF")
-        except Exception:
-            logger.exception("Failed to deactivate pump")
+    # Cancel any in-flight run before starting a new one.
+    if _pump_pwm_thread is not None and _pump_pwm_thread.is_alive():
+        _pump_pwm_stop.set()
+        _pump_pwm_thread.join(timeout=1.0)
+    _pump_pwm_stop.clear()
 
-    t = threading.Thread(target=_deactivate, daemon=True, name="pump-timer")
-    t.start()
+    logger.info("Pump ON (duty=%.0f%%, duration=%.1fs, soft-PWM=%dHz)",
+                duty, duration_s, _PUMP_SOFT_PWM_HZ)
+    _pump_pwm_thread = threading.Thread(
+        target=_pump_pwm_loop, args=(duty, duration_s, _pump_pwm_stop),
+        daemon=True, name="pump-pwm",
+    )
+    _pump_pwm_thread.start()

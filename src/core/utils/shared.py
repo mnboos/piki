@@ -135,6 +135,10 @@ class InferenceOutput(NamedTuple):
     timestamp: int
     avg_duration: int
     detections: list[Detection]
+    # Parallel to `detections` (same order). Each entry is a color-histogram
+    # embedding (np.ndarray) when re-id is enabled, else None. Kept out of the
+    # Detection tuple so existing 3-field unpacking of detections is unaffected.
+    embeddings: Sequence = ()
 
 
 # Pre-built Norfair Detection objects for the MJPEG stream — populated by
@@ -200,6 +204,14 @@ tracker_enabled = mp.Value("i", 1)  # 1 = on, 0 = off (mp.Value has no bool type
 tracker_iou_threshold = mp.Value(c_float, 0.3)
 tracker_max_misses = mp.Value("i", 10)
 tracker_confirm_hits = mp.Value("i", 3)
+
+# --- Appearance-based re-identification ---
+# When on, the worker computes a color-histogram embedding per detection and the
+# tracker re-matches lost tracks to new detections by histogram correlation,
+# preserving track ids across occlusion / re-entry. See stream.py.
+tracker_reid_enabled = mp.Value("i", 0)
+tracker_reid_threshold = mp.Value(c_float, 0.5)      # reid_distance_threshold (1 - hist correlation)
+tracker_reid_hit_counter_max = mp.Value("i", 500)    # frames a lost track stays eligible for reid
 
 
 class MotionDetector:

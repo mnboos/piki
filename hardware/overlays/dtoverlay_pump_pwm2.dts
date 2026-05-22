@@ -1,0 +1,23 @@
+/dts-v1/;
+/plugin/;
+
+/* piki pump: enable PWM controller 34160000 (pins 27/28, "pwm2") for the
+ * L298N ENA speed control. Frees the I2C0 (ID_SD/ID_SC) pads it shares.
+ * Deliberately does NOT touch pwm@34170000 (servos) or any SPI, so this
+ * must be listed AFTER dtoverlay_pwm3 in config.txt. */
+
+/ {
+  fragment@0 {
+    target-path = "/soc/a55_apb0/i2c@340b0000";
+    __overlay__ {
+      status = "disabled";
+    };
+  };
+
+  fragment@1 {
+    target-path = "/soc/a55_apb0/pwm@34160000";
+    __overlay__ {
+      status = "okay";
+    };
+  };
+};

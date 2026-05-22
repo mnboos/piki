@@ -77,6 +77,9 @@ from .shared import (
     tracker_enabled,
     tracker_iou_threshold,
     tracker_max_misses,
+    tracker_reid_enabled,
+    tracker_reid_hit_counter_max,
+    tracker_reid_threshold,
 )
 
 logger = logging.getLogger(__name__)
@@ -323,6 +326,61 @@ def _compute_iou(a: Sequence[float], b: Sequence[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
+# --- Appearance re-identification (norfair reid) ----------------------------
+# Mirrors tryolabs/norfair demos/reid: a per-detection color-histogram embedding
+# plus a histogram-correlation distance used by the tracker to re-match lost
+# tracks. Embeddings are computed in the worker (where the frame lives) and
+# carried to on_done() via InferenceOutput.embeddings.
+_REID_HIST_BINS = 128
+_REID_PAST_DETECTIONS = 5
+
+
+def _reid_get_cutout(points: np.ndarray, image: np.ndarray) -> np.ndarray:
+    """Crop the image to the [[x1,y1],[x2,y2]] (pixel) box, clamped to bounds."""
+    h, w = image.shape[:2]
+    min_x = max(0, int(min(points[:, 0])))
+    max_x = min(w, int(max(points[:, 0])))
+    min_y = max(0, int(min(points[:, 1])))
+    max_y = min(h, int(max(points[:, 1])))
+    return image[min_y:max_y, min_x:max_x]
+
+
+def _reid_get_hist(image: np.ndarray) -> "Optional[np.ndarray]":
+    """2D U/V color histogram of a crop, normalized — the appearance embedding."""
+    if image is None or image.shape[0] == 0 or image.shape[1] == 0:
+        return None
+    hist = cv2.calcHist(
+        [cv2.cvtColor(image, cv2.COLOR_BGR2YUV)],
+        [1, 2], None, [_REID_HIST_BINS, _REID_HIST_BINS], [0, 256, 0, 256],
+    )
+    cv2.normalize(hist, hist, alpha=1.0, beta=0, norm_type=cv2.NORM_MINMAX)
+    return hist
+
+
+def _reid_embedding_distance(matched_not_init_trackers, unmatched_trackers) -> float:
+    """norfair reid_distance_function: 1 - histogram correlation, lower = closer.
+
+    Compares the appearance of a recently-lost track against a not-yet-confirmed
+    one; returns a small distance only when their histograms correlate well.
+    """
+    cutoff = float(tracker_reid_threshold.value)
+    snd_embedding = unmatched_trackers.last_detection.embedding
+    if snd_embedding is None:
+        for det in reversed(unmatched_trackers.past_detections):
+            if det.embedding is not None:
+                snd_embedding = det.embedding
+                break
+        else:
+            return 1.0
+    for det_fst in matched_not_init_trackers.past_detections:
+        if det_fst.embedding is None:
+            continue
+        distance = 1.0 - cv2.compareHist(snd_embedding, det_fst.embedding, cv2.HISTCMP_CORREL)
+        if distance < cutoff:
+            return distance
+    return 1.0
+
+
 def run_object_detection(
     frame_hires: np.ndarray,
     rois: list[Box],
@@ -374,12 +432,25 @@ def run_object_detection(
                 ]
                 all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
 
+        # Re-id appearance embeddings (parallel to all_detections). Computed here
+        # because the worker is the only place the frame image is available.
+        all_embeddings: list = []
+        if bool(tracker_reid_enabled.value):
+            for det in all_detections:
+                d_ymin, d_xmin, d_ymax, d_xmax = det.bbox
+                pts = np.array(
+                    [[d_xmin * frame_w, d_ymin * frame_h], [d_xmax * frame_w, d_ymax * frame_h]],
+                    dtype=np.float32,
+                )
+                all_embeddings.append(_reid_get_hist(_reid_get_cutout(pts, frame_hires)))
+
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
             timestamp=timestamp,
             avg_duration=avg_duration,
             detections=all_detections,
+            embeddings=all_embeddings,
         )
 
     except:
@@ -410,7 +481,7 @@ def on_done(future: Future[InferenceOutput]):
     global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since, _prev_aim_bbox
     active_futures.remove(future)
     try:
-        worker_pid, timestamp, inference_time, detections = future.result()
+        worker_pid, timestamp, inference_time, detections, embeddings = future.result()
 
         if timestamp < max_output_timestamp:
             logger.info(f"Inference result arrived late, discarding (timestamp={timestamp})")
@@ -424,10 +495,14 @@ def on_done(future: Future[InferenceOutput]):
         from . import exclusion as _exclusion  # noqa: PLC0415
 
         zones_active = _exclusion.has_zones()
+        # Align embeddings (parallel to detections) so they survive the filter.
+        if not embeddings or len(embeddings) != len(detections):
+            embeddings = [None] * len(detections)
         log_entries: list[dict] = []
         kept: list = []
+        kept_embeddings: list = []
         n_dropped_by_zone = 0
-        for label, confidence, bbox_normalized in detections:
+        for (label, confidence, bbox_normalized), emb in zip(detections, embeddings):
             inside = (
                 _exclusion.bbox_centroid_inside_any(bbox_normalized)
                 if zones_active else False
@@ -442,6 +517,7 @@ def on_done(future: Future[InferenceOutput]):
             })
             if not inside:
                 kept.append((label, confidence, bbox_normalized))
+                kept_embeddings.append(emb)
             else:
                 n_dropped_by_zone += 1
         detections = kept
@@ -455,21 +531,34 @@ def on_done(future: Future[InferenceOutput]):
         global _tracker, _tracker_params
         tracker_on = bool(tracker_enabled.value)
         if tracker_on:
+            reid_on = bool(tracker_reid_enabled.value)
             desired_params = (
                 float(tracker_iou_threshold.value),
                 int(tracker_max_misses.value),
                 max(1, int(tracker_confirm_hits.value)),
+                reid_on,
+                int(tracker_reid_hit_counter_max.value),
             )
             # Re-instantiate tracker on knob change under lock so the empty-update
             # in process_frame() can't trip on a half-rebuilt tracker.
             with _tracker_lock:
                 if _tracker is None or _tracker_params != desired_params:
-                    _tracker = norfair.Tracker(
+                    tracker_kwargs = dict(
                         distance_function="iou",
                         distance_threshold=1.0 - desired_params[0],
                         hit_counter_max=desired_params[1],
                         initialization_delay=min(desired_params[2], max(0, desired_params[1] - 1)),
                     )
+                    if reid_on:
+                        # Keep a short history of embeddings per track and let the
+                        # tracker re-match lost tracks by histogram correlation.
+                        tracker_kwargs.update(
+                            past_detections_length=_REID_PAST_DETECTIONS,
+                            reid_distance_function=_reid_embedding_distance,
+                            reid_distance_threshold=float(tracker_reid_threshold.value),
+                            reid_hit_counter_max=int(tracker_reid_hit_counter_max.value),
+                        )
+                    _tracker = norfair.Tracker(**tracker_kwargs)
                     _tracker_params = desired_params
 
                 norfair_dets = [
@@ -477,8 +566,9 @@ def on_done(future: Future[InferenceOutput]):
                         points=np.array([[xmin, ymin], [xmax, ymax]], dtype=np.float32),
                         scores=np.array([conf, conf], dtype=np.float32),
                         label=label,
+                        embedding=emb,
                     )
-                    for label, conf, (ymin, xmin, ymax, xmax) in detections
+                    for (label, conf, (ymin, xmin, ymax, xmax)), emb in zip(detections, kept_embeddings)
                 ]
                 tracked = _tracker.update(detections=norfair_dets)
                 matched_ids = {id(d) for d in norfair_dets}

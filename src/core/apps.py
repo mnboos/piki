@@ -84,6 +84,9 @@ class CoreConfig(AppConfig):
                 tracker_enabled,
                 tracker_iou_threshold,
                 tracker_max_misses,
+                tracker_reid_enabled,
+                tracker_reid_hit_counter_max,
+                tracker_reid_threshold,
             )
 
             config = DetectionConfig.load()
@@ -99,6 +102,9 @@ class CoreConfig(AppConfig):
             tracker_iou_threshold.value = max(0.0, min(1.0, float(config.tracker_iou_threshold)))
             tracker_max_misses.value = max(0, int(config.tracker_max_misses))
             tracker_confirm_hits.value = max(1, int(config.tracker_confirm_hits))
+            tracker_reid_enabled.value = 1 if config.tracker_reid_enabled else 0
+            tracker_reid_threshold.value = max(0.0, min(1.0, float(config.tracker_reid_threshold)))
+            tracker_reid_hit_counter_max.value = max(1, int(config.tracker_reid_hit_counter_max))
             settings.foreground_mask_options.pixelcount_threshold.value = config.pixelcount_threshold
             settings.foreground_mask_options.min_area.value = config.min_area
             settings.foreground_mask_options.mog2_history.value = config.mog2_history
@@ -119,7 +125,8 @@ class CoreConfig(AppConfig):
                 f"ghost_ms={ghost_frames_ms.value}, mog2_history={config.mog2_history}, "
                 f"tracker={'on' if tracker_enabled.value else 'off'} "
                 f"(iou={tracker_iou_threshold.value}, max_misses={tracker_max_misses.value}, "
-                f"confirm_hits={tracker_confirm_hits.value}), "
+                f"confirm_hits={tracker_confirm_hits.value}, "
+                f"reid={'on' if tracker_reid_enabled.value else 'off'}), "
                 f"kalman(proc={servo_kalman_process_noise.value}, "
                 f"meas={servo_kalman_meas_noise.value})",
                 flush=True,

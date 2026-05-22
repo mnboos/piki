@@ -51,6 +51,14 @@ class DetectionConfig(models.Model):
     tracker_max_misses = models.IntegerField(default=10)
     tracker_confirm_hits = models.IntegerField(default=3)
 
+    # --- Re-identification (appearance-based) ---
+    # When enabled, lost tracks are re-matched to new detections by comparing
+    # color-histogram embeddings, so an object that leaves and re-enters (or is
+    # briefly occluded past tracker_max_misses) keeps its original track id.
+    tracker_reid_enabled = models.BooleanField(default=False)
+    tracker_reid_threshold = models.FloatField(default=0.5)
+    tracker_reid_hit_counter_max = models.IntegerField(default=500)
+
     class Meta:
         verbose_name = "Detection Config"
 
