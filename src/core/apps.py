@@ -88,7 +88,6 @@ class CoreConfig(AppConfig):
             app_settings.debug_settings.show_boxes = config.show_boxes
             app_settings.debug_settings.show_mask = config.show_mask
             app_settings.debug_settings.show_rois = config.show_rois
-            app_settings.debug_settings.show_seg = config.show_seg
             prob_threshold.value = config.conf_threshold
             prob_threshold_keep.value = min(float(config.conf_threshold_keep), float(config.conf_threshold))
             min_consecutive_frames.value = max(1, int(config.min_consecutive_frames))
@@ -110,7 +109,7 @@ class CoreConfig(AppConfig):
             servo_dead_zone.value = config.servo_dead_zone
             print(
                 f"[DJANGO STARTUP] Loaded detection config: show_boxes={config.show_boxes}, "
-                f"show_mask={config.show_mask}, show_rois={config.show_rois}, show_seg={config.show_seg}, "
+                f"show_mask={config.show_mask}, show_rois={config.show_rois}, "
                 f"conf_enter={config.conf_threshold}, conf_keep={prob_threshold_keep.value}, "
                 f"min_streak={min_consecutive_frames.value}, ema_alpha={bbox_ema_alpha.value}, "
                 f"ghost_ms={ghost_frames_ms.value}, mog2_history={config.mog2_history}, "

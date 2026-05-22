@@ -39,12 +39,6 @@ export interface PikiOptions {
     showRois?: boolean;
     /**
      * 
-     * @type {boolean}
-     * @memberof PikiOptions
-     */
-    showSeg?: boolean;
-    /**
-     * 
      * @type {number}
      * @memberof PikiOptions
      */
@@ -179,7 +173,6 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
         'showBoxes': json['show_boxes'] == null ? undefined : json['show_boxes'],
         'showMask': json['show_mask'] == null ? undefined : json['show_mask'],
         'showRois': json['show_rois'] == null ? undefined : json['show_rois'],
-        'showSeg': json['show_seg'] == null ? undefined : json['show_seg'],
         'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
         'confThresholdKeep': json['conf_threshold_keep'] == null ? undefined : json['conf_threshold_keep'],
         'minConsecutiveFrames': json['min_consecutive_frames'] == null ? undefined : json['min_consecutive_frames'],
@@ -216,7 +209,6 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
         'show_boxes': value['showBoxes'],
         'show_mask': value['showMask'],
         'show_rois': value['showRois'],
-        'show_seg': value['showSeg'],
         'conf_threshold': value['confThreshold'],
         'conf_threshold_keep': value['confThresholdKeep'],
         'min_consecutive_frames': value['minConsecutiveFrames'],

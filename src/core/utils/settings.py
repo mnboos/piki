@@ -7,12 +7,11 @@ class DebugSettings(SharedMemoryObject):
     show_boxes: bool
     show_mask: bool
     show_rois: bool
-    show_seg: bool
 
     def __init__(self, *, show_boxes: bool = True, show_mask: bool = False,
-                 show_rois: bool = False, show_seg: bool = False, _dict_proxy=None):
+                 show_rois: bool = False, _dict_proxy=None):
         super().__init__(show_boxes=show_boxes, show_mask=show_mask,
-                         show_rois=show_rois, show_seg=show_seg, _dict_proxy=_dict_proxy)
+                         show_rois=show_rois, _dict_proxy=_dict_proxy)
 
 
 class AimSettings(SharedMemoryObject):

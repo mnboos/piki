@@ -130,32 +130,6 @@ async def stream_camera():
                         cv2.LINE_AA,
                     )
 
-            # Draw segmentation mask overlay when available.
-            if app_settings.debug_settings.show_seg:
-                from .utils.stream import (  # noqa: PLC0415
-                    _latest_seg_mask,
-                    _latest_seg_bbox,
-                    _latest_seg_mask_lock,
-                )
-                with _latest_seg_mask_lock:
-                    seg_mask = _latest_seg_mask
-                    seg_bbox = list(_latest_seg_bbox)
-                if seg_mask is not None and seg_mask.size > 0:
-                    fh_mask, fw_mask = draw_frame.shape[:2]
-                    ymin, xmin, ymax, xmax = seg_bbox
-                    x1 = max(0, int(xmin * fw_mask))
-                    y1 = max(0, int(ymin * fh_mask))
-                    x2 = min(fw_mask, int(xmax * fw_mask))
-                    y2 = min(fh_mask, int(ymax * fh_mask))
-                    if x2 > x1 and y2 > y1:
-                        mask_resized = cv2.resize(
-                            seg_mask, (x2 - x1, y2 - y1), interpolation=cv2.INTER_NEAREST,
-                        )
-                        # Draw mask as a semi-transparent magenta overlay.
-                        overlay = np.zeros_like(draw_frame)
-                        overlay[y1:y2, x1:x2][mask_resized > 0] = (200, 50, 200)
-                        draw_frame = cv2.addWeighted(draw_frame, 1.0, overlay, 0.45, 0)
-
             # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
             # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
             from .utils.engine import SERVO_HFOV, SERVO_VFOV  # noqa: PLC0415
@@ -267,7 +241,6 @@ class PikiOptions(Schema):
     show_boxes: bool = True
     show_mask: bool = False
     show_rois: bool = False
-    show_seg: bool = False
     conf_threshold: Optional[float] = None
     conf_threshold_keep: Optional[float] = None
     min_consecutive_frames: Optional[int] = None
@@ -299,8 +272,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         app_settings.debug_settings.show_mask = v
     if (v := options.get("show_rois")) is not None:
         app_settings.debug_settings.show_rois = v
-    if (v := options.get("show_seg")) is not None:
-        app_settings.debug_settings.show_seg = v
 
     if (v := options.get("conf_threshold")) is not None:
         prob_threshold.value = float(v)
@@ -368,7 +339,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.show_boxes = app_settings.debug_settings.show_boxes
     config.show_mask = app_settings.debug_settings.show_mask
     config.show_rois = app_settings.debug_settings.show_rois
-    config.show_seg = app_settings.debug_settings.show_seg
     config.conf_threshold = prob_threshold.value
     config.conf_threshold_keep = prob_threshold_keep.value
     config.min_consecutive_frames = min_consecutive_frames.value
@@ -394,7 +364,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         show_boxes=app_settings.debug_settings.show_boxes,
         show_mask=app_settings.debug_settings.show_mask,
         show_rois=app_settings.debug_settings.show_rois,
-        show_seg=app_settings.debug_settings.show_seg,
         conf_threshold=prob_threshold.value,
         conf_threshold_keep=prob_threshold_keep.value,
         min_consecutive_frames=min_consecutive_frames.value,
@@ -431,7 +400,6 @@ def get_options(request: HttpRequest):
         show_boxes=app_settings.debug_settings.show_boxes,
         show_mask=app_settings.debug_settings.show_mask,
         show_rois=app_settings.debug_settings.show_rois,
-        show_seg=app_settings.debug_settings.show_seg,
         conf_threshold=prob_threshold.value,
         conf_threshold_keep=prob_threshold_keep.value,
         min_consecutive_frames=min_consecutive_frames.value,

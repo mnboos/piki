@@ -12,7 +12,6 @@ class DetectionConfig(models.Model):
     show_boxes = models.BooleanField(default=True)
     show_mask = models.BooleanField(default=False)
     show_rois = models.BooleanField(default=False)
-    show_seg = models.BooleanField(default=False)
     conf_threshold = models.FloatField(default=0.4)
     pixelcount_threshold = models.IntegerField(default=500)
     min_area = models.IntegerField(default=500)

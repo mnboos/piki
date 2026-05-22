@@ -26,7 +26,6 @@ const options = ref<PikiOptions>({
     showBoxes: true,
     showMask: false,
     showRois: false,
-    showSeg: false,
     confThreshold: 0.4,
     pixelcountThreshold: 500,
     minArea: 500,
@@ -124,7 +123,6 @@ onMounted(async () => {
         showBoxes: current.showBoxes ?? true,
         showMask: current.showMask ?? false,
         showRois: current.showRois ?? false,
-        showSeg: current.showSeg ?? false,
         confThreshold: current.confThreshold ?? 0.4,
         pixelcountThreshold: current.pixelcountThreshold ?? 500,
         minArea: current.minArea ?? 500,
@@ -189,8 +187,6 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                                 @click="options.showMask = !options.showMask">Mask</button>
                             <button :class="['ot-btn', { active: options.showRois }]"
                                 @click="options.showRois = !options.showRois">ROIs</button>
-                            <button :class="['ot-btn', { active: options.showSeg }]"
-                                @click="options.showSeg = !options.showSeg">Seg</button>
                         </div>
                     </div>
                 </TabPanel>
@@ -222,8 +218,6 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                                 @click="options.showMask = !options.showMask">Mask</button>
                             <button :class="['ot-btn', { active: options.showRois }]"
                                 @click="options.showRois = !options.showRois">ROIs</button>
-                            <button :class="['ot-btn', { active: options.showSeg }]"
-                                @click="options.showSeg = !options.showSeg">Seg</button>
                             <button :class="['ot-btn', { active: editingZones }]"
                                 @click="editingZones = !editingZones">Zones</button>
                         </div>

@@ -813,11 +813,6 @@
                         "title": "Show Rois",
                         "type": "boolean"
                     },
-                    "show_seg": {
-                        "default": false,
-                        "title": "Show Seg",
-                        "type": "boolean"
-                    },
                     "conf_threshold": {
                         "anyOf": [
                             {
@@ -1065,17 +1060,6 @@
                             }
                         ],
                         "title": "Show Rois"
-                    },
-                    "show_seg": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Show Seg"
                     },
                     "conf_threshold": {
                         "anyOf": [
