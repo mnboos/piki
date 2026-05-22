@@ -127,18 +127,21 @@ class CoreConfig(AppConfig):
         """Load persisted AimConfig from DB into shared memory."""
         try:
             from .models import AimConfig  # noqa: PLC0415
-            from .utils.shared import app_settings, vertical_angle_offset  # noqa: PLC0415
+            from .utils.shared import app_settings, servo_aim_confidence, vertical_angle_offset  # noqa: PLC0415
 
             config = AimConfig.load()
             app_settings.aim_settings.target_classes = config.target_classes
             app_settings.aim_settings.servo_enabled = config.servo_enabled
             app_settings.aim_settings.target_lock_duration = float(config.target_lock_duration)
+            app_settings.aim_settings.aim_confidence = float(config.aim_confidence)
+            servo_aim_confidence.value = float(config.aim_confidence)
             vertical_angle_offset.value = float(config.vertical_angle_offset)
             app_settings.aim_settings.pan_invert = bool(config.pan_invert)
             app_settings.aim_settings.tilt_invert = bool(config.tilt_invert)
             print(
                 f"[DJANGO STARTUP] Loaded aim config: servo_enabled={config.servo_enabled}, "
                 f"classes={config.target_classes}, target_lock_duration={config.target_lock_duration}s, "
+                f"aim_confidence={config.aim_confidence}, "
                 f"vertical_angle_offset={config.vertical_angle_offset}°, "
                 f"pan_invert={config.pan_invert}, tilt_invert={config.tilt_invert}",
                 flush=True,
@@ -190,8 +193,6 @@ class CoreConfig(AppConfig):
                 splash_delay,
                 splash_duration,
                 splash_enabled,
-                splash_trigger_classes,
-                splash_trigger_classes_lock,
             )
 
             config = SplashConfig.load()
@@ -202,13 +203,10 @@ class CoreConfig(AppConfig):
             splash_delay.value = float(config.delay_seconds)
             splash_duration.value = float(config.duration_seconds)
             splash_cooldown.value = float(config.cooldown_seconds)
-            with splash_trigger_classes_lock:
-                splash_trigger_classes.clear()
-                splash_trigger_classes.extend([c.lower() for c in config.trigger_classes])
             print(
                 f"[DJANGO STARTUP] Loaded splash config: enabled={config.enabled}, "
                 f"delay={config.delay_seconds}s, duration={config.duration_seconds}s, "
-                f"cooldown={config.cooldown_seconds}s, classes={config.trigger_classes}",
+                f"cooldown={config.cooldown_seconds}s",
                 flush=True,
             )
         except Exception:

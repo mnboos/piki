@@ -1291,6 +1291,11 @@
                         "title": "Target Lock Duration",
                         "type": "number"
                     },
+                    "aim_confidence": {
+                        "default": 0.4,
+                        "title": "Aim Confidence",
+                        "type": "number"
+                    },
                     "vertical_angle_offset": {
                         "default": 0.0,
                         "title": "Vertical Angle Offset",
@@ -1352,6 +1357,17 @@
                             }
                         ],
                         "title": "Target Lock Duration"
+                    },
+                    "aim_confidence": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Aim Confidence"
                     },
                     "vertical_angle_offset": {
                         "anyOf": [
@@ -1808,14 +1824,6 @@
                         "title": "Enabled",
                         "type": "boolean"
                     },
-                    "trigger_classes": {
-                        "default": [],
-                        "items": {
-                            "type": "string"
-                        },
-                        "title": "Trigger Classes",
-                        "type": "array"
-                    },
                     "delay_seconds": {
                         "default": 0.5,
                         "title": "Delay Seconds",
@@ -1847,20 +1855,6 @@
                             }
                         ],
                         "title": "Enabled"
-                    },
-                    "trigger_classes": {
-                        "anyOf": [
-                            {
-                                "items": {
-                                    "type": "string"
-                                },
-                                "type": "array"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Trigger Classes"
                     },
                     "delay_seconds": {
                         "anyOf": [

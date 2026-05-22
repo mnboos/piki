@@ -106,7 +106,6 @@ class SplashConfig(models.Model):
     """Singleton model for splash (relay/solenoid) configuration."""
 
     enabled = models.BooleanField(default=False)
-    trigger_classes = models.JSONField(default=list)
     delay_seconds = models.FloatField(default=0.5)
     duration_seconds = models.FloatField(default=1.0)
     cooldown_seconds = models.FloatField(default=10.0)
@@ -151,6 +150,7 @@ class AimConfig(models.Model):
     target_classes = models.JSONField(default=list)
     servo_enabled = models.BooleanField(default=False)
     target_lock_duration = models.FloatField(default=3.0)
+    aim_confidence = models.FloatField(default=0.4)
     vertical_angle_offset = models.FloatField(default=0.0)
     pan_invert = models.BooleanField(default=False)
     tilt_invert = models.BooleanField(default=False)

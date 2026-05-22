@@ -26,13 +26,7 @@ export interface SplashConfigSchema {
      */
     enabled?: boolean;
     /**
-     * 
-     * @type {Array<string>}
-     * @memberof SplashConfigSchema
-     */
-    triggerClasses?: Array<string>;
-    /**
-     * 
+     *
      * @type {number}
      * @memberof SplashConfigSchema
      */
@@ -69,7 +63,6 @@ export function SplashConfigSchemaFromJSONTyped(json: any, ignoreDiscriminator: 
     return {
         
         'enabled': json['enabled'] == null ? undefined : json['enabled'],
-        'triggerClasses': json['trigger_classes'] == null ? undefined : json['trigger_classes'],
         'delaySeconds': json['delay_seconds'] == null ? undefined : json['delay_seconds'],
         'durationSeconds': json['duration_seconds'] == null ? undefined : json['duration_seconds'],
         'cooldownSeconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
@@ -88,7 +81,6 @@ export function SplashConfigSchemaToJSONTyped(value?: SplashConfigSchema | null,
     return {
         
         'enabled': value['enabled'],
-        'trigger_classes': value['triggerClasses'],
         'delay_seconds': value['delaySeconds'],
         'duration_seconds': value['durationSeconds'],
         'cooldown_seconds': value['cooldownSeconds'],

@@ -2,21 +2,9 @@
 import { type SplashConfigSchema } from "@/api";
 import Panel from "primevue/panel";
 import ToggleSwitch from "primevue/toggleswitch";
-import Checkbox from "primevue/checkbox";
 import InputNumber from "primevue/inputnumber";
 
 const model = defineModel<SplashConfigSchema>({ required: true });
-defineProps<{ classes: string[] }>();
-
-function toggleClass(cls: string) {
-    const current = model.value.triggerClasses ?? [];
-    const idx = current.indexOf(cls);
-    if (idx === -1) {
-        model.value.triggerClasses = [...current, cls];
-    } else {
-        model.value.triggerClasses = current.filter(c => c !== cls);
-    }
-}
 </script>
 
 <template>
@@ -37,23 +25,7 @@ function toggleClass(cls: string) {
             </div>
         </template>
 
-        <p class="hint">
-            Trigger splash on these classes
-            <span v-if="(model.triggerClasses?.length ?? 0) > 0" class="selected-count">
-                ({{ model.triggerClasses?.length ?? 0 }} selected)
-            </span>:
-        </p>
-        <div class="class-grid">
-            <div v-for="cls in classes" :key="cls" class="class-item">
-                <Checkbox
-                    :input-id="`splash-cls-${cls}`"
-                    :model-value="(model.triggerClasses ?? []).includes(cls)"
-                    :binary="true"
-                    @update:model-value="toggleClass(cls)"
-                />
-                <label :for="`splash-cls-${cls}`" class="class-label">{{ cls }}</label>
-            </div>
-        </div>
+        <p class="hint">Uses the same classes configured in Servo Aiming above.</p>
 
         <div class="timing-grid">
             <div class="timing-item">
@@ -134,29 +106,6 @@ function toggleClass(cls: string) {
     font-size: 0.8rem;
     color: var(--p-text-muted-color);
     margin: 0.5rem 0;
-}
-.selected-count {
-    font-weight: 600;
-    color: var(--p-primary-color);
-}
-.class-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.2rem 0.75rem;
-    margin-bottom: 0.75rem;
-    max-height: 160px;
-    overflow-y: auto;
-}
-.class-item {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.75rem;
-    min-width: 100px;
-}
-.class-label {
-    cursor: pointer;
-    user-select: none;
 }
 .timing-grid {
     display: flex;

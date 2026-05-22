@@ -4,23 +4,16 @@ import { type AimConfigSchema, type PikiOptions } from "@/api";
 import Panel from "primevue/panel";
 import Fieldset from "primevue/fieldset";
 import ToggleSwitch from "primevue/toggleswitch";
-import Checkbox from "primevue/checkbox";
+import MultiSelect from "primevue/multiselect";
 import InputNumber from "primevue/inputnumber";
 import Select from "primevue/select";
 import SelectButton from "primevue/selectbutton";
 
 const model = defineModel<AimConfigSchema>({ required: true });
 const options = defineModel<PikiOptions>("options", { required: true });
-defineProps<{ classes: string[] }>();
+const props = defineProps<{ classes: string[] }>();
 
-function toggleClass(cls: string) {
-    const idx = model.value.targetClasses.indexOf(cls);
-    if (idx === -1) {
-        model.value.targetClasses = [...model.value.targetClasses, cls];
-    } else {
-        model.value.targetClasses = model.value.targetClasses.filter(c => c !== cls);
-    }
-}
+const sortedClasses = computed(() => [...props.classes].sort((a, b) => a.localeCompare(b)));
 
 // ── PID presets ──────────────────────────────────────────────────────────────
 
@@ -146,17 +139,29 @@ const presetDescription = computed(() => selectedPreset.value?.description ?? ""
                 ({{ model.targetClasses.length }} selected)
             </span>:
         </p>
-        <div class="class-grid">
-            <div v-for="cls in classes" :key="cls" class="class-item">
-                <Checkbox
-                    :input-id="`cls-${cls}`"
-                    :model-value="model.targetClasses.includes(cls)"
-                    :binary="true"
-                    @update:model-value="toggleClass(cls)"
-                />
-                <label :for="`cls-${cls}`" class="class-label">{{ cls }}</label>
-            </div>
+        <MultiSelect
+            v-model="model.targetClasses"
+            :options="sortedClasses"
+            display="chip"
+            filter
+            placeholder="Select classes..."
+            class="w-full"
+        />
+
+        <div class="lock-row">
+            <label for="aim-confidence" class="lock-label">Aim confidence</label>
+            <InputNumber
+                input-id="aim-confidence"
+                v-model="model.aimConfidence"
+                :min="0.01"
+                :max="1.0"
+                :step="0.05"
+                :min-fraction-digits="2"
+                :max-fraction-digits="2"
+                class="lock-input"
+            />
         </div>
+        <p class="hint">Minimum confidence for a detection to trigger servo aiming.</p>
 
         <div class="lock-row">
             <label for="target-lock-duration" class="lock-label">Target lock duration (s)</label>

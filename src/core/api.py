@@ -43,8 +43,6 @@ from .utils.shared import (
     splash_delay,
     splash_duration,
     splash_enabled,
-    splash_trigger_classes,
-    splash_trigger_classes_lock,
     streaming_active,
     tracker_confirm_hits,
     tracker_enabled,
@@ -426,6 +424,7 @@ class AimConfigSchema(Schema):
     target_classes: list[str]
     servo_enabled: bool
     target_lock_duration: float
+    aim_confidence: float = 0.4
     vertical_angle_offset: float = 0.0
     pan_invert: bool = False
     tilt_invert: bool = False
@@ -434,12 +433,13 @@ class AimConfigSchema(Schema):
 @api.get("/aim_config", response=AimConfigSchema)
 def get_aim_config(request: HttpRequest):
     """Return current servo aim configuration."""
-    from .utils.shared import vertical_angle_offset  # noqa: PLC0415
+    from .utils.shared import servo_aim_confidence, vertical_angle_offset  # noqa: PLC0415
 
     return AimConfigSchema(
         target_classes=list(app_settings.aim_settings.target_classes or []),
         servo_enabled=bool(app_settings.aim_settings.servo_enabled),
         target_lock_duration=float(app_settings.aim_settings.target_lock_duration),
+        aim_confidence=float(servo_aim_confidence.value),
         vertical_angle_offset=float(vertical_angle_offset.value),
         pan_invert=bool(app_settings.aim_settings.pan_invert),
         tilt_invert=bool(app_settings.aim_settings.tilt_invert),
@@ -450,7 +450,7 @@ def get_aim_config(request: HttpRequest):
 def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema]):
     """Update servo aim configuration and persist to database."""
     from .models import AimConfig  # noqa: PLC0415
-    from .utils.shared import vertical_angle_offset  # noqa: PLC0415
+    from .utils.shared import servo_aim_confidence, vertical_angle_offset  # noqa: PLC0415
 
     config = AimConfig.load()
 
@@ -467,6 +467,12 @@ def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema])
         clamped = max(0.0, float(duration))
         app_settings.aim_settings.target_lock_duration = clamped
         config.target_lock_duration = clamped
+
+    if (conf := payload.get("aim_confidence")) is not None:
+        clamped = max(0.01, min(1.0, float(conf)))
+        app_settings.aim_settings.aim_confidence = clamped
+        servo_aim_confidence.value = clamped
+        config.aim_confidence = clamped
 
     if (offset := payload.get("vertical_angle_offset")) is not None:
         clamped = max(-30.0, min(30.0, float(offset)))
@@ -487,6 +493,7 @@ def update_aim_config(request: HttpRequest, payload: PatchDict[AimConfigSchema])
         target_classes=list(app_settings.aim_settings.target_classes or []),
         servo_enabled=bool(app_settings.aim_settings.servo_enabled),
         target_lock_duration=float(app_settings.aim_settings.target_lock_duration),
+        aim_confidence=float(servo_aim_confidence.value),
         vertical_angle_offset=float(vertical_angle_offset.value),
         pan_invert=bool(app_settings.aim_settings.pan_invert),
         tilt_invert=bool(app_settings.aim_settings.tilt_invert),
@@ -976,7 +983,6 @@ def get_event_clips(request: HttpRequest):
 
 class SplashConfigSchema(Schema):
     enabled: bool = False
-    trigger_classes: list[str] = []
     delay_seconds: float = 0.5
     duration_seconds: float = 1.0
     cooldown_seconds: float = 10.0
@@ -985,11 +991,8 @@ class SplashConfigSchema(Schema):
 @api.get("/splash_config", response=SplashConfigSchema)
 def get_splash_config(request: HttpRequest):
     """Return current splash (relay/solenoid) configuration."""
-    with splash_trigger_classes_lock:
-        classes = list(splash_trigger_classes)
     return SplashConfigSchema(
         enabled=splash_enabled.is_set(),
-        trigger_classes=classes,
         delay_seconds=float(splash_delay.value),
         duration_seconds=float(splash_duration.value),
         cooldown_seconds=float(splash_cooldown.value),
@@ -1025,20 +1028,10 @@ def update_splash_config(request: HttpRequest, payload: PatchDict[SplashConfigSc
         config.cooldown_seconds = clamped
         splash_cooldown.value = clamped
 
-    if (v := payload.get("trigger_classes")) is not None:
-        validated = [str(c).strip() for c in v if str(c).strip() in _YOLO_CLASSES]
-        config.trigger_classes = validated
-        with splash_trigger_classes_lock:
-            splash_trigger_classes.clear()
-            splash_trigger_classes.extend([c.lower() for c in validated])
-
     config.save()
 
-    with splash_trigger_classes_lock:
-        classes = list(splash_trigger_classes)
     return SplashConfigSchema(
         enabled=splash_enabled.is_set(),
-        trigger_classes=classes,
         delay_seconds=float(splash_delay.value),
         duration_seconds=float(splash_duration.value),
         cooldown_seconds=float(splash_cooldown.value),

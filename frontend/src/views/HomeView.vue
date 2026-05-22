@@ -43,6 +43,7 @@ const aimConfig = ref<AimConfigSchema>({
     targetClasses: [],
     servoEnabled: false,
     targetLockDuration: 3.0,
+    aimConfidence: 0.4,
     verticalAngleOffset: 0.0,
     panInvert: false,
     tiltInvert: false,
@@ -50,7 +51,6 @@ const aimConfig = ref<AimConfigSchema>({
 
 const splashConfig = ref<SplashConfigSchema>({
     enabled: false,
-    triggerClasses: [],
     delaySeconds: 0.5,
     durationSeconds: 1.0,
     cooldownSeconds: 10.0,
@@ -141,6 +141,7 @@ onMounted(async () => {
         targetClasses: aim.targetClasses ?? [],
         servoEnabled: aim.servoEnabled ?? false,
         targetLockDuration: aim.targetLockDuration ?? 3.0,
+        aimConfidence: aim.aimConfidence ?? 0.4,
         verticalAngleOffset: aim.verticalAngleOffset ?? 0.0,
         panInvert: aim.panInvert ?? false,
         tiltInvert: aim.tiltInvert ?? false,
@@ -149,7 +150,6 @@ onMounted(async () => {
     const splash = await api.coreApiGetSplashConfig();
     splashConfig.value = {
         enabled: splash.enabled ?? false,
-        triggerClasses: splash.triggerClasses ?? [],
         delaySeconds: splash.delaySeconds ?? 0.5,
         durationSeconds: splash.durationSeconds ?? 1.0,
         cooldownSeconds: splash.cooldownSeconds ?? 10.0,
@@ -228,7 +228,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
 
                 <TabPanel value="servo">
                     <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses ?? []" />
-                    <SplashPanel v-model="splashConfig" :classes="allClasses ?? []" />
+                    <SplashPanel v-model="splashConfig" />
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
                 </TabPanel>
 

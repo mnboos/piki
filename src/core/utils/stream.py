@@ -56,6 +56,7 @@ from .shared import (
     prob_threshold,
     prob_threshold_keep,
     recording_active,
+    servo_aim_confidence,
     replaying_active,
     settings,
     streaming_active,
@@ -590,6 +591,10 @@ def on_done(future: Future[InferenceOutput]):
         conf_keep = float(prob_threshold_keep.value)
         if conf_keep > conf_enter:
             conf_keep = conf_enter
+
+        # Servo-aiming confidence thresholds — independent of display/recording.
+        aim_conf = float(servo_aim_confidence.value)
+        aim_conf_keep = max(conf_keep, aim_conf * 0.6)
         min_streak_required = max(1, int(min_consecutive_frames.value))
         ema_alpha = max(0.0, min(1.0, float(bbox_ema_alpha.value)))
 
@@ -621,7 +626,7 @@ def on_done(future: Future[InferenceOutput]):
             _locked_target_bbox = None
             _locked_target_label = None
             _locked_target_lost_since = None
-            if aim_enabled and target_classes:
+            if aim_enabled:
                 _release_servo_lock()
 
         matching: list[tuple[str, float, list[float]]] = [
@@ -636,7 +641,7 @@ def on_done(future: Future[InferenceOutput]):
             best_iou = 0.0
             best: tuple[str, float, list[float]] | None = None
             for det in matching:
-                if det[1] < conf_keep:
+                if det[1] < aim_conf_keep:
                     continue
                 iou = _compute_iou(_locked_target_bbox, det[2])
                 if iou > best_iou:
@@ -654,13 +659,13 @@ def on_done(future: Future[InferenceOutput]):
                     _locked_target_bbox = None
                     _locked_target_label = None
                     _locked_target_lost_since = None
-                    if aim_enabled and target_classes:
+                    if aim_enabled:
                         _release_servo_lock()
 
         if chosen is None and _locked_target_bbox is None:
             for det in matching:
                 label, conf, _bbox = det
-                if conf >= conf_enter and _confirmed(label):
+                if conf >= aim_conf and _confirmed(label):
                     chosen = det
                     break
 
@@ -680,7 +685,7 @@ def on_done(future: Future[InferenceOutput]):
 
             # Feed the latest measurement into the servo loop. The decoupled
             # loop in engine.py reads this at ~30Hz and commands the servo.
-            if aim_enabled and target_classes:
+            if aim_enabled:
                 from .engine import feed_target  # noqa: PLC0415
 
                 _aim_center = None
@@ -692,9 +697,8 @@ def on_done(future: Future[InferenceOutput]):
             from . import shared as _s  # noqa: PLC0415
 
             if _s.splash_enabled.is_set() and time.time() > _s.splash_cooldown_until:
-                with _s.splash_trigger_classes_lock:
-                    splash_classes = {c.strip().lower() for c in _s.splash_trigger_classes}
-                if chosen_label.strip().lower() in splash_classes:
+                splash_classes = target_classes
+                if not splash_classes or chosen_label.strip().lower() in splash_classes:
                     if _s.splash_armed_at == 0.0:
                         _s.splash_armed_at = time.time()
                         logger.info("Splash armed for target=%s (delay=%.1fs)", chosen_label, _s.splash_delay.value)
@@ -733,6 +737,8 @@ def on_done(future: Future[InferenceOutput]):
                 if lores_shape is None:
                     break
                 if confidence < conf_keep:
+                    continue
+                if aim_enabled and target_classes and label.strip().lower() not in target_classes:
                     continue
                 x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=lores_shape)
                 if x < 0 or y < 0 or w < 0 or h < 0:
