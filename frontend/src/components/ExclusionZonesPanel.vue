@@ -107,7 +107,7 @@ function remove(z: ExclusionZoneSchema) {
                         icon="pi pi-trash"
                         severity="danger"
                         size="small"
-                        text
+                        outlined
                         rounded
                         aria-label="Delete"
                         @click="remove(z)"

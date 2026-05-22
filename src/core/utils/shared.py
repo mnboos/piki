@@ -137,6 +137,13 @@ class InferenceOutput(NamedTuple):
     detections: list[Detection]
 
 
+# Pre-built Norfair Detection objects for the MJPEG stream — populated by
+# stream.py in on_done() and read by api.py's streaming generator.
+# Each Detection has .id monkey-patched from the tracker so draw_boxes
+# can use color="by_id".  GIL makes list assignment atomic.
+tracker_drawables: list = []
+
+
 class LatestFrame:
     def __init__(self):
         self.frame: Optional[np.ndarray] = None

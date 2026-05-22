@@ -506,7 +506,7 @@ def on_done(future: Future[InferenceOutput]):
                     ent["track_id"] = int(best[0])
                     ent["track_age_frames"] = int(best[1])
 
-            detections = [(label, conf, bbox_norm) for label, conf, bbox_norm, _tid, _age in visible]
+            detections = [(label, conf, bbox_norm, tid, age) for label, conf, bbox_norm, tid, age in visible]
 
         with _latest_inference_lock:
             global _latest_inference_log_entries
@@ -529,7 +529,7 @@ def on_done(future: Future[InferenceOutput]):
 
         firing_labels: set[str] = {
             label.strip().lower()
-            for label, confidence, _bbox in detections
+            for label, confidence, _bbox, *_ in detections
             if confidence >= conf_enter
         }
         for lbl in list(_label_streak.keys()):
@@ -561,7 +561,7 @@ def on_done(future: Future[InferenceOutput]):
 
         matching: list[tuple[str, float, list[float]]] = [
             (label, confidence, bbox_normalized)
-            for label, confidence, bbox_normalized in detections
+            for label, confidence, bbox_normalized, *_ in detections
             if not target_classes or label.strip().lower() in target_classes
         ]
 
@@ -667,7 +667,14 @@ def on_done(future: Future[InferenceOutput]):
                 lores_shape = lowres_frame_cache.pop(timestamp, None)
 
             detections_denormalized: list[Detection] = []
-            for label, confidence, bbox_normalized in detections:
+            from . import shared as _s  # noqa: PLC0415
+            import norfair as _norfair  # noqa: PLC0415
+
+            _s.tracker_drawables.clear()
+            for entry in detections:
+                label, confidence, bbox_normalized = entry[0], entry[1], entry[2]
+                tid = entry[3] if len(entry) > 3 else None
+                age = entry[4] if len(entry) > 4 else None
                 if lores_shape is None:
                     break
                 if confidence < conf_keep:
@@ -681,6 +688,14 @@ def on_done(future: Future[InferenceOutput]):
                 detections_denormalized.append(
                     Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
                 )
+                d = _norfair.Detection(
+                    points=np.array([[x, y], [x + w, y + h]], dtype=np.float32),
+                    scores=np.array([confidence], dtype=np.float32),
+                    label=label,
+                )
+                if tid is not None:
+                    d.id = tid
+                _s.tracker_drawables.append(d)
 
             if detections_denormalized:
                 _last_seen_monotonic_ns = now_mono_ns
@@ -700,7 +715,7 @@ def on_done(future: Future[InferenceOutput]):
             if ros_node is not None:
                 ros_node.publish_detections([
                     Detection(label=label, confidence=confidence, bbox=list(bbox))
-                    for label, confidence, bbox in detections
+                    for label, confidence, bbox, *_ in detections
                 ])
 
         # --- Event-triggered recording ---
@@ -711,7 +726,7 @@ def on_done(future: Future[InferenceOutput]):
             with event_trigger_classes_lock:
                 trigger_set = {c.strip().lower() for c in event_trigger_classes}
             if trigger_set:
-                for label, confidence, bbox_normalized in detections:
+                for label, confidence, bbox_normalized, *_ in detections:
                     label_lc = label.strip().lower()
                     if (confidence >= conf_enter
                             and label_lc in trigger_set

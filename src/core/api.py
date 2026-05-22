@@ -99,37 +99,34 @@ async def stream_camera():
 
             # Convert grayscale Y-plane (2D) to writable BGR for drawing.
             # frame_lores is the decimated NV12 Y-plane — single-channel uint8.
+            # Always work on a deep copy so in-place drawing (mask overlay,
+            # Norfair draw_boxes) never touches shared frame buffers.
             if frame.ndim == 2:
                 draw_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
             else:
-                draw_frame = np.array(frame)  # writable copy if already BGR
+                draw_frame = frame.copy()
 
-            # Draw detections on the frame
-            if app_settings.debug_settings.show_boxes:
-                for detection in detections:
-                    left, top, w, h = detection.bbox
-                    left, top, w, h = int(left), int(top), int(w), int(h)
-                    right = left + w
-                    bottom = top + h
+            # Draw detections with Norfair — drawable objects are pre-built
+            # in stream.py so we just pass them through to draw_boxes.
+            from .utils.shared import tracker_drawables  # noqa: PLC0415
 
-                    cv2.rectangle(draw_frame, (left, top), (right, bottom), box_color, thickness)
+            if app_settings.debug_settings.show_boxes and tracker_drawables:
+                try:
+                    import norfair  # noqa: PLC0415
+                    from norfair import Palette  # noqa: PLC0415
 
-                    text_to_draw = f"{detection.label} ({detection.confidence:.1%})"
-                    (text_w, text_h), _ = cv2.getTextSize(text_to_draw, font, font_scale, thickness)
-                    text_bg_rect_start = (left, top - text_h - 7)
-                    text_bg_rect_end = (left + text_w, top)
-                    cv2.rectangle(draw_frame, text_bg_rect_start, text_bg_rect_end, box_color, -1)
-
-                    cv2.putText(
+                    Palette.set("tab10")
+                    norfair.draw_boxes(
                         draw_frame,
-                        text_to_draw,
-                        (left, top - 5),
-                        font,
-                        font_scale,
-                        (0, 0, 0),
-                        1,
-                        cv2.LINE_AA,
+                        drawables=tracker_drawables,
+                        color="by_id",
+                        draw_ids=True,
+                        draw_labels=True,
+                        draw_scores=True,
                     )
+                except Exception:
+                    import logging  # noqa: PLC0415
+                    logging.getLogger(__name__).exception("Norfair draw_boxes failed")
 
             # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
             # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
