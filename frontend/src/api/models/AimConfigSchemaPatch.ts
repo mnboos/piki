@@ -42,6 +42,12 @@ export interface AimConfigSchemaPatch {
      * @type {number}
      * @memberof AimConfigSchemaPatch
      */
+    aimConfidence?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof AimConfigSchemaPatch
+     */
     verticalAngleOffset?: number | null;
     /**
      * 
@@ -77,6 +83,7 @@ export function AimConfigSchemaPatchFromJSONTyped(json: any, ignoreDiscriminator
         'targetClasses': json['target_classes'] == null ? undefined : json['target_classes'],
         'servoEnabled': json['servo_enabled'] == null ? undefined : json['servo_enabled'],
         'targetLockDuration': json['target_lock_duration'] == null ? undefined : json['target_lock_duration'],
+        'aimConfidence': json['aim_confidence'] == null ? undefined : json['aim_confidence'],
         'verticalAngleOffset': json['vertical_angle_offset'] == null ? undefined : json['vertical_angle_offset'],
         'panInvert': json['pan_invert'] == null ? undefined : json['pan_invert'],
         'tiltInvert': json['tilt_invert'] == null ? undefined : json['tilt_invert'],
@@ -97,6 +104,7 @@ export function AimConfigSchemaPatchToJSONTyped(value?: AimConfigSchemaPatch | n
         'target_classes': value['targetClasses'],
         'servo_enabled': value['servoEnabled'],
         'target_lock_duration': value['targetLockDuration'],
+        'aim_confidence': value['aimConfidence'],
         'vertical_angle_offset': value['verticalAngleOffset'],
         'pan_invert': value['panInvert'],
         'tilt_invert': value['tiltInvert'],

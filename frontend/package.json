@@ -24,6 +24,7 @@
     "@primevue/icons": "^4.5.5",
     "@primevue/themes": "^4.5.4",
     "@tanstack/vue-query": "5.99.0",
+    "@vueuse/core": "^14.3.0",
     "primevue": "4.5.5",
     "vue": "3.5.32",
     "vue-router": "5.0.4"

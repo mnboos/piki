@@ -2,7 +2,8 @@
 import { ref, watch, watchEffect, onMounted } from "vue";
 import { useMutation } from "@tanstack/vue-query";
 import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiOptions, type PikiOptionsPatch, type SplashConfigSchema, type SplashConfigSchemaPatch } from "@/api";
-import { useTrackerStatusQuery, useEventClipsQuery, useYoloClassesQuery } from "@/queries/recordings";
+import { useYoloClassesQuery } from "@/queries/recordings";
+import { useTrackerStatus, useLastNewEventClip } from "@/composables/useEventStream";
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import RecordingsPanel from "@/components/RecordingsPanel.vue";
@@ -67,29 +68,23 @@ const debugFeedUrl = "/api/video_feed_raw";
 const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
 const debugTopic = import.meta.env.VITE_ROS_DEBUG_TOPIC ?? "/image_right_raw";
 
-// ── Queries ───────────────────────────────────────────────────────────────
+// ── Live state (WebSocket) ────────────────────────────────────────────────
 
-const { data: trackerStatus } = useTrackerStatusQuery();
+const trackerStatus = useTrackerStatus();
 const currentFps = ref(0);
 watchEffect(() => {
   currentFps.value = trackerStatus.value?.fps ?? 0;
 });
 
-const { data: eventClips } = useEventClipsQuery();
-const toastedFiles = new Set<string>();
-watch(eventClips, (clips) => {
-  if (!clips) return;
-  for (const c of clips) {
-    if (!toastedFiles.has(c.file)) {
-      toastedFiles.add(c.file);
-      toast.add({
-        severity: "info",
-        summary: "Event clip saved",
-        detail: `${c.filename} (${c.frameCount} frames)`,
-        life: 8000,
-      });
-    }
-  }
+const lastNewClip = useLastNewEventClip();
+watch(lastNewClip, c => {
+  if (!c) return;
+  toast.add({
+    severity: "info",
+    summary: "Event clip saved",
+    detail: `${c.filename} (${c.frameCount} frames)`,
+    life: 8000,
+  });
 });
 
 const { data: allClasses } = useYoloClassesQuery();

@@ -27,12 +27,6 @@ export interface SplashConfigSchemaPatch {
     enabled?: boolean | null;
     /**
      * 
-     * @type {Array<string>}
-     * @memberof SplashConfigSchemaPatch
-     */
-    triggerClasses?: Array<string> | null;
-    /**
-     * 
      * @type {number}
      * @memberof SplashConfigSchemaPatch
      */
@@ -49,6 +43,12 @@ export interface SplashConfigSchemaPatch {
      * @memberof SplashConfigSchemaPatch
      */
     cooldownSeconds?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof SplashConfigSchemaPatch
+     */
+    pumpDuty?: number | null;
 }
 
 /**
@@ -69,10 +69,10 @@ export function SplashConfigSchemaPatchFromJSONTyped(json: any, ignoreDiscrimina
     return {
         
         'enabled': json['enabled'] == null ? undefined : json['enabled'],
-        'triggerClasses': json['trigger_classes'] == null ? undefined : json['trigger_classes'],
         'delaySeconds': json['delay_seconds'] == null ? undefined : json['delay_seconds'],
         'durationSeconds': json['duration_seconds'] == null ? undefined : json['duration_seconds'],
         'cooldownSeconds': json['cooldown_seconds'] == null ? undefined : json['cooldown_seconds'],
+        'pumpDuty': json['pump_duty'] == null ? undefined : json['pump_duty'],
     };
 }
 
@@ -88,10 +88,10 @@ export function SplashConfigSchemaPatchToJSONTyped(value?: SplashConfigSchemaPat
     return {
         
         'enabled': value['enabled'],
-        'trigger_classes': value['triggerClasses'],
         'delay_seconds': value['delaySeconds'],
         'duration_seconds': value['durationSeconds'],
         'cooldown_seconds': value['cooldownSeconds'],
+        'pump_duty': value['pumpDuty'],
     };
 }
 

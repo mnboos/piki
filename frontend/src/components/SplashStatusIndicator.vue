@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useSplashStatusQuery } from "@/queries/recordings";
+import { useSplashStatus, useSplashDisplayRemaining } from "@/composables/useEventStream";
 
-const { data } = useSplashStatusQuery();
+const data = useSplashStatus();
+const remaining = useSplashDisplayRemaining();
 
 const visible = computed(() => data.value?.enabled || data.value?.state !== "idle");
 
@@ -17,9 +18,9 @@ const dotClass = computed(() => {
 
 const label = computed(() => {
   switch (data.value?.state) {
-    case "armed": return `Armed (${data.value.delayRemaining?.toFixed(1)}s)`;
-    case "firing": return `Firing (${data.value.firingRemaining?.toFixed(1)}s)`;
-    case "cooldown": return `Cooldown (${data.value.cooldownRemaining?.toFixed(0)}s)`;
+    case "armed": return `Armed (${remaining.value.toFixed(1)}s)`;
+    case "firing": return `Firing (${remaining.value.toFixed(1)}s)`;
+    case "cooldown": return `Cooldown (${remaining.value.toFixed(0)}s)`;
     default: return "Splash ready";
   }
 });

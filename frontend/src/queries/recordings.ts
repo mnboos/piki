@@ -3,38 +3,8 @@ import { DefaultApi, type EventRecordingConfigSchemaPatch } from "@/api";
 
 const api = new DefaultApi();
 
-// ── Tracker status (polled) ────────────────────────────────────────────────
-
-export function useTrackerStatusQuery() {
-  return useQuery({
-    queryKey: ["trackerStatus"],
-    queryFn: () => api.coreApiGetTrackerStatus(),
-    refetchInterval: 1500,
-    staleTime: 0,
-  });
-}
-
-// ── Splash status (polled, fast for responsive indicator) ─────────────────
-
-export function useSplashStatusQuery() {
-  return useQuery({
-    queryKey: ["splashStatus"],
-    queryFn: () => api.coreApiGetSplashStatus(),
-    refetchInterval: 500,
-    staleTime: 0,
-  });
-}
-
-// ── Event clips (polled, shared by RecordingsPanel list + HomeView toast) ──
-
-export function useEventClipsQuery() {
-  return useQuery({
-    queryKey: ["eventClips"],
-    queryFn: () => api.coreApiGetEventClips(),
-    refetchInterval: 1000,
-    staleTime: 0,
-  });
-}
+// Live state previously polled here (tracker/splash/event-clips/recording/replay
+// status) now arrives over WebSocket — see `@/composables/useEventStream`.
 
 // ── Event recording config ────────────────────────────────────────────────
 
@@ -57,26 +27,11 @@ export function useUpdateEventRecordingConfigMutation() {
   });
 }
 
-// ── Recording status (polled) ─────────────────────────────────────────────
-
-export function useRecordingStatusQuery() {
-  return useQuery({
-    queryKey: ["recordingStatus"],
-    queryFn: () => api.coreApiRecordingStatus(),
-    refetchInterval: 1000,
-    staleTime: 0,
-  });
-}
-
 // ── Manual recording start / stop ─────────────────────────────────────────
 
 export function useStartRecordingMutation() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => api.coreApiRecordingStart(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recordingStatus"] });
-    },
   });
 }
 
@@ -85,7 +40,6 @@ export function useStopRecordingMutation() {
   return useMutation({
     mutationFn: () => api.coreApiRecordingStop(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recordingStatus"] });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
     },
   });
@@ -103,32 +57,15 @@ export function useVideosQuery() {
 
 // ── Replay ────────────────────────────────────────────────────────────────
 
-export function useReplayStatusQuery() {
-  return useQuery({
-    queryKey: ["replayStatus"],
-    queryFn: () => api.coreApiReplayStatus(),
-    refetchInterval: ({ state }) => (state.data?.isReplaying ? 500 : false),
-    staleTime: 0,
-  });
-}
-
 export function useStartReplayMutation() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (videoId: number) => api.coreApiReplayStart({ videoId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["replayStatus"] });
-    },
   });
 }
 
 export function useStopReplayMutation() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => api.coreApiReplayStop(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["replayStatus"] });
-    },
   });
 }
 

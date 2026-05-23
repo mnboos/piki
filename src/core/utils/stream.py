@@ -25,8 +25,14 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
+from .. import events
 from . import shared as _s
 from .ai import MODEL_INPUT_TYPE, detect_objects
+from .event_payloads import (
+    build_recording_payload,
+    build_splash_payload,
+    build_tracker_payload,
+)
 from .event_log import EventLogger
 from .func import (
     slice_roi_into_tiles,
@@ -212,6 +218,7 @@ class PikiVisionNode(Node):
             return
         try:
             fps_counter.tick()
+            events.publish_throttled("tracker_status", build_tracker_payload(), 1.0)
             w, h = msg.width, msg.height
             stride = msg.step if msg.step > 0 else w
 
@@ -737,6 +744,7 @@ def on_done(future: Future[InferenceOutput]):
                     if _s.splash_armed_at == 0.0:
                         _s.splash_armed_at = time.time()
                         logger.info("Splash armed for target=%s (delay=%.1fs)", chosen_label, _s.splash_delay.value)
+                        events.publish("splash_status", build_splash_payload())
                     elif time.time() - _s.splash_armed_at >= _s.splash_delay.value:
                         from .engine import activate_pump  # noqa: PLC0415
                         _s.splash_cooldown_until = time.time() + _s.splash_cooldown.value
@@ -745,6 +753,7 @@ def on_done(future: Future[InferenceOutput]):
                         activate_pump(_s.splash_duration.value, _s.pump_duty.value)
                         logger.info("Splash fired for target=%s (duration=%.1fs, cooldown=%.1fs)",
                                     chosen_label, _s.splash_duration.value, _s.splash_cooldown.value)
+                        events.publish("splash_status", build_splash_payload())
                         if _event_logger is not None:
                             _event_logger.write({
                                 "event": "splash_fired",
@@ -752,9 +761,13 @@ def on_done(future: Future[InferenceOutput]):
                                 "duration_seconds": float(_s.splash_duration.value),
                             })
                 else:
-                    _s.splash_armed_at = 0.0
+                    if _s.splash_armed_at > 0:
+                        _s.splash_armed_at = 0.0
+                        events.publish("splash_status", build_splash_payload())
             else:
-                _s.splash_armed_at = 0.0
+                if _s.splash_armed_at > 0:
+                    _s.splash_armed_at = 0.0
+                    events.publish("splash_status", build_splash_payload())
 
         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
@@ -943,6 +956,7 @@ def _start_event_recording() -> None:
             logger.exception("Failed to open EventLogger at %s — recording continues without log.", log_path)
             _event_logger = None
         event_recording_active.set()
+        events.publish("recording_status", build_recording_payload())
 
     if _event_logger is not None:
         _event_logger.write({
@@ -979,6 +993,7 @@ def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
     with _event_recorder_lock:
         if _event_recorder is None:
             event_recording_active.clear()
+            events.publish("recording_status", build_recording_payload())
             return
         final_path, frame_count, error = _event_recorder.close()
         _event_recorder = None
@@ -990,6 +1005,7 @@ def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
     _event_clip_until = 0.0
     event_recording_active.clear()
     _s.event_recording_cooldown_until = time.time() + event_cooldown_seconds.value
+    events.publish("recording_status", build_recording_payload())
 
     # Capture log_path and event_id BEFORE close() so post-close attribute
     # access doesn't depend on EventLogger's close() implementation.
@@ -1022,14 +1038,16 @@ def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
                 if log_path is not None and log_path.exists():
                     video_kwargs["log_file"] = str(log_path.relative_to(django_settings.MEDIA_ROOT))
             video = Video.objects.create(**video_kwargs)
+            new_clip = {
+                "filename": file_path.name,
+                "file": str(file_path.relative_to(django_settings.MEDIA_ROOT)),
+                "frame_count": frame_count,
+                "time": datetime.now().isoformat(),
+                "video_id": video.id,
+            }
             with event_clip_queue_lock:
-                event_clip_queue.append({
-                    "filename": file_path.name,
-                    "file": str(file_path.relative_to(django_settings.MEDIA_ROOT)),
-                    "frame_count": frame_count,
-                    "time": datetime.now().isoformat(),
-                    "video_id": video.id,
-                })
+                event_clip_queue.append(new_clip)
+            events.publish("event_clips", {"clip": new_clip})
             logger.info("Event clip saved: %s (%d frames, log=%s)", file_path.name, frame_count,
                         log_path.name if log_path else "no")
         except Exception:

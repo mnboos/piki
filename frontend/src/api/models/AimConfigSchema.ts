@@ -38,13 +38,13 @@ export interface AimConfigSchema {
      */
     targetLockDuration: number;
     /**
-     *
+     * 
      * @type {number}
      * @memberof AimConfigSchema
      */
     aimConfidence?: number;
     /**
-     *
+     * 
      * @type {number}
      * @memberof AimConfigSchema
      */

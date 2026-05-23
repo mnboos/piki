@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import { type EventClipSchema, type VideoInfo } from "@/api";
+import { ref } from "vue";
+import { type VideoInfo } from "@/api";
 import {
-  useEventClipsQuery,
   useEventRecordingConfigQuery,
   useUpdateEventRecordingConfigMutation,
-  useRecordingStatusQuery,
   useStartRecordingMutation,
   useStopRecordingMutation,
   useVideosQuery,
-  useReplayStatusQuery,
   useStartReplayMutation,
   useStopReplayMutation,
   useYoloClassesQuery,
   useUploadVideoMutation,
   useDeleteVideoMutation,
 } from "@/queries/recordings";
+import {
+  useRecordingStatus,
+  useReplayStatus,
+  useEventClips,
+} from "@/composables/useEventStream";
 import Panel from "primevue/panel";
 import Button from "primevue/button";
 import Dialog from "primevue/dialog";
@@ -27,26 +29,17 @@ import { DefaultApi, type EventLogSummary } from "@/api";
 
 const api = new DefaultApi();
 
-// ── Queries ───────────────────────────────────────────────────────────────
+// ── Live state (WebSocket) ────────────────────────────────────────────────
 
-const {
-  data: recordingStatus,
-} = useRecordingStatusQuery();
-const {
-  data: eventConfig,
-} = useEventRecordingConfigQuery();
-const {
-  data: allClasses,
-} = useYoloClassesQuery();
-const {
-  data: eventClipsRaw,
-} = useEventClipsQuery();
-const {
-  data: videosRaw,
-} = useVideosQuery();
-const {
-  data: replayStatus,
-} = useReplayStatusQuery();
+const recordingStatus = useRecordingStatus();
+const replayStatus = useReplayStatus();
+const eventClips = useEventClips();
+
+// ── Queries (HTTP, non-realtime) ──────────────────────────────────────────
+
+const { data: eventConfig } = useEventRecordingConfigQuery();
+const { data: allClasses } = useYoloClassesQuery();
+const { data: videosRaw } = useVideosQuery();
 
 // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -57,21 +50,6 @@ const { mutate: startReplay } = useStartReplayMutation();
 const { mutate: stopReplay } = useStopReplayMutation();
 const { mutateAsync: uploadVideoMutation } = useUploadVideoMutation();
 const { mutate: deleteVideoMutation } = useDeleteVideoMutation();
-
-// ── Accumulated event clips (backend drains queue on each poll) ───────────
-
-const eventClips = ref<EventClipSchema[]>([]);
-const seenFiles = new Set<string>();
-
-watch(eventClipsRaw, (clips) => {
-  if (!clips) return;
-  for (const c of clips) {
-    if (!seenFiles.has(c.file)) {
-      seenFiles.add(c.file);
-      eventClips.value.unshift(c);
-    }
-  }
-});
 
 // ── Trigger class toggle ──────────────────────────────────────────────────
 

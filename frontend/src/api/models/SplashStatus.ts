@@ -45,6 +45,18 @@ export interface SplashStatus {
     cooldownRemaining?: number;
     /**
      * 
+     * @type {number}
+     * @memberof SplashStatus
+     */
+    firingDuration?: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof SplashStatus
+     */
+    cooldownDuration?: number;
+    /**
+     * 
      * @type {boolean}
      * @memberof SplashStatus
      */
@@ -72,6 +84,8 @@ export function SplashStatusFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'delayRemaining': json['delay_remaining'] == null ? undefined : json['delay_remaining'],
         'firingRemaining': json['firing_remaining'] == null ? undefined : json['firing_remaining'],
         'cooldownRemaining': json['cooldown_remaining'] == null ? undefined : json['cooldown_remaining'],
+        'firingDuration': json['firing_duration'] == null ? undefined : json['firing_duration'],
+        'cooldownDuration': json['cooldown_duration'] == null ? undefined : json['cooldown_duration'],
         'enabled': json['enabled'] == null ? undefined : json['enabled'],
     };
 }
@@ -91,6 +105,8 @@ export function SplashStatusToJSONTyped(value?: SplashStatus | null, ignoreDiscr
         'delay_remaining': value['delayRemaining'],
         'firing_remaining': value['firingRemaining'],
         'cooldown_remaining': value['cooldownRemaining'],
+        'firing_duration': value['firingDuration'],
+        'cooldown_duration': value['cooldownDuration'],
         'enabled': value['enabled'],
     };
 }

@@ -26,7 +26,7 @@ export interface SplashConfigSchema {
      */
     enabled?: boolean;
     /**
-     *
+     * 
      * @type {number}
      * @memberof SplashConfigSchema
      */
@@ -44,7 +44,7 @@ export interface SplashConfigSchema {
      */
     cooldownSeconds?: number;
     /**
-     *
+     * 
      * @type {number}
      * @memberof SplashConfigSchema
      */
@@ -86,7 +86,7 @@ export function SplashConfigSchemaToJSONTyped(value?: SplashConfigSchema | null,
     }
 
     return {
-
+        
         'enabled': value['enabled'],
         'delay_seconds': value['delaySeconds'],
         'duration_seconds': value['durationSeconds'],

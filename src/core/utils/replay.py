@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 
+from .. import events
 from .shared import cv2, preview_downscale_factor
 
 _stop_event = threading.Event()
@@ -69,6 +70,9 @@ def _replay_loop(video_path: str):
 
         frame_idx += 1
         _stats["current_frame"] = frame_idx
+
+        from .event_payloads import build_replay_payload  # noqa: PLC0415
+        events.publish_throttled("replay_status", build_replay_payload(), 0.5)
 
         sleep_time = next_frame_time - time.monotonic()
         if sleep_time > 0:

@@ -10,6 +10,9 @@ import Aura from "@primevue/themes/aura";
 
 import { Configuration, DefaultConfig, type Middleware, type RequestContext, type ResponseContext } from "@/api";
 import { getCookie, useBackendHost } from "@/utils";
+// Import for side-effect: opens the WebSocket and starts populating the
+// reactive event-stream state used by status indicators.
+import "@/composables/useEventStream";
 /**
  * Small middleware to add appropriate headers depending on the HTTP method
  * before starting the API call.

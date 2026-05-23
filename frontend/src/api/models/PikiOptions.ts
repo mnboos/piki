@@ -93,6 +93,24 @@ export interface PikiOptions {
     trackerConfirmHits?: number | null;
     /**
      * 
+     * @type {boolean}
+     * @memberof PikiOptions
+     */
+    trackerReidEnabled?: boolean | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    trackerReidThreshold?: number | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    trackerReidHitCounterMax?: number | null;
+    /**
+     * 
      * @type {number}
      * @memberof PikiOptions
      */
@@ -152,13 +170,13 @@ export interface PikiOptions {
      */
     servoDeadZone?: number | null;
     /**
-     *
+     * 
      * @type {number}
      * @memberof PikiOptions
      */
     servoKalmanProcessNoise?: number | null;
     /**
-     *
+     * 
      * @type {number}
      * @memberof PikiOptions
      */
@@ -194,6 +212,9 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
         'trackerIouThreshold': json['tracker_iou_threshold'] == null ? undefined : json['tracker_iou_threshold'],
         'trackerMaxMisses': json['tracker_max_misses'] == null ? undefined : json['tracker_max_misses'],
         'trackerConfirmHits': json['tracker_confirm_hits'] == null ? undefined : json['tracker_confirm_hits'],
+        'trackerReidEnabled': json['tracker_reid_enabled'] == null ? undefined : json['tracker_reid_enabled'],
+        'trackerReidThreshold': json['tracker_reid_threshold'] == null ? undefined : json['tracker_reid_threshold'],
+        'trackerReidHitCounterMax': json['tracker_reid_hit_counter_max'] == null ? undefined : json['tracker_reid_hit_counter_max'],
         'pixelcountThreshold': json['pixelcount_threshold'] == null ? undefined : json['pixelcount_threshold'],
         'minArea': json['min_area'] == null ? undefined : json['min_area'],
         'mog2History': json['mog2_history'] == null ? undefined : json['mog2_history'],
@@ -232,6 +253,9 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
         'tracker_iou_threshold': value['trackerIouThreshold'],
         'tracker_max_misses': value['trackerMaxMisses'],
         'tracker_confirm_hits': value['trackerConfirmHits'],
+        'tracker_reid_enabled': value['trackerReidEnabled'],
+        'tracker_reid_threshold': value['trackerReidThreshold'],
+        'tracker_reid_hit_counter_max': value['trackerReidHitCounterMax'],
         'pixelcount_threshold': value['pixelcountThreshold'],
         'min_area': value['minArea'],
         'mog2_history': value['mog2History'],

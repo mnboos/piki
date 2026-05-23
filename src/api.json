@@ -912,6 +912,39 @@
                         ],
                         "title": "Tracker Confirm Hits"
                     },
+                    "tracker_reid_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Reid Enabled"
+                    },
+                    "tracker_reid_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Reid Threshold"
+                    },
+                    "tracker_reid_hit_counter_max": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Reid Hit Counter Max"
+                    },
                     "pixelcount_threshold": {
                         "anyOf": [
                             {
@@ -1021,6 +1054,28 @@
                             }
                         ],
                         "title": "Servo Dead Zone"
+                    },
+                    "servo_kalman_process_noise": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Kalman Process Noise"
+                    },
+                    "servo_kalman_meas_noise": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Kalman Meas Noise"
                     }
                 },
                 "title": "PikiOptions",
@@ -1160,6 +1215,39 @@
                         ],
                         "title": "Tracker Confirm Hits"
                     },
+                    "tracker_reid_enabled": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Reid Enabled"
+                    },
+                    "tracker_reid_threshold": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Reid Threshold"
+                    },
+                    "tracker_reid_hit_counter_max": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Reid Hit Counter Max"
+                    },
                     "pixelcount_threshold": {
                         "anyOf": [
                             {
@@ -1269,6 +1357,28 @@
                             }
                         ],
                         "title": "Servo Dead Zone"
+                    },
+                    "servo_kalman_process_noise": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Kalman Process Noise"
+                    },
+                    "servo_kalman_meas_noise": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Servo Kalman Meas Noise"
                     }
                 },
                 "title": "PikiOptionsPatch",
@@ -1929,6 +2039,16 @@
                     "cooldown_remaining": {
                         "default": 0.0,
                         "title": "Cooldown Remaining",
+                        "type": "number"
+                    },
+                    "firing_duration": {
+                        "default": 0.0,
+                        "title": "Firing Duration",
+                        "type": "number"
+                    },
+                    "cooldown_duration": {
+                        "default": 0.0,
+                        "title": "Cooldown Duration",
                         "type": "number"
                     },
                     "enabled": {

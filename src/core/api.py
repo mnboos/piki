@@ -18,9 +18,11 @@ from .models import (
     SplashConfig,
     Video,
 )
+from . import events
 from .utils import exclusion
 from .utils.engine import move_to
 from .utils.event_log import summarize_log
+from .utils.event_payloads import build_recording_payload, build_replay_payload
 from .utils.recording import (
     get_recording_stats,
     is_recording,
@@ -705,6 +707,7 @@ def recording_start(request: HttpRequest):
         return 409, {"detail": err}
 
     recording_active.set()
+    events.publish("recording_status", build_recording_payload())
     stats = get_recording_stats()
     return RecordingStatus(is_recording=True, **stats)
 
@@ -714,6 +717,7 @@ def recording_stop(request: HttpRequest):
 
     recording_active.clear()
     path, frame_count, error = stop_recording()
+    events.publish("recording_status", build_recording_payload())
 
     if path and frame_count > 0:
         file_path = Path(path)
@@ -942,6 +946,7 @@ def replay_start(request: HttpRequest, video_id: int):
 
     time.sleep(0.1)
 
+    events.publish("replay_status", build_replay_payload())
     stats = get_replay_stats()
     return ReplayStatus(is_replaying=True, **stats)
 
@@ -951,6 +956,7 @@ def replay_stop(request: HttpRequest):
 
     stop_replay()
     replaying_active.clear()
+    events.publish("replay_status", build_replay_payload())
     return {"status": "stopped"}
 
 
@@ -1117,6 +1123,8 @@ class SplashStatus(Schema):
     delay_remaining: float = 0.0
     firing_remaining: float = 0.0
     cooldown_remaining: float = 0.0
+    firing_duration: float = 0.0
+    cooldown_duration: float = 0.0
     enabled: bool = False
 
 
@@ -1127,12 +1135,14 @@ def get_splash_status(request: HttpRequest):
 
     now = time.time()
     is_enabled = splash_enabled.is_set()
+    cd = round(float(splash_cooldown.value), 1)
 
     firing_until = _s.splash_firing_until
     if firing_until > 0 and now < firing_until:
         return SplashStatus(
             state="firing",
             firing_remaining=round(firing_until - now, 1),
+            cooldown_duration=cd,
             enabled=is_enabled,
         )
 
@@ -1143,6 +1153,8 @@ def get_splash_status(request: HttpRequest):
         return SplashStatus(
             state="armed",
             delay_remaining=round(remaining, 1),
+            firing_duration=round(float(splash_duration.value), 1),
+            cooldown_duration=cd,
             enabled=is_enabled,
         )
 

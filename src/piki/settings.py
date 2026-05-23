@@ -46,6 +46,7 @@ ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
     "daphne",
+    "channels",
     "ninja",
     "corsheaders",
     "django.contrib.admin",
@@ -56,6 +57,10 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "core",
 ]
+
+CHANNEL_LAYERS = {
+    "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
+}
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
