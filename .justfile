@@ -28,22 +28,137 @@ profile-staged:
 profile-report:
     uv run python benchmarks/parse_perf_log.py $(ls -t logs/profile_*.log | head -1)
 
-# Compile + install the pump PWM device-tree overlay and enable it in
-# /boot/config.txt. Needs sudo; reboot afterwards for it to take effect.
-# Pump ENA uses pin 27 (PWM ctrl 34160000); see hardware/overlays/.
-install-pump-overlay:
+# ── Production deploy ────────────────────────────────────────────────────────
+
+# Build the Vue frontend to frontend/dist/
+build-frontend:
+    cd frontend && npm ci && npm run build
+
+# Collect Django static files into src/staticfiles/ (served by Caddy at /static/)
+collectstatic:
+    cd src && uv run python manage.py collectstatic --noinput
+
+# Full prod build: frontend + staticfiles. Run after pulling changes.
+build-prod: build-frontend collectstatic
+
+# One-time: symlink /etc/caddy/Caddyfile -> deploy/Caddyfile and add the
+# caddy user to the sunrise group so it can read the repo files. Backs up
+# any pre-existing regular Caddyfile, validates the new config, and reloads
+# (or restarts, if the group was just added). Idempotent.
+install-caddy-config:
     #!/usr/bin/env bash
     set -euo pipefail
-    src=hardware/overlays/dtoverlay_pump_pwm2.dts
-    dtc -@ -I dts -O dtb -o /tmp/dtoverlay_pump_pwm2.dtbo "$src"
-    sudo cp "$src" /boot/overlays/dtoverlay_pump_pwm2.dts
-    sudo cp /tmp/dtoverlay_pump_pwm2.dtbo /boot/overlays/dtoverlay_pump_pwm2.dtbo
-    # enable in config.txt (idempotent); must load after dtoverlay_pwm3 (servos)
-    if ! grep -q '^dtoverlay=dtoverlay_pump_pwm2$' /boot/config.txt; then
-        sudo cp /boot/config.txt /boot/config.txt.bak.$(date +%Y%m%d-%H%M%S)
-        echo 'dtoverlay=dtoverlay_pump_pwm2' | sudo tee -a /boot/config.txt >/dev/null
+    target=/etc/caddy/Caddyfile
+    src=/home/sunrise/src/piki/deploy/Caddyfile
+    needs_restart=0
+
+    # Grant caddy read access via group membership.
+    if ! id -nG caddy | tr ' ' '\n' | grep -qx sunrise; then
+        sudo usermod -aG sunrise caddy
+        needs_restart=1
     fi
-    echo "Installed. Reboot to activate, then check: ls /sys/class/pwm/"
+
+    # Install symlink, backing up any pre-existing regular file.
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$src" ]; then
+        echo "Symlink already in place."
+    else
+        if [ -e "$target" ] && [ ! -L "$target" ]; then
+            sudo cp "$target" "$target.bak.$(date +%Y%m%d-%H%M%S)"
+        fi
+        sudo ln -sfn "$src" "$target"
+    fi
+
+    sudo caddy validate --config "$target" --adapter caddyfile
+
+    # Group changes only apply to processes started AFTER usermod, so restart
+    # caddy the first time. Otherwise reload is enough to pick up Caddyfile.
+    if [ "$needs_restart" = "1" ]; then
+        sudo systemctl restart caddy
+    else
+        sudo systemctl reload caddy
+    fi
+    echo "Done. $target -> $src; caddy is in group sunrise."
+
+# One-time: install the systemd unit for the backend.
+install-backend-service:
+    sudo cp deploy/piki.service /etc/systemd/system/piki.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable piki.service
+    @echo "Installed. Start with:  just serve-start"
+
+install: install-backend-service install-caddy-config
+
+# Reverse of install-caddy-config + install-backend-service:
+#   - stop, disable, and remove piki.service
+#   - restore /etc/caddy/Caddyfile from the most recent backup
+#   - remove caddy from the sunrise group
+# Idempotent — safe to re-run.
+uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Backend service.
+    if systemctl list-unit-files piki.service --no-legend 2>/dev/null | grep -q .; then
+        sudo systemctl disable --now piki.service || true
+        sudo rm -f /etc/systemd/system/piki.service
+        sudo systemctl daemon-reload
+        echo "Removed piki.service."
+    else
+        echo "piki.service not installed; skipping."
+    fi
+
+    # Caddyfile symlink → restore latest backup.
+    target=/etc/caddy/Caddyfile
+    if [ -L "$target" ]; then
+        latest_bak=$(ls -1t "$target".bak.* 2>/dev/null | head -n1 || true)
+        if [ -n "$latest_bak" ]; then
+            sudo rm -f "$target"
+            sudo mv "$latest_bak" "$target"
+            sudo systemctl reload caddy
+            echo "Restored $target from $(basename "$latest_bak")."
+        else
+            echo "WARNING: $target is a symlink but no backup found; leaving it in place."
+            echo "         Remove it manually after providing a replacement Caddyfile."
+        fi
+    else
+        echo "$target is not a symlink; leaving it alone."
+    fi
+
+    # Caddy group membership.
+    if id -nG caddy 2>/dev/null | tr ' ' '\n' | grep -qx sunrise; then
+        sudo gpasswd -d caddy sunrise >/dev/null
+        sudo systemctl restart caddy
+        echo "Removed caddy from sunrise group."
+    fi
+
+    echo "Uninstall complete."
+
+# Validate the Caddyfile syntax without applying it.
+caddy-check:
+    caddy validate --config deploy/Caddyfile --adapter caddyfile
+
+# Reload Caddy after editing deploy/Caddyfile (no downtime).
+caddy-reload:
+    sudo systemctl reload caddy
+
+# Start / stop / restart the whole stack.
+serve-start:
+    sudo systemctl start piki.service
+    sudo systemctl reload caddy
+
+serve-stop:
+    sudo systemctl stop piki.service
+
+serve-restart:
+    sudo systemctl restart piki.service
+    sudo systemctl reload caddy
+
+serve-status:
+    systemctl status piki.service caddy.service --no-pager
+
+# Tail backend logs (last 50 lines, then follow).
+serve-logs:
+    journalctl -fu piki.service -n 50 -q
 
 [env("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic")]
 [env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "deepseek-v4-flash")]

@@ -1,0 +1,24 @@
+# piki — served on LAN over :80
+:80 {
+	encode zstd gzip
+
+	# Django routes — proxy to daphne. Must be a handle (not bare reverse_proxy)
+	# so it's mutually exclusive with the SPA catch-all below.
+	@backend path /api/* /admin /admin/* /media/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Django staticfiles (admin, DRF) — served directly from collectstatic output
+	handle_path /static/* {
+		root * /home/sunrise/src/piki/src/staticfiles
+		file_server
+	}
+
+	# Vue SPA — built dist, with router fallback to index.html
+	handle {
+		root * /home/sunrise/src/piki/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

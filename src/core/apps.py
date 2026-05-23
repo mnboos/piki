@@ -241,13 +241,21 @@ class CoreConfig(AppConfig):
         # The `runserver` command runs this method twice. We use an environment
         # variable to ensure our setup code only runs in the main process.
         print("sys.argv: ", sys.argv, flush=True)
-        # Only run heavy startup for runserver, not for migrate/shell/test/etc.
-        if len(sys.argv) < 2 or sys.argv[1] != "runserver":
+        # Only run heavy startup when actually serving the app, not for
+        # migrate/shell/test/collectstatic/etc. Two serving entrypoints:
+        #   - manage.py runserver (dev)
+        #   - daphne piki.asgi:application (prod, behind Caddy)
+        cmd = sys.argv[1] if len(sys.argv) >= 2 else ""
+        executable = os.path.basename(sys.argv[0]) if sys.argv else ""
+        is_runserver = cmd == "runserver"
+        is_daphne = executable == "daphne"
+        if not (is_runserver or is_daphne):
             return
 
-        # With --noreload, runserver runs ready() once. Without --noreload, the
-        # autoreloader's parent process also runs it; RUN_MAIN distinguishes the worker.
-        is_worker = "--noreload" in sys.argv or os.environ.get("RUN_MAIN") == "true"
+        # runserver's autoreloader runs ready() in both parent and child; only
+        # the child (--noreload or RUN_MAIN=true) should do heavy startup.
+        # daphne has no reloader, so it's always the worker.
+        is_worker = is_daphne or "--noreload" in sys.argv or os.environ.get("RUN_MAIN") == "true"
         if not is_worker:
             return
 
@@ -263,7 +271,7 @@ class CoreConfig(AppConfig):
 
         print("[DJANGO STARTUP] Initializing camera and AI workers...")
 
-        if len(sys.argv) >= 2 and sys.argv[1] == "runserver":
+        if is_runserver or is_daphne:
             import threading
 
             from .utils.metrics import queue_manager, retrieve_queue

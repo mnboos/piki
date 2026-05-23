@@ -19,6 +19,7 @@ source /opt/tros/humble/setup.bash
 echo "[piki] Cleaning up stale processes..."
 pkill -x mipi_cam 2>/dev/null || true
 pkill -f "manage.py runserver" 2>/dev/null || true
+pkill -f "daphne .*piki.asgi" 2>/dev/null || true
 sleep 0.5
 
 # ── Fix tros.b runtime directories ───────────────────────────────────────────
@@ -95,7 +96,8 @@ CAM_PID=$!
 sleep 2
 
 # ── Start Django ──────────────────────────────────────────────────────────────
-echo "[piki] Starting Django..."
+# PIKI_PROD=1 → daphne on 127.0.0.1:8000 (production, served via Caddy).
+# unset/0    → manage.py runserver on 0.0.0.0:8000 (development, hot-reload).
 source "${SCRIPT_DIR}/.venv/bin/activate"
 cd "${SCRIPT_DIR}/src"
 
@@ -111,7 +113,13 @@ export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
 export  MODEL_FILE=/app/model/basic/yolo26n_detect_bayese_640x640_nv12.bin
 
-python manage.py runserver --noreload 0.0.0.0:8000 &
+if [ "${PIKI_PROD:-0}" = "1" ]; then
+    echo "[piki] Starting daphne (prod, 127.0.0.1:8000)..."
+    daphne -b 0.0.0.0 -p 8000 piki.asgi:application &
+else
+    echo "[piki] Starting Django runserver (dev, 0.0.0.0:8000)..."
+    python manage.py runserver --noreload 0.0.0.0:8000 &
+fi
 DJANGO_PID=$!
 echo "[piki] Django PID: $DJANGO_PID"
 
