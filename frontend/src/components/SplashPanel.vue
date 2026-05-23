@@ -4,8 +4,13 @@ import Panel from "primevue/panel";
 import ToggleSwitch from "primevue/toggleswitch";
 import InputNumber from "primevue/inputnumber";
 import Slider from "primevue/slider";
+import Button from "primevue/button";
 
 const model = defineModel<SplashConfigSchema>({ required: true });
+defineProps<{
+    firePump: () => void;
+    firePumpPending?: boolean;
+}>();
 </script>
 
 <template>
@@ -84,6 +89,16 @@ const model = defineModel<SplashConfigSchema>({ required: true });
                 <p class="timing-help">Minimum time between splashes.</p>
             </div>
         </div>
+
+        <Button
+            label="Fire Pump"
+            icon="pi pi-bolt"
+            :loading="firePumpPending"
+            severity="warn"
+            size="small"
+            class="fire-btn"
+            @click="firePump"
+        />
     </Panel>
 </template>
 
@@ -148,5 +163,9 @@ const model = defineModel<SplashConfigSchema>({ required: true });
     font-size: 0.7rem;
     color: var(--p-text-muted-color);
     margin: 0.2rem 0 0;
+}
+.fire-btn {
+    margin-top: 0.75rem;
+    width: 100%;
 }
 </style>

@@ -396,6 +396,35 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
+     * Manually fire the pump with the configured duration and duty.
+     * Activate Splash
+     */
+    async coreApiActivateSplashRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        let urlPath = `/api/splash/activate`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     * Manually fire the pump with the configured duration and duty.
+     * Activate Splash
+     */
+    async coreApiActivateSplash(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.coreApiActivateSplashRaw(initOverrides);
+    }
+
+    /**
      * Return current system status.
      * Get Tracker Status
      */

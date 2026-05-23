@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -22,7 +23,7 @@ from . import events
 from .utils import exclusion
 from .utils.engine import move_to
 from .utils.event_log import summarize_log
-from .utils.event_payloads import build_recording_payload, build_replay_payload
+from .utils.event_payloads import build_recording_payload, build_replay_payload, build_splash_payload
 from .utils.recording import (
     get_recording_stats,
     is_recording,
@@ -1062,6 +1063,8 @@ class SplashConfigSchema(Schema):
     pump_duty: float = 100.0
 
 
+class SplashActivateResponse(Schema):
+    ok: bool = True
 @api.get("/splash_config", response=SplashConfigSchema)
 def get_splash_config(request: HttpRequest):
     """Return current splash (relay/solenoid) configuration."""
@@ -1167,6 +1170,34 @@ def get_splash_status(request: HttpRequest):
         )
 
     return SplashStatus(state="idle", enabled=is_enabled)
+
+
+@api.post("/splash/activate", response=SplashActivateResponse)
+def activate_splash(request: HttpRequest):
+    """Manually fire the pump after the configured delay, then cooldown."""
+    from .utils.engine import activate_pump  # noqa: PLC0415
+
+    delay = float(splash_delay.value)
+    duration = float(splash_duration.value)
+    duty = float(pump_duty.value)
+    cooldown = float(splash_cooldown.value)
+
+    now = time.time()
+    _s.splash_armed_at = now
+    # Prevent the inference loop from interfering during the full sequence.
+    _s.splash_cooldown_until = now + delay + duration + cooldown
+
+    events.publish("splash_status", build_splash_payload())
+
+    def _fire_after_delay():
+        time.sleep(delay)
+        _s.splash_armed_at = 0.0
+        _s.splash_firing_until = time.time() + duration
+        activate_pump(duration, duty)
+        events.publish("splash_status", build_splash_payload())
+
+    threading.Thread(target=_fire_after_delay, daemon=True, name="splash-manual").start()
+    return SplashActivateResponse(ok=True)
 
 
 # --------------------------------------------------------------------------- #

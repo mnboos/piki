@@ -107,6 +107,10 @@ const { mutate: updateSplashConfig } = useMutation({
     mutationFn: (payload: SplashConfigSchemaPatch) => api.coreApiUpdateSplashConfig({ splashConfigSchemaPatch: payload }),
 });
 
+const { mutate: firePump, isPending: firePumpPending } = useMutation({
+    mutationFn: () => api.coreApiActivateSplash(),
+});
+
 const { mutate: servoMove } = useMutation({
     mutationFn: (payload: { panAngle: number; tiltAngle: number }) =>
         api.coreApiServoMove({ servoMoveSchema: { panAngle: payload.panAngle, tiltAngle: payload.tiltAngle } }),
@@ -229,7 +233,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
 
                 <TabPanel value="servo">
                     <ServoAimPanel v-model="aimConfig" v-model:options="options" :classes="allClasses ?? []" />
-                    <SplashPanel v-model="splashConfig" />
+                    <SplashPanel v-model="splashConfig" :fire-pump="firePump" :fire-pump-pending="firePumpPending" />
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
                 </TabPanel>
 
