@@ -4,11 +4,9 @@ import threading
 import time
 from typing import Optional
 
-import norfair
 import numpy as np
 from django.http import HttpRequest
-from norfair import Palette
-from django.http.response import FileResponse, StreamingHttpResponse
+from django.http.response import FileResponse
 from ninja import NinjaAPI, PatchDict, Schema
 
 from .models import (
@@ -20,10 +18,10 @@ from .models import (
     Video,
 )
 from . import events
-from .utils import exclusion
+from .utils import exclusion, webrtc
 from .utils.engine import move_to
 from .utils.event_log import summarize_log
-from .utils.event_payloads import build_recording_payload, build_replay_payload, build_splash_payload
+from .utils.event_payloads import build_recording_payload, build_replay_payload, build_splash_payload, build_tracker_payload
 from .utils.recording import (
     get_recording_stats,
     is_recording,
@@ -40,7 +38,6 @@ from .utils.replay import (
 from .utils.shared import (
     app_settings,
     bbox_ema_alpha,
-    cv2,
     event_clip_queue,
     event_clip_queue_lock,
     event_cooldown_seconds,
@@ -54,8 +51,6 @@ from .utils.shared import (
     fps_counter,
     ghost_frames_ms,
     is_object_detection_disabled,
-    latest_debug_frame,
-    latest_frame,
     mask_transparency,
     min_consecutive_frames,
     motion_detector,
@@ -76,7 +71,6 @@ from .utils.shared import (
     servo_pid_kp,
     servo_tilt,
     servo_tilt_invert,
-    tracker_drawables,
     settings,
     pump_duty,
     splash_cooldown,
@@ -120,178 +114,27 @@ _YOLO_CLASSES: list[str] = [
 ]
 
 
-async def stream_camera():
-    """Video streaming generator function with corrected drawing logic."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.5
-    box_color = (0, 255, 128)  # A nice green for the boxes
-    thickness = 2
+class WebRtcOfferSchema(Schema):
+    sdp: str
+    type: str
 
+
+class WebRtcAnswerSchema(Schema):
+    sdp: str
+    type: str
+
+
+@api.post("/webrtc/offer", response=WebRtcAnswerSchema)
+async def webrtc_offer(request: HttpRequest, payload: WebRtcOfferSchema):
+    """Negotiate a WebRTC peer connection. WHEP-style stateless offer/answer.
+
+    The video track is hardware-encoded H.264 piped from the VPU. Overlays
+    (detections, servo crosshair, exclusion zones) are sent separately over
+    the /ws/events WebSocket and drawn client-side.
+    """
     is_object_detection_disabled.clear()
-    streaming_active.set()
-    try:
-        last_ts = 0
-        while True:
-            # Wait for a new frame from the producer thread
-            result = await asyncio.to_thread(latest_frame.wait_for_frame, last_ts)
-            if result is None:
-                await asyncio.sleep(0.01)
-                continue
-
-            frame, detections, last_ts = result
-
-            if frame is None or (hasattr(frame, "size") and frame.size == 0):
-                continue
-
-            # Convert grayscale Y-plane (2D) to writable BGR for drawing.
-            # frame_lores is the decimated NV12 Y-plane — single-channel uint8.
-            # Always work on a deep copy so in-place drawing (mask overlay,
-            # Norfair draw_boxes) never touches shared frame buffers.
-            if frame.ndim == 2:
-                draw_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            else:
-                draw_frame = frame.copy()
-
-            # Draw detections with Norfair — drawable objects are pre-built
-            # in stream.py so we just pass them through to draw_boxes.
-            if app_settings.debug_settings.show_boxes and tracker_drawables:
-                try:
-                    Palette.set("tab10")
-                    norfair.draw_boxes(
-                        draw_frame,
-                        drawables=tracker_drawables,
-                        color="by_label",
-                        draw_ids=True,
-                        draw_labels=False,
-                        draw_scores=False,
-                    )
-                    # Norfair doesn't clamp labels to frame boundaries.
-                    # Draw them ourselves with proper clamping.
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 0.45
-                    for d in tracker_drawables:
-                        x, y = int(d.points[0, 0]), int(d.points[0, 1])
-                        tid = getattr(d, 'id', None)
-                        label = getattr(d, 'label', '')
-                        score = float(np.mean(d.scores)) if d.scores is not None else 0.0
-                        text = f"#{tid} {label} ({score:.1%})" if tid else f"{label} ({score:.1%})"
-                        (tw, th), _ = cv2.getTextSize(text, font, font_scale, 1)
-                        # Clamp: prefer above the box; fall inside if near top edge
-                        if y > th + 4:
-                            text_y = y - 4
-                            bg_y1, bg_y2 = y - th - 6, y
-                        else:
-                            text_y = y + th + 2
-                            bg_y1, bg_y2 = y, y + th + 4
-                        cv2.rectangle(draw_frame, (x, bg_y1), (x + tw, bg_y2), (0, 0, 0), -1)
-                        cv2.putText(draw_frame, text, (x, text_y), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
-                except Exception:
-                    logging.getLogger(__name__).exception("Norfair draw_boxes failed")
-
-            # Draw servo crosshair using the same linear FOV model as bbox_to_angles.
-            # Inverse: cx_n = pan / HFOV + 0.5  →  px = cx_n * frame_width
-            from .utils.engine import SERVO_HFOV, SERVO_VFOV  # noqa: PLC0415
-            fh, fw = draw_frame.shape[:2]
-
-            def _angle_to_px(pan: float, tilt: float) -> tuple[int, int]:
-                x = max(0, min(fw - 1, int((pan / SERVO_HFOV + 0.5) * fw)))
-                y = max(0, min(fh - 1, int((tilt / SERVO_VFOV + 0.5) * fh)))
-                return x, y
-
-            _CROSSHAIR_RADIUS = 14
-            _CROSSHAIR_GAP = 4
-            _CROSSHAIR_THICKNESS = 2
-
-            # Kalman prediction crosshair (cyan, smaller, no gap circle — just tick marks)
-            kp_x, kp_y = _angle_to_px(servo_kalman_pan.value, servo_kalman_tilt.value)
-            _KP_COLOR = (255, 220, 0)  # cyan
-            _KP_RADIUS = 10
-            cv2.line(draw_frame, (kp_x, kp_y - _CROSSHAIR_GAP), (kp_x, kp_y - _KP_RADIUS), _KP_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.line(draw_frame, (kp_x, kp_y + _CROSSHAIR_GAP), (kp_x, kp_y + _KP_RADIUS), _KP_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.line(draw_frame, (kp_x - _CROSSHAIR_GAP, kp_y), (kp_x - _KP_RADIUS, kp_y), _KP_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.line(draw_frame, (kp_x + _CROSSHAIR_GAP, kp_y), (kp_x + _KP_RADIUS, kp_y), _KP_COLOR, _CROSSHAIR_THICKNESS)
-
-            # Current servo position crosshair (orange, larger, with centre dot)
-            ch_x, ch_y = _angle_to_px(servo_pan.value, servo_tilt.value)
-            _CROSSHAIR_COLOR = (0, 200, 255)  # orange
-            cv2.line(draw_frame, (ch_x, ch_y - _CROSSHAIR_GAP), (ch_x, ch_y - _CROSSHAIR_RADIUS), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.line(draw_frame, (ch_x, ch_y + _CROSSHAIR_GAP), (ch_x, ch_y + _CROSSHAIR_RADIUS), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.line(draw_frame, (ch_x - _CROSSHAIR_GAP, ch_y), (ch_x - _CROSSHAIR_RADIUS, ch_y), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.line(draw_frame, (ch_x + _CROSSHAIR_GAP, ch_y), (ch_x + _CROSSHAIR_RADIUS, ch_y), _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
-            cv2.circle(draw_frame, (ch_x, ch_y), _CROSSHAIR_GAP, _CROSSHAIR_COLOR, _CROSSHAIR_THICKNESS)
-
-            # Line connecting servo position to Kalman prediction (shows lead distance)
-            if abs(kp_x - ch_x) > 3 or abs(kp_y - ch_y) > 3:
-                cv2.line(draw_frame, (ch_x, ch_y), (kp_x, kp_y), (180, 180, 180), 1, cv2.LINE_AA)
-
-            # Exclusion zones — always visible (safety-critical, not optional).
-            # Drawn last so they sit on top of detection boxes and the crosshair.
-            from .utils import exclusion as _exclusion  # noqa: PLC0415
-
-            zone_polys = _exclusion.polygons_norm()
-            if zone_polys:
-                _zone_color = (60, 60, 220)  # dark red (BGR)
-                overlay = draw_frame.copy()
-                pts_int = [
-                    np.round(p * np.array([fw, fh], dtype=np.float32)).astype(np.int32)
-                    for p in zone_polys
-                ]
-                cv2.fillPoly(overlay, pts_int, color=_zone_color)
-                cv2.addWeighted(overlay, 0.30, draw_frame, 0.70, 0, draw_frame)
-                cv2.polylines(draw_frame, pts_int, isClosed=True, color=_zone_color, thickness=2)
-
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
-            success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
-            if success:
-                frame_bytes = buffer.tobytes()
-                yield b"--frame\nContent-Type: image/jpeg\n\n" + frame_bytes + b"\n"
-    finally:
-        streaming_active.clear()
-
-
-BIN_RESPONSE = {
-    "responses": {
-        200: {
-            "description": "OK",
-            "content": {
-                "multipart/x-mixed-replace; boundary=frame": {"schema": {"type": "string", "format": "binary"}},
-            },
-        },
-    },
-}
-
-
-@api.get("/video_feed", openapi_extra=BIN_RESPONSE)
-async def video_feed(request: HttpRequest):
-    """Video streaming route."""
-    return StreamingHttpResponse(stream_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
-
-
-async def stream_debug_camera():
-    """MJPEG stream of the raw/debug topic — no overlays, no detection boxes."""
-    last_ts = 0
-    try:
-        while True:
-            result = await asyncio.to_thread(latest_debug_frame.wait_for_frame, last_ts)
-            if result is None:
-                await asyncio.sleep(0.01)
-                continue
-            frame, _, last_ts = result
-            if frame is None or (hasattr(frame, "size") and frame.size == 0):
-                continue
-            draw_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR) if frame.ndim == 2 else np.array(frame)
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
-            success, buffer = cv2.imencode(".jpeg", draw_frame, encode_param)
-            if success:
-                yield b"--frame\nContent-Type: image/jpeg\n\n" + buffer.tobytes() + b"\n"
-    finally:
-        pass
-
-
-@api.get("/video_feed_raw", openapi_extra=BIN_RESPONSE, operation_id="video_feed_debug")
-async def video_feed_raw(request: HttpRequest):
-    """Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."""
-    return StreamingHttpResponse(stream_debug_camera(), content_type="multipart/x-mixed-replace; boundary=frame")
+    sdp, type_ = await webrtc.handle_offer(payload.sdp, payload.type)
+    return WebRtcAnswerSchema(sdp=sdp, type=type_)
 
 
 class PikiOptions(Schema):
@@ -598,14 +441,23 @@ def get_yolo_classes(request: HttpRequest):
     return _YOLO_CLASSES
 
 
+class ServoStateSchema(Schema):
+    pan: float
+    tilt: float
+    kalman_pan: float
+    kalman_tilt: float
+
+
 class SystemStatus(Schema):
     fps: float
+    servo: ServoStateSchema
 
 
 @api.get("/tracker_status", response=SystemStatus)
 def get_tracker_status(request: HttpRequest):
-    """Return current system status."""
-    return SystemStatus(fps=round(fps_counter.fps, 1))
+    """Return current system status (FPS + servo position)."""
+    payload = build_tracker_payload()
+    return SystemStatus(**payload)
 
 
 class ServoMoveSchema(Schema):

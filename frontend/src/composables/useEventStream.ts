@@ -9,12 +9,26 @@ import type {
     EventClipSchema,
 } from "@/api";
 
+export interface DetectionEntry {
+    tid: number | null;
+    label: string;
+    score: number;
+    /** Normalized [xmin, ymin, xmax, ymax]. */
+    bbox: [number, number, number, number];
+}
+
+export interface DetectionsPayload {
+    frameTsNs: number;
+    detections: DetectionEntry[];
+}
+
 interface State {
     tracker_status: SystemStatus | null;
     splash_status: SplashStatus | null;
     recording_status: RecordingStatus | null;
     replay_status: ReplayStatus | null;
     event_clips: EventClipSchema[];
+    detections: DetectionsPayload;
 }
 
 const state = reactive<State>({
@@ -23,6 +37,7 @@ const state = reactive<State>({
     recording_status: null,
     replay_status: null,
     event_clips: [],
+    detections: { frameTsNs: 0, detections: [] },
 });
 
 const seenClipKeys = new Set<string>();
@@ -144,7 +159,7 @@ const wsUrl = useBackendHost(wsProtocol) + "/ws/events";
 
 const { data, status } = useWebSocket(wsUrl, {
     autoReconnect: { retries: -1, delay: 1000 },
-    heartbeat: { interval: 30_000, message: "ping" },
+    heartbeat: { interval: 30_000, message: "ping", responseMessage: "pong" },
     immediate: true,
 });
 
@@ -184,10 +199,14 @@ watch(data, raw => {
             }
             break;
         }
+        case "detections":
+            state.detections = payload as unknown as DetectionsPayload;
+            break;
     }
 });
 
 export const useTrackerStatus = () => computed(() => state.tracker_status);
+export const useDetections = () => computed(() => state.detections);
 export const useSplashStatus = () => computed(() => state.splash_status);
 export const useSplashDisplayRemaining = () => computed(() => splashDisplayRemaining.value);
 export const useRecordingStatus = () => computed(() => state.recording_status);

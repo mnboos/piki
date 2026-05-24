@@ -11,6 +11,7 @@ import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
 import SplashPanel from "@/components/SplashPanel.vue";
 import SplashStatusIndicator from "@/components/SplashStatusIndicator.vue";
 import CameraFeed from "@/components/CameraFeed.vue";
+import DetectionOverlay from "@/components/DetectionOverlay.vue";
 import ExclusionZoneOverlay from "@/components/ExclusionZoneOverlay.vue";
 import ExclusionZonesPanel from "@/components/ExclusionZonesPanel.vue";
 import Tab from "primevue/tab";
@@ -63,10 +64,7 @@ const splashConfig = ref<SplashConfigSchema>({
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
 const toast = useToast();
 const editingZones = ref(false);
-const feedUrl = "/api/video_feed";
-const debugFeedUrl = "/api/video_feed_raw";
 const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
-const debugTopic = import.meta.env.VITE_ROS_DEBUG_TOPIC ?? "/image_right_raw";
 
 // ── Live state (WebSocket) ────────────────────────────────────────────────
 
@@ -183,15 +181,15 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
             <TabPanels>
                 <TabPanel value="camera">
                     <div class="feed-wrapper">
-                        <CameraFeed :src="feedUrl" alt="camera feed" />
+                        <CameraFeed alt="camera feed">
+                            <template #overlay>
+                                <DetectionOverlay :show-boxes="options.showBoxes" />
+                            </template>
+                        </CameraFeed>
                         <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
-                            <button :class="['ot-btn', { active: options.showMask }]"
-                                @click="options.showMask = !options.showMask">Mask</button>
-                            <button :class="['ot-btn', { active: options.showRois }]"
-                                @click="options.showRois = !options.showRois">Tiles / ROIs</button>
                         </div>
                     </div>
                 </TabPanel>
@@ -200,29 +198,26 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                     <div class="debug-feeds">
                         <div class="debug-feed-item">
                             <p class="feed-label">{{ mainTopic }}</p>
-                            <CameraFeed :src="feedUrl" alt="main feed" />
-                        </div>
-                        <div class="debug-feed-item">
-                            <p class="feed-label">{{ debugTopic }}</p>
-                            <CameraFeed :src="debugFeedUrl" alt="raw feed" />
+                            <CameraFeed alt="main feed">
+                                <template #overlay>
+                                    <DetectionOverlay :show-boxes="options.showBoxes" />
+                                </template>
+                            </CameraFeed>
                         </div>
                     </div>
                 </TabPanel>
 
                 <TabPanel value="detection">
                     <div class="feed-wrapper">
-                        <CameraFeed :src="feedUrl" alt="camera feed">
+                        <CameraFeed alt="camera feed">
                             <template #overlay>
+                                <DetectionOverlay :show-boxes="options.showBoxes" />
                                 <ExclusionZoneOverlay :enabled="editingZones" />
                             </template>
                         </CameraFeed>
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
-                            <button :class="['ot-btn', { active: options.showMask }]"
-                                @click="options.showMask = !options.showMask">Mask</button>
-                            <button :class="['ot-btn', { active: options.showRois }]"
-                                @click="options.showRois = !options.showRois">Tiles / ROIs</button>
                             <button :class="['ot-btn', { active: editingZones }]"
                                 @click="editingZones = !editingZones">Zones</button>
                         </div>

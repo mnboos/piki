@@ -37,6 +37,8 @@ from .event_log import EventLogger
 from .func import (
     slice_roi_into_tiles,
 )
+from .hw_encoder import HwH264Encoder
+from .webrtc import webrtc_publish
 from .interfaces import Box, DoubleBuffer
 from .metrics import LiveMetricsDashboard
 from .recording import (
@@ -108,6 +110,22 @@ worker_semaphore = Semaphore(NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
 lowres_frame_cache = {}
 cache_lock = Lock()
+
+# Hardware H.264 encoder for WebRTC. Created lazily on the first frame after a
+# peer connects so we don't allocate VPU resources when nobody's watching.
+# Lives on the ROS callback thread; no lock needed (single producer).
+_hw_encoder: HwH264Encoder | None = None
+_hw_encoder_dims: tuple[int, int] | None = None
+
+
+def _get_hw_encoder(width: int, height: int) -> HwH264Encoder:
+    global _hw_encoder, _hw_encoder_dims
+    if _hw_encoder is None or _hw_encoder_dims != (width, height):
+        if _hw_encoder is not None:
+            _hw_encoder.close()
+        _hw_encoder = HwH264Encoder(channel=0, width=width, height=height)
+        _hw_encoder_dims = (width, height)
+    return _hw_encoder
 
 latest_ai_detections = []
 latest_ai_lock = threading.Lock()
@@ -218,7 +236,7 @@ class PikiVisionNode(Node):
             return
         try:
             fps_counter.tick()
-            events.publish_throttled("tracker_status", build_tracker_payload(), 1.0)
+            events.publish_throttled("tracker_status", build_tracker_payload(), 0.1)
             w, h = msg.width, msg.height
             stride = msg.step if msg.step > 0 else w
 
@@ -616,6 +634,31 @@ def on_done(future: Future[InferenceOutput]):
                     ent["track_age_frames"] = int(best[1])
 
             detections = [(label, conf, bbox_norm, tid, age) for label, conf, bbox_norm, tid, age in visible]
+
+        # Push detections to any connected SPA clients. Normalized bbox is
+        # converted from internal [ymin, xmin, ymax, xmax] to wire-friendly
+        # [xmin, ymin, xmax, ymax] so the frontend can draw on a canvas
+        # without remembering the axis order.
+        det_payload: list[dict] = []
+        for entry in detections:
+            if len(entry) >= 5:
+                label, conf, bbox_yxyx, tid, _age = entry[:5]
+            elif len(entry) >= 3:
+                label, conf, bbox_yxyx = entry[:3]
+                tid = None
+            else:
+                continue
+            ymin, xmin, ymax, xmax = bbox_yxyx
+            det_payload.append({
+                "tid": int(tid) if tid is not None else None,
+                "label": str(label),
+                "score": float(conf),
+                "bbox": [float(xmin), float(ymin), float(xmax), float(ymax)],
+            })
+        events.publish("detections", {
+            "frame_ts_ns": int(timestamp),
+            "detections": det_payload,
+        })
 
         with _latest_inference_lock:
             global _latest_inference_log_entries
@@ -1070,6 +1113,18 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     global _latest_mask, _latest_mask_shape
 
     current_time = time.time_ns()
+
+    # Hardware H.264 encode for any connected WebRTC peers. Runs on the VPU,
+    # so this should be a fast call that doesn't impact motion/inference timing.
+    if _s.webrtc_active.is_set():
+        try:
+            frame_w = nv12_frame.shape[1]
+            enc = _get_hw_encoder(frame_w, frame_h)
+            nals = enc.encode_nv12(nv12_frame)
+            if nals:
+                webrtc_publish(nals, current_time)
+        except Exception:
+            logger.exception("WebRTC hardware-encode failed")
 
     y_plane = nv12_frame[:frame_h]
     step = preview_downscale_factor

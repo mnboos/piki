@@ -6,46 +6,34 @@
         "description": ""
     },
     "paths": {
-        "/api/video_feed": {
-            "get": {
-                "operationId": "core_api_video_feed",
-                "summary": "Video Feed",
+        "/api/webrtc/offer": {
+            "post": {
+                "operationId": "core_api_webrtc_offer",
+                "summary": "Webrtc Offer",
                 "parameters": [],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "content": {
-                            "multipart/x-mixed-replace; boundary=frame": {
+                            "application/json": {
                                 "schema": {
-                                    "type": "string",
-                                    "format": "binary"
+                                    "$ref": "#/components/schemas/WebRtcAnswerSchema"
                                 }
                             }
                         }
                     }
                 },
-                "description": "Video streaming route."
-            }
-        },
-        "/api/video_feed_raw": {
-            "get": {
-                "operationId": "video_feed_debug",
-                "summary": "Video Feed Raw",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "content": {
-                            "multipart/x-mixed-replace; boundary=frame": {
-                                "schema": {
-                                    "type": "string",
-                                    "format": "binary"
-                                }
+                "description": "Negotiate a WebRTC peer connection. WHEP-style stateless offer/answer.\n\nThe video track is hardware-encoded H.264 piped from the VPU. Overlays\n(detections, servo crosshair, exclusion zones) are sent separately over\nthe /ws/events WebSocket and drawn client-side.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/WebRtcOfferSchema"
                             }
                         }
-                    }
-                },
-                "description": "Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays."
+                    },
+                    "required": true
+                }
             }
         },
         "/api/update_options": {
@@ -199,7 +187,7 @@
                         }
                     }
                 },
-                "description": "Return current system status."
+                "description": "Return current system status (FPS + servo position)."
             }
         },
         "/api/servo/move": {
@@ -684,6 +672,26 @@
                 "description": "Return live splash state for the frontend indicator."
             }
         },
+        "/api/splash/activate": {
+            "post": {
+                "operationId": "core_api_activate_splash",
+                "summary": "Activate Splash",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SplashActivateResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Manually fire the pump after the configured delay, then cooldown."
+            }
+        },
         "/api/exclusion_zones": {
             "get": {
                 "operationId": "core_api_list_exclusion_zones",
@@ -796,6 +804,42 @@
     },
     "components": {
         "schemas": {
+            "WebRtcAnswerSchema": {
+                "properties": {
+                    "sdp": {
+                        "title": "Sdp",
+                        "type": "string"
+                    },
+                    "type": {
+                        "title": "Type",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "sdp",
+                    "type"
+                ],
+                "title": "WebRtcAnswerSchema",
+                "type": "object"
+            },
+            "WebRtcOfferSchema": {
+                "properties": {
+                    "sdp": {
+                        "title": "Sdp",
+                        "type": "string"
+                    },
+                    "type": {
+                        "title": "Type",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "sdp",
+                    "type"
+                ],
+                "title": "WebRtcOfferSchema",
+                "type": "object"
+            },
             "PikiOptions": {
                 "properties": {
                     "show_boxes": {
@@ -1516,15 +1560,47 @@
                 "title": "AimConfigSchemaPatch",
                 "type": "object"
             },
+            "ServoStateSchema": {
+                "properties": {
+                    "pan": {
+                        "title": "Pan",
+                        "type": "number"
+                    },
+                    "tilt": {
+                        "title": "Tilt",
+                        "type": "number"
+                    },
+                    "kalman_pan": {
+                        "title": "Kalman Pan",
+                        "type": "number"
+                    },
+                    "kalman_tilt": {
+                        "title": "Kalman Tilt",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "pan",
+                    "tilt",
+                    "kalman_pan",
+                    "kalman_tilt"
+                ],
+                "title": "ServoStateSchema",
+                "type": "object"
+            },
             "SystemStatus": {
                 "properties": {
                     "fps": {
                         "title": "Fps",
                         "type": "number"
+                    },
+                    "servo": {
+                        "$ref": "#/components/schemas/ServoStateSchema"
                     }
                 },
                 "required": [
-                    "fps"
+                    "fps",
+                    "servo"
                 ],
                 "title": "SystemStatus",
                 "type": "object"
@@ -2058,6 +2134,17 @@
                     }
                 },
                 "title": "SplashStatus",
+                "type": "object"
+            },
+            "SplashActivateResponse": {
+                "properties": {
+                    "ok": {
+                        "default": true,
+                        "title": "Ok",
+                        "type": "boolean"
+                    }
+                },
+                "title": "SplashActivateResponse",
                 "type": "object"
             },
             "ExclusionZoneSchema": {

@@ -27,8 +27,15 @@ class EventsConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, code: int) -> None:
         await self.channel_layer.group_discard(self.GROUP, self.channel_name)
 
+    async def receive(self, text_data=None, bytes_data=None, **kwargs) -> None:
+        # Intercept raw `ping` heartbeats before the base class tries to JSON-decode
+        # them (the SPA uses @vueuse useWebSocket which sends plain text, not JSON).
+        if text_data == "ping":
+            await self.send(text_data="pong")
+            return
+        await super().receive(text_data=text_data, bytes_data=bytes_data, **kwargs)
+
     async def receive_json(self, content, **kwargs) -> None:  # noqa: ARG002
-        # Client may send `ping` heartbeats — silently accept.
         return
 
     async def event_broadcast(self, event: dict) -> None:

@@ -15,10 +15,14 @@ models/RecordingStatus.ts
 models/ReplayStatus.ts
 models/ServoMoveSchema.ts
 models/ServoPositionSchema.ts
+models/ServoStateSchema.ts
+models/SplashActivateResponse.ts
 models/SplashConfigSchema.ts
 models/SplashConfigSchemaPatch.ts
 models/SplashStatus.ts
 models/SystemStatus.ts
 models/VideoInfo.ts
+models/WebRtcAnswerSchema.ts
+models/WebRtcOfferSchema.ts
 models/index.ts
 runtime.ts

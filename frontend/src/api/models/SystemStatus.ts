@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { ServoStateSchema } from './ServoStateSchema';
+import {
+    ServoStateSchemaFromJSON,
+    ServoStateSchemaFromJSONTyped,
+    ServoStateSchemaToJSON,
+    ServoStateSchemaToJSONTyped,
+} from './ServoStateSchema';
+
 /**
  * 
  * @export
@@ -25,6 +33,12 @@ export interface SystemStatus {
      * @memberof SystemStatus
      */
     fps: number;
+    /**
+     * 
+     * @type {ServoStateSchema}
+     * @memberof SystemStatus
+     */
+    servo: ServoStateSchema;
 }
 
 /**
@@ -32,6 +46,7 @@ export interface SystemStatus {
  */
 export function instanceOfSystemStatus(value: object): value is SystemStatus {
     if (!('fps' in value) || value['fps'] === undefined) return false;
+    if (!('servo' in value) || value['servo'] === undefined) return false;
     return true;
 }
 
@@ -46,6 +61,7 @@ export function SystemStatusFromJSONTyped(json: any, ignoreDiscriminator: boolea
     return {
         
         'fps': json['fps'],
+        'servo': ServoStateSchemaFromJSON(json['servo']),
     };
 }
 
@@ -61,6 +77,7 @@ export function SystemStatusToJSONTyped(value?: SystemStatus | null, ignoreDiscr
     return {
         
         'fps': value['fps'],
+        'servo': ServoStateSchemaToJSON(value['servo']),
     };
 }
 

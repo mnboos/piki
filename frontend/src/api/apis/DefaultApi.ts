@@ -29,11 +29,14 @@ import type {
   ReplayStatus,
   ServoMoveSchema,
   ServoPositionSchema,
+  SplashActivateResponse,
   SplashConfigSchema,
   SplashConfigSchemaPatch,
   SplashStatus,
   SystemStatus,
   VideoInfo,
+  WebRtcAnswerSchema,
+  WebRtcOfferSchema,
 } from '../models/index';
 import {
     AimConfigSchemaFromJSON,
@@ -64,6 +67,8 @@ import {
     ServoMoveSchemaToJSON,
     ServoPositionSchemaFromJSON,
     ServoPositionSchemaToJSON,
+    SplashActivateResponseFromJSON,
+    SplashActivateResponseToJSON,
     SplashConfigSchemaFromJSON,
     SplashConfigSchemaToJSON,
     SplashConfigSchemaPatchFromJSON,
@@ -74,6 +79,10 @@ import {
     SystemStatusToJSON,
     VideoInfoFromJSON,
     VideoInfoToJSON,
+    WebRtcAnswerSchemaFromJSON,
+    WebRtcAnswerSchemaToJSON,
+    WebRtcOfferSchemaFromJSON,
+    WebRtcOfferSchemaToJSON,
 } from '../models/index';
 
 export interface CoreApiCreateExclusionZoneRequest {
@@ -129,10 +138,45 @@ export interface CoreApiVideosLogSummaryRequest {
     videoId: number;
 }
 
+export interface CoreApiWebrtcOfferRequest {
+    webRtcOfferSchema: WebRtcOfferSchema;
+}
+
 /**
  * 
  */
 export class DefaultApi extends runtime.BaseAPI {
+
+    /**
+     * Manually fire the pump after the configured delay, then cooldown.
+     * Activate Splash
+     */
+    async coreApiActivateSplashRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SplashActivateResponse>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/splash/activate`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => SplashActivateResponseFromJSON(jsonValue));
+    }
+
+    /**
+     * Manually fire the pump after the configured delay, then cooldown.
+     * Activate Splash
+     */
+    async coreApiActivateSplash(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SplashActivateResponse> {
+        const response = await this.coreApiActivateSplashRaw(initOverrides);
+        return await response.value();
+    }
 
     /**
      * Create Exclusion Zone
@@ -396,36 +440,7 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Manually fire the pump with the configured duration and duty.
-     * Activate Splash
-     */
-    async coreApiActivateSplashRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        let urlPath = `/api/splash/activate`;
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'POST',
-            headers: headerParameters,
-            query: queryParameters,
-        }, initOverrides);
-
-        return new runtime.VoidApiResponse(response);
-    }
-
-    /**
-     * Manually fire the pump with the configured duration and duty.
-     * Activate Splash
-     */
-    async coreApiActivateSplash(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
-        await this.coreApiActivateSplashRaw(initOverrides);
-    }
-
-    /**
-     * Return current system status.
+     * Return current system status (FPS + servo position).
      * Get Tracker Status
      */
     async coreApiGetTrackerStatusRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SystemStatus>> {
@@ -447,7 +462,7 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Return current system status.
+     * Return current system status (FPS + servo position).
      * Get Tracker Status
      */
     async coreApiGetTrackerStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SystemStatus> {
@@ -978,37 +993,6 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Video streaming route.
-     * Video Feed
-     */
-    async coreApiVideoFeedRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-
-        let urlPath = `/api/video_feed`;
-
-        const response = await this.request({
-            path: urlPath,
-            method: 'GET',
-            headers: headerParameters,
-            query: queryParameters,
-        }, initOverrides);
-
-        return new runtime.BlobApiResponse(response);
-    }
-
-    /**
-     * Video streaming route.
-     * Video Feed
-     */
-    async coreApiVideoFeed(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
-        const response = await this.coreApiVideoFeedRaw(initOverrides);
-        return await response.value();
-    }
-
-    /**
      * Videos Delete
      */
     async coreApiVideosDeleteRaw(requestParameters: CoreApiVideosDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<{ [key: string]: any; }>> {
@@ -1215,33 +1199,43 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays.
-     * Video Feed Raw
+     * Negotiate a WebRTC peer connection. WHEP-style stateless offer/answer.  The video track is hardware-encoded H.264 piped from the VPU. Overlays (detections, servo crosshair, exclusion zones) are sent separately over the /ws/events WebSocket and drawn client-side.
+     * Webrtc Offer
      */
-    async videoFeedDebugRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
+    async coreApiWebrtcOfferRaw(requestParameters: CoreApiWebrtcOfferRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<WebRtcAnswerSchema>> {
+        if (requestParameters['webRtcOfferSchema'] == null) {
+            throw new runtime.RequiredError(
+                'webRtcOfferSchema',
+                'Required parameter "webRtcOfferSchema" was null or undefined when calling coreApiWebrtcOffer().'
+            );
+        }
+
         const queryParameters: any = {};
 
         const headerParameters: runtime.HTTPHeaders = {};
 
+        headerParameters['Content-Type'] = 'application/json';
 
-        let urlPath = `/api/video_feed_raw`;
+
+        let urlPath = `/api/webrtc/offer`;
 
         const response = await this.request({
             path: urlPath,
-            method: 'GET',
+            method: 'POST',
             headers: headerParameters,
             query: queryParameters,
+            body: WebRtcOfferSchemaToJSON(requestParameters['webRtcOfferSchema']),
         }, initOverrides);
 
-        return new runtime.BlobApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => WebRtcAnswerSchemaFromJSON(jsonValue));
     }
 
     /**
-     * Raw/debug video feed — streams the ROS_DEBUG_TOPIC without any overlays.
-     * Video Feed Raw
+     * Negotiate a WebRTC peer connection. WHEP-style stateless offer/answer.  The video track is hardware-encoded H.264 piped from the VPU. Overlays (detections, servo crosshair, exclusion zones) are sent separately over the /ws/events WebSocket and drawn client-side.
+     * Webrtc Offer
      */
-    async videoFeedDebug(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
-        const response = await this.videoFeedDebugRaw(initOverrides);
+    async coreApiWebrtcOffer(requestParameters: CoreApiWebrtcOfferRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<WebRtcAnswerSchema> {
+        const response = await this.coreApiWebrtcOfferRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

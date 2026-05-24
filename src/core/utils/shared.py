@@ -17,7 +17,6 @@ from .settings import AppSettings, AimSettings, DebugSettings
 # https://docs.opencv.org/4.x/d6/dea/tutorial_env_reference.html#autotoc_md974
 os.environ["OPENCV_FFMPEG_DEBUG"] = "1"
 os.environ["OPENCV_LOG_LEVEL"] = "DEBUG"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "hwaccel;rkmpp"
 
 import cv2
 import numpy as np
@@ -81,10 +80,15 @@ servo_tilt_invert = mp.Value("i", 0)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
-# Set while at least one MJPEG client is connected.  When clear, all
-# display-only work (frame caching, bbox rendering, latest_frame updates)
-# is skipped so the inference/motion-detection loop runs at full speed.
+# Set while at least one viewer is connected.  When clear, all display-only
+# work (frame caching, latest_frame updates) is skipped so the
+# inference/motion-detection loop runs at full speed.
 streaming_active = threading.Event()
+
+# Set while at least one WebRTC peer is connected. Gates the hardware H.264
+# encoder in `process_frame()` so we don't burn VPU cycles when nobody's
+# watching. webrtc.py keeps this in lock-step with streaming_active.
+webrtc_active = threading.Event()
 
 # Set while recording pipeline frames to a video file.
 recording_active = threading.Event()

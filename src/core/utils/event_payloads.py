@@ -15,7 +15,23 @@ from .replay import get_replay_stats, is_replaying
 
 
 def build_tracker_payload() -> dict:
-    return {"fps": round(_s.fps_counter.fps, 1)}
+    return {
+        "fps": round(_s.fps_counter.fps, 1),
+        "servo": {
+            "pan": round(float(_s.servo_pan.value), 2),
+            "tilt": round(float(_s.servo_tilt.value), 2),
+            "kalman_pan": round(float(_s.servo_kalman_pan.value), 2),
+            "kalman_tilt": round(float(_s.servo_kalman_tilt.value), 2),
+        },
+    }
+
+
+def build_detections_snapshot() -> dict:
+    """Last published detections (best-effort, may be empty on startup)."""
+    return {
+        "frame_ts_ns": 0,
+        "detections": [],
+    }
 
 
 def build_splash_payload() -> dict:
@@ -128,4 +144,5 @@ def snapshot() -> dict[str, dict]:
         "recording_status": build_recording_payload(),
         "replay_status": build_replay_payload(),
         "event_clips": build_event_clips_snapshot(),
+        "detections": build_detections_snapshot(),
     }
