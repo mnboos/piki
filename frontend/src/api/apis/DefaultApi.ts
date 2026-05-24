@@ -33,9 +33,12 @@ import type {
   SplashConfigSchema,
   SplashConfigSchemaPatch,
   SplashStatus,
+  SystemMetrics,
   SystemStatus,
   VideoInfo,
   WebRtcAnswerSchema,
+  WebRtcConfigSchema,
+  WebRtcConfigSchemaPatch,
   WebRtcOfferSchema,
 } from '../models/index';
 import {
@@ -75,12 +78,18 @@ import {
     SplashConfigSchemaPatchToJSON,
     SplashStatusFromJSON,
     SplashStatusToJSON,
+    SystemMetricsFromJSON,
+    SystemMetricsToJSON,
     SystemStatusFromJSON,
     SystemStatusToJSON,
     VideoInfoFromJSON,
     VideoInfoToJSON,
     WebRtcAnswerSchemaFromJSON,
     WebRtcAnswerSchemaToJSON,
+    WebRtcConfigSchemaFromJSON,
+    WebRtcConfigSchemaToJSON,
+    WebRtcConfigSchemaPatchFromJSON,
+    WebRtcConfigSchemaPatchToJSON,
     WebRtcOfferSchemaFromJSON,
     WebRtcOfferSchemaToJSON,
 } from '../models/index';
@@ -120,6 +129,10 @@ export interface CoreApiUpdateOptionsRequest {
 
 export interface CoreApiUpdateSplashConfigRequest {
     splashConfigSchemaPatch: SplashConfigSchemaPatch;
+}
+
+export interface CoreApiUpdateWebrtcConfigRequest {
+    webRtcConfigSchemaPatch: WebRtcConfigSchemaPatch;
 }
 
 export interface CoreApiVideosDeleteRequest {
@@ -347,6 +360,37 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
+     * Live system metrics: CPU, memory, temperatures, accelerator state, network.
+     * Get Metrics
+     */
+    async coreApiGetMetricsRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SystemMetrics>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/metrics`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => SystemMetricsFromJSON(jsonValue));
+    }
+
+    /**
+     * Live system metrics: CPU, memory, temperatures, accelerator state, network.
+     * Get Metrics
+     */
+    async coreApiGetMetrics(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SystemMetrics> {
+        const response = await this.coreApiGetMetricsRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Return current tuning values so the frontend can initialise its controls.
      * Get Options
      */
@@ -467,6 +511,37 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiGetTrackerStatus(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SystemStatus> {
         const response = await this.coreApiGetTrackerStatusRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Current WebRTC stream settings.
+     * Get Webrtc Config
+     */
+    async coreApiGetWebrtcConfigRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<WebRtcConfigSchema>> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/webrtc/config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => WebRtcConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Current WebRTC stream settings.
+     * Get Webrtc Config
+     */
+    async coreApiGetWebrtcConfig(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<WebRtcConfigSchema> {
+        const response = await this.coreApiGetWebrtcConfigRaw(initOverrides);
         return await response.value();
     }
 
@@ -989,6 +1064,47 @@ export class DefaultApi extends runtime.BaseAPI {
      */
     async coreApiUpdateSplashConfig(requestParameters: CoreApiUpdateSplashConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SplashConfigSchema> {
         const response = await this.coreApiUpdateSplashConfigRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Update WebRTC stream settings. In-memory only; resets on restart.
+     * Update Webrtc Config
+     */
+    async coreApiUpdateWebrtcConfigRaw(requestParameters: CoreApiUpdateWebrtcConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<WebRtcConfigSchema>> {
+        if (requestParameters['webRtcConfigSchemaPatch'] == null) {
+            throw new runtime.RequiredError(
+                'webRtcConfigSchemaPatch',
+                'Required parameter "webRtcConfigSchemaPatch" was null or undefined when calling coreApiUpdateWebrtcConfig().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+
+        let urlPath = `/api/webrtc/config`;
+
+        const response = await this.request({
+            path: urlPath,
+            method: 'PATCH',
+            headers: headerParameters,
+            query: queryParameters,
+            body: WebRtcConfigSchemaPatchToJSON(requestParameters['webRtcConfigSchemaPatch']),
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => WebRtcConfigSchemaFromJSON(jsonValue));
+    }
+
+    /**
+     * Update WebRTC stream settings. In-memory only; resets on restart.
+     * Update Webrtc Config
+     */
+    async coreApiUpdateWebrtcConfig(requestParameters: CoreApiUpdateWebrtcConfigRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<WebRtcConfigSchema> {
+        const response = await this.coreApiUpdateWebrtcConfigRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

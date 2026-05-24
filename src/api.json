@@ -36,6 +36,74 @@
                 }
             }
         },
+        "/api/webrtc/config": {
+            "get": {
+                "operationId": "core_api_get_webrtc_config",
+                "summary": "Get Webrtc Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WebRtcConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Current WebRTC stream settings."
+            },
+            "patch": {
+                "operationId": "core_api_update_webrtc_config",
+                "summary": "Update Webrtc Config",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WebRtcConfigSchema"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Update WebRTC stream settings. In-memory only; resets on restart.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/WebRtcConfigSchemaPatch"
+                            }
+                        }
+                    },
+                    "required": true
+                }
+            }
+        },
+        "/api/metrics": {
+            "get": {
+                "operationId": "core_api_get_metrics",
+                "summary": "Get Metrics",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SystemMetrics"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Live system metrics: CPU, memory, temperatures, accelerator state, network."
+            }
+        },
         "/api/update_options": {
             "patch": {
                 "operationId": "core_api_update_options",
@@ -838,6 +906,384 @@
                     "type"
                 ],
                 "title": "WebRtcOfferSchema",
+                "type": "object"
+            },
+            "WebRtcConfigSchema": {
+                "properties": {
+                    "target_fps": {
+                        "title": "Target Fps",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "target_fps"
+                ],
+                "title": "WebRtcConfigSchema",
+                "type": "object"
+            },
+            "WebRtcConfigSchemaPatch": {
+                "properties": {
+                    "target_fps": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Target Fps"
+                    }
+                },
+                "title": "WebRtcConfigSchemaPatch",
+                "type": "object"
+            },
+            "BpuMetrics": {
+                "properties": {
+                    "load_percent": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Load Percent"
+                    },
+                    "freq_mhz": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Freq Mhz"
+                    }
+                },
+                "required": [
+                    "load_percent",
+                    "freq_mhz"
+                ],
+                "title": "BpuMetrics",
+                "type": "object"
+            },
+            "CpuMetrics": {
+                "properties": {
+                    "percent_total": {
+                        "title": "Percent Total",
+                        "type": "number"
+                    },
+                    "percent_per_core": {
+                        "items": {
+                            "type": "number"
+                        },
+                        "title": "Percent Per Core",
+                        "type": "array"
+                    },
+                    "freq_mhz_per_core": {
+                        "items": {
+                            "type": "number"
+                        },
+                        "title": "Freq Mhz Per Core",
+                        "type": "array"
+                    },
+                    "core_count": {
+                        "title": "Core Count",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "percent_total",
+                    "percent_per_core",
+                    "freq_mhz_per_core",
+                    "core_count"
+                ],
+                "title": "CpuMetrics",
+                "type": "object"
+            },
+            "DdrMetrics": {
+                "properties": {
+                    "freq_mhz": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Freq Mhz"
+                    }
+                },
+                "required": [
+                    "freq_mhz"
+                ],
+                "title": "DdrMetrics",
+                "type": "object"
+            },
+            "DiskMetrics": {
+                "properties": {
+                    "total_bytes": {
+                        "title": "Total Bytes",
+                        "type": "integer"
+                    },
+                    "used_bytes": {
+                        "title": "Used Bytes",
+                        "type": "integer"
+                    },
+                    "free_bytes": {
+                        "title": "Free Bytes",
+                        "type": "integer"
+                    },
+                    "percent": {
+                        "title": "Percent",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "total_bytes",
+                    "used_bytes",
+                    "free_bytes",
+                    "percent"
+                ],
+                "title": "DiskMetrics",
+                "type": "object"
+            },
+            "GpuMetrics": {
+                "properties": {
+                    "freq_mhz": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Freq Mhz"
+                    },
+                    "load_percent": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Load Percent"
+                    }
+                },
+                "required": [
+                    "freq_mhz",
+                    "load_percent"
+                ],
+                "title": "GpuMetrics",
+                "type": "object"
+            },
+            "IspMetrics": {
+                "properties": {
+                    "load_percent": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Load Percent"
+                    }
+                },
+                "required": [
+                    "load_percent"
+                ],
+                "title": "IspMetrics",
+                "type": "object"
+            },
+            "MemoryMetrics": {
+                "properties": {
+                    "total_bytes": {
+                        "title": "Total Bytes",
+                        "type": "integer"
+                    },
+                    "available_bytes": {
+                        "title": "Available Bytes",
+                        "type": "integer"
+                    },
+                    "used_bytes": {
+                        "title": "Used Bytes",
+                        "type": "integer"
+                    },
+                    "percent": {
+                        "title": "Percent",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "total_bytes",
+                    "available_bytes",
+                    "used_bytes",
+                    "percent"
+                ],
+                "title": "MemoryMetrics",
+                "type": "object"
+            },
+            "NetMetrics": {
+                "properties": {
+                    "rx_bytes_per_s": {
+                        "title": "Rx Bytes Per S",
+                        "type": "number"
+                    },
+                    "tx_bytes_per_s": {
+                        "title": "Tx Bytes Per S",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "rx_bytes_per_s",
+                    "tx_bytes_per_s"
+                ],
+                "title": "NetMetrics",
+                "type": "object"
+            },
+            "SwapMetrics": {
+                "properties": {
+                    "total_bytes": {
+                        "title": "Total Bytes",
+                        "type": "integer"
+                    },
+                    "used_bytes": {
+                        "title": "Used Bytes",
+                        "type": "integer"
+                    },
+                    "percent": {
+                        "title": "Percent",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "total_bytes",
+                    "used_bytes",
+                    "percent"
+                ],
+                "title": "SwapMetrics",
+                "type": "object"
+            },
+            "SystemMetrics": {
+                "properties": {
+                    "ts": {
+                        "title": "Ts",
+                        "type": "number"
+                    },
+                    "uptime_s": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Uptime S"
+                    },
+                    "load_avg": {
+                        "items": {
+                            "type": "number"
+                        },
+                        "title": "Load Avg",
+                        "type": "array"
+                    },
+                    "cpu": {
+                        "$ref": "#/components/schemas/CpuMetrics"
+                    },
+                    "memory": {
+                        "$ref": "#/components/schemas/MemoryMetrics"
+                    },
+                    "swap": {
+                        "$ref": "#/components/schemas/SwapMetrics"
+                    },
+                    "disk_root": {
+                        "$ref": "#/components/schemas/DiskMetrics"
+                    },
+                    "net": {
+                        "$ref": "#/components/schemas/NetMetrics"
+                    },
+                    "temps_c": {
+                        "additionalProperties": {
+                            "type": "number"
+                        },
+                        "title": "Temps C",
+                        "type": "object"
+                    },
+                    "bpu": {
+                        "$ref": "#/components/schemas/BpuMetrics"
+                    },
+                    "vpu": {
+                        "$ref": "#/components/schemas/VpuMetrics"
+                    },
+                    "gpu": {
+                        "$ref": "#/components/schemas/GpuMetrics"
+                    },
+                    "ddr": {
+                        "$ref": "#/components/schemas/DdrMetrics"
+                    },
+                    "isp": {
+                        "$ref": "#/components/schemas/IspMetrics"
+                    }
+                },
+                "required": [
+                    "ts",
+                    "uptime_s",
+                    "load_avg",
+                    "cpu",
+                    "memory",
+                    "swap",
+                    "disk_root",
+                    "net",
+                    "temps_c",
+                    "bpu",
+                    "vpu",
+                    "gpu",
+                    "ddr",
+                    "isp"
+                ],
+                "title": "SystemMetrics",
+                "type": "object"
+            },
+            "VpuMetrics": {
+                "properties": {
+                    "clock_mhz": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Clock Mhz"
+                    },
+                    "load_percent": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Load Percent"
+                    }
+                },
+                "required": [
+                    "clock_mhz",
+                    "load_percent"
+                ],
+                "title": "VpuMetrics",
                 "type": "object"
             },
             "PikiOptions": {

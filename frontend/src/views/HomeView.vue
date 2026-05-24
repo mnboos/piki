@@ -14,6 +14,8 @@ import CameraFeed from "@/components/CameraFeed.vue";
 import DetectionOverlay from "@/components/DetectionOverlay.vue";
 import ExclusionZoneOverlay from "@/components/ExclusionZoneOverlay.vue";
 import ExclusionZonesPanel from "@/components/ExclusionZonesPanel.vue";
+import MetricsPanel from "@/components/MetricsPanel.vue";
+import Select from "primevue/select";
 import Tab from "primevue/tab";
 import TabList from "primevue/tablist";
 import TabPanel from "primevue/tabpanel";
@@ -65,6 +67,16 @@ const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
 const toast = useToast();
 const editingZones = ref(false);
 const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
+
+// WebRTC stream FPS — read/write the backend setting; in-memory only there.
+const FPS_OPTIONS = [5, 10, 15, 20, 30];
+const targetFps = ref<number>(30);
+const { mutate: setTargetFps } = useMutation({
+    mutationFn: (fps: number) => api.coreApiUpdateWebrtcConfig({
+        webRtcConfigSchemaPatch: { targetFps: fps },
+    }),
+    onSuccess: (data) => { targetFps.value = data.targetFps; },
+});
 
 // ── Live state (WebSocket) ────────────────────────────────────────────────
 
@@ -118,6 +130,11 @@ const { mutate: servoMove } = useMutation({
 // ── Initial data load into mutable refs (needed for v-model) ──────────────
 
 onMounted(async () => {
+    try {
+        const cfg = await api.coreApiGetWebrtcConfig();
+        targetFps.value = cfg.targetFps;
+    } catch { /* ignore — endpoint may be unavailable during reload */ }
+
     const current = await api.coreApiGetOptions();
     options.value = {
         showBoxes: current.showBoxes ?? true,
@@ -176,6 +193,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                 <Tab value="detection">Detection</Tab>
                 <Tab value="servo">Servo</Tab>
                 <Tab value="debug">Debug</Tab>
+                <Tab value="metrics">Metrics</Tab>
                 <Tab value="recordings">Recordings</Tab>
             </TabList>
             <TabPanels>
@@ -187,6 +205,17 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                             </template>
                         </CameraFeed>
                         <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
+                        <div class="stream-controls">
+                            <label class="stream-fps-label">
+                                Stream FPS
+                                <Select
+                                    :model-value="targetFps"
+                                    :options="FPS_OPTIONS"
+                                    @update:model-value="(v: number) => setTargetFps(v)"
+                                    class="stream-fps-select"
+                                />
+                            </label>
+                        </div>
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
@@ -232,6 +261,10 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                     <ServoDebugPanel ref="debugPanel" @move="(pan, tilt) => servoMove({ panAngle: pan, tiltAngle: tilt })" />
                 </TabPanel>
 
+                <TabPanel value="metrics">
+                    <MetricsPanel />
+                </TabPanel>
+
                 <TabPanel value="recordings">
                     <RecordingsPanel />
                 </TabPanel>
@@ -271,6 +304,36 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
     background: rgba(0, 0, 0, 0.55);
     color: #aaa;
     pointer-events: none;
+}
+.stream-controls {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    display: flex;
+    gap: 0.4rem;
+    pointer-events: auto;
+}
+.stream-fps-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #ddd;
+    font-size: 0.7rem;
+    font-family: monospace;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1;
+}
+.stream-fps-select {
+    min-width: 70px;
+    font-size: 0.75rem;
+}
+.stream-fps-select :deep(.p-select-label) {
+    padding: 0.2rem 0.4rem;
+    line-height: 1.2;
 }
 .overlay-toggles {
     position: absolute;

@@ -117,6 +117,9 @@ cache_lock = Lock()
 _hw_encoder: HwH264Encoder | None = None
 _hw_encoder_dims: tuple[int, int] | None = None
 
+# Monotonic ns of the last encode call — drives the target-FPS frame skip.
+_last_encode_ns: int = 0
+
 
 def _get_hw_encoder(width: int, height: int) -> HwH264Encoder:
     global _hw_encoder, _hw_encoder_dims
@@ -1116,15 +1119,23 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
 
     # Hardware H.264 encode for any connected WebRTC peers. Runs on the VPU,
     # so this should be a fast call that doesn't impact motion/inference timing.
+    # Frame skipping honours `webrtc_target_fps` (set to camera rate to disable).
     if _s.webrtc_active.is_set():
-        try:
-            frame_w = nv12_frame.shape[1]
-            enc = _get_hw_encoder(frame_w, frame_h)
-            nals = enc.encode_nv12(nv12_frame)
-            if nals:
-                webrtc_publish(nals, current_time)
-        except Exception:
-            logger.exception("WebRTC hardware-encode failed")
+        global _last_encode_ns
+        target_fps = max(1, int(_s.webrtc_target_fps.value))
+        min_interval_ns = 1_000_000_000 // target_fps
+        # Subtract a small slack so the actual delivered rate matches the
+        # target instead of consistently undershooting by one frame interval.
+        if current_time - _last_encode_ns >= min_interval_ns - 5_000_000:
+            try:
+                frame_w = nv12_frame.shape[1]
+                enc = _get_hw_encoder(frame_w, frame_h)
+                nals = enc.encode_nv12(nv12_frame)
+                if nals:
+                    webrtc_publish(nals, current_time)
+                    _last_encode_ns = current_time
+            except Exception:
+                logger.exception("WebRTC hardware-encode failed")
 
     y_plane = nv12_frame[:frame_h]
     step = preview_downscale_factor

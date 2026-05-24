@@ -18,7 +18,7 @@ from .models import (
     Video,
 )
 from . import events
-from .utils import exclusion, webrtc
+from .utils import exclusion, sysmetrics, webrtc
 from .utils.engine import move_to
 from .utils.event_log import summarize_log
 from .utils.event_payloads import build_recording_payload, build_replay_payload, build_splash_payload, build_tracker_payload
@@ -124,6 +124,10 @@ class WebRtcAnswerSchema(Schema):
     type: str
 
 
+class WebRtcConfigSchema(Schema):
+    target_fps: int
+
+
 @api.post("/webrtc/offer", response=WebRtcAnswerSchema)
 async def webrtc_offer(request: HttpRequest, payload: WebRtcOfferSchema):
     """Negotiate a WebRTC peer connection. WHEP-style stateless offer/answer.
@@ -135,6 +139,102 @@ async def webrtc_offer(request: HttpRequest, payload: WebRtcOfferSchema):
     is_object_detection_disabled.clear()
     sdp, type_ = await webrtc.handle_offer(payload.sdp, payload.type)
     return WebRtcAnswerSchema(sdp=sdp, type=type_)
+
+
+@api.get("/webrtc/config", response=WebRtcConfigSchema)
+def get_webrtc_config(request: HttpRequest):
+    """Current WebRTC stream settings."""
+    return WebRtcConfigSchema(target_fps=int(_s.webrtc_target_fps.value))
+
+
+@api.patch("/webrtc/config", response=WebRtcConfigSchema)
+def update_webrtc_config(request: HttpRequest, payload: PatchDict[WebRtcConfigSchema]):
+    """Update WebRTC stream settings. In-memory only; resets on restart."""
+    if (fps := payload.get("target_fps")) is not None:
+        _s.webrtc_target_fps.value = max(1, min(60, int(fps)))
+    return WebRtcConfigSchema(target_fps=int(_s.webrtc_target_fps.value))
+
+
+# ---------------------------------------------------------------------------
+# System metrics
+# ---------------------------------------------------------------------------
+
+class CpuMetrics(Schema):
+    percent_total: float
+    percent_per_core: list[float]
+    freq_mhz_per_core: list[float]
+    core_count: int
+
+
+class MemoryMetrics(Schema):
+    total_bytes: int
+    available_bytes: int
+    used_bytes: int
+    percent: float
+
+
+class SwapMetrics(Schema):
+    total_bytes: int
+    used_bytes: int
+    percent: float
+
+
+class DiskMetrics(Schema):
+    total_bytes: int
+    used_bytes: int
+    free_bytes: int
+    percent: float
+
+
+class NetMetrics(Schema):
+    rx_bytes_per_s: float
+    tx_bytes_per_s: float
+
+
+class BpuMetrics(Schema):
+    load_percent: Optional[int]
+    freq_mhz: Optional[float]
+
+
+class VpuMetrics(Schema):
+    clock_mhz: Optional[float]
+    load_percent: Optional[float]
+
+
+class GpuMetrics(Schema):
+    freq_mhz: Optional[float]
+    load_percent: Optional[float]
+
+
+class DdrMetrics(Schema):
+    freq_mhz: Optional[float]
+
+
+class IspMetrics(Schema):
+    load_percent: Optional[float]
+
+
+class SystemMetrics(Schema):
+    ts: float
+    uptime_s: Optional[float]
+    load_avg: list[float]
+    cpu: CpuMetrics
+    memory: MemoryMetrics
+    swap: SwapMetrics
+    disk_root: DiskMetrics
+    net: NetMetrics
+    temps_c: dict[str, float]
+    bpu: BpuMetrics
+    vpu: VpuMetrics
+    gpu: GpuMetrics
+    ddr: DdrMetrics
+    isp: IspMetrics
+
+
+@api.get("/metrics", response=SystemMetrics)
+def get_metrics(request: HttpRequest):
+    """Live system metrics: CPU, memory, temperatures, accelerator state, network."""
+    return sysmetrics.collect()
 
 
 class PikiOptions(Schema):

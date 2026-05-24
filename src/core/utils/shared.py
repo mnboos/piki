@@ -90,6 +90,12 @@ streaming_active = threading.Event()
 # watching. webrtc.py keeps this in lock-step with streaming_active.
 webrtc_active = threading.Event()
 
+# Target frame rate for the WebRTC video stream. The hardware encoder always
+# sees frames at the camera's native rate (~30 fps); when this is lower we
+# skip encode calls in process_frame() so the wire bitrate scales linearly
+# with frame rate. Set to 30 (or higher) to disable skipping.
+webrtc_target_fps = mp.Value("i", 30)
+
 # Set while recording pipeline frames to a video file.
 recording_active = threading.Event()
 # Set while replaying a video through the pipeline (replay thread owns latest_frame).
