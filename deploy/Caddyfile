@@ -4,7 +4,7 @@
 
 	# Django routes — proxy to daphne. Must be a handle (not bare reverse_proxy)
 	# so it's mutually exclusive with the SPA catch-all below.
-	@backend path /api/* /admin /admin/* /media/*
+	@backend path /api/* /admin /admin/* /media/* /ws/*
 	handle @backend {
 		reverse_proxy 127.0.0.1:8000
 	}
