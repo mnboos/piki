@@ -15,6 +15,7 @@ export * from './ExclusionZoneSchemaPatch';
 export * from './GpuMetrics';
 export * from './IspMetrics';
 export * from './MemoryMetrics';
+export * from './NetInterface';
 export * from './NetMetrics';
 export * from './PikiOptions';
 export * from './PikiOptionsPatch';

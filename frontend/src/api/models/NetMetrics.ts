@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { NetInterface } from './NetInterface';
+import {
+    NetInterfaceFromJSON,
+    NetInterfaceFromJSONTyped,
+    NetInterfaceToJSON,
+    NetInterfaceToJSONTyped,
+} from './NetInterface';
+
 /**
  * 
  * @export
@@ -31,6 +39,12 @@ export interface NetMetrics {
      * @memberof NetMetrics
      */
     txBytesPerS: number;
+    /**
+     * 
+     * @type {Array<NetInterface>}
+     * @memberof NetMetrics
+     */
+    interfaces: Array<NetInterface>;
 }
 
 /**
@@ -39,6 +53,7 @@ export interface NetMetrics {
 export function instanceOfNetMetrics(value: object): value is NetMetrics {
     if (!('rxBytesPerS' in value) || value['rxBytesPerS'] === undefined) return false;
     if (!('txBytesPerS' in value) || value['txBytesPerS'] === undefined) return false;
+    if (!('interfaces' in value) || value['interfaces'] === undefined) return false;
     return true;
 }
 
@@ -54,6 +69,7 @@ export function NetMetricsFromJSONTyped(json: any, ignoreDiscriminator: boolean)
         
         'rxBytesPerS': json['rx_bytes_per_s'],
         'txBytesPerS': json['tx_bytes_per_s'],
+        'interfaces': ((json['interfaces'] as Array<any>).map(NetInterfaceFromJSON)),
     };
 }
 
@@ -70,6 +86,7 @@ export function NetMetricsToJSONTyped(value?: NetMetrics | null, ignoreDiscrimin
         
         'rx_bytes_per_s': value['rxBytesPerS'],
         'tx_bytes_per_s': value['txBytesPerS'],
+        'interfaces': ((value['interfaces'] as Array<any>).map(NetInterfaceToJSON)),
     };
 }
 

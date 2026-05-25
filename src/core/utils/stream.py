@@ -435,7 +435,6 @@ def run_object_detection(
         )
         if _profile:
             logger.info("PERF stage=tile_slice ms=%.2f tiles=%d", (time.perf_counter() - _t) * 1000, len(tiles))
-        logger.debug("Tiles to infer: %d", len(tiles))
 
         total_duration = 0
         all_detections: list[Detection] = []
@@ -1115,7 +1114,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     global latest_ai_detections
     global _latest_mask, _latest_mask_shape
 
-    current_time = time.time_ns()
+    current_time = time.monotonic_ns()
 
     # Hardware H.264 encode for any connected WebRTC peers. Runs on the VPU,
     # so this should be a fast call that doesn't impact motion/inference timing.

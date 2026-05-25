@@ -1132,8 +1132,12 @@
                 "title": "MemoryMetrics",
                 "type": "object"
             },
-            "NetMetrics": {
+            "NetInterface": {
                 "properties": {
+                    "name": {
+                        "title": "Name",
+                        "type": "string"
+                    },
                     "rx_bytes_per_s": {
                         "title": "Rx Bytes Per S",
                         "type": "number"
@@ -1144,8 +1148,35 @@
                     }
                 },
                 "required": [
+                    "name",
                     "rx_bytes_per_s",
                     "tx_bytes_per_s"
+                ],
+                "title": "NetInterface",
+                "type": "object"
+            },
+            "NetMetrics": {
+                "properties": {
+                    "rx_bytes_per_s": {
+                        "title": "Rx Bytes Per S",
+                        "type": "number"
+                    },
+                    "tx_bytes_per_s": {
+                        "title": "Tx Bytes Per S",
+                        "type": "number"
+                    },
+                    "interfaces": {
+                        "items": {
+                            "$ref": "#/components/schemas/NetInterface"
+                        },
+                        "title": "Interfaces",
+                        "type": "array"
+                    }
+                },
+                "required": [
+                    "rx_bytes_per_s",
+                    "tx_bytes_per_s",
+                    "interfaces"
                 ],
                 "title": "NetMetrics",
                 "type": "object"

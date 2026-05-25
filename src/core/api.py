@@ -186,9 +186,16 @@ class DiskMetrics(Schema):
     percent: float
 
 
+class NetInterface(Schema):
+    name: str
+    rx_bytes_per_s: float
+    tx_bytes_per_s: float
+
+
 class NetMetrics(Schema):
     rx_bytes_per_s: float
     tx_bytes_per_s: float
+    interfaces: list[NetInterface]
 
 
 class BpuMetrics(Schema):

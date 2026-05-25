@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, watchEffect, onMounted } from "vue";
+import { ref, watch, onMounted } from "vue";
 import { useMutation } from "@tanstack/vue-query";
 import { DefaultApi, type AimConfigSchema, type AimConfigSchemaPatch, type PikiOptions, type PikiOptionsPatch, type SplashConfigSchema, type SplashConfigSchemaPatch } from "@/api";
 import { useYoloClassesQuery } from "@/queries/recordings";
-import { useTrackerStatus, useLastNewEventClip } from "@/composables/useEventStream";
+import { useLastNewEventClip } from "@/composables/useEventStream";
 import DetectionControls from "@/components/DetectionControls.vue";
 import ServoAimPanel from "@/components/ServoAimPanel.vue";
 import RecordingsPanel from "@/components/RecordingsPanel.vue";
@@ -78,13 +78,15 @@ const { mutate: setTargetFps } = useMutation({
     onSuccess: (data) => { targetFps.value = data.targetFps; },
 });
 
-// ── Live state (WebSocket) ────────────────────────────────────────────────
+// Actual streaming FPS measured on the client via requestVideoFrameCallback.
+// Null when the video element hasn't painted yet (first ~1s after connect).
+const streamingFps = ref<number | null>(null);
 
-const trackerStatus = useTrackerStatus();
-const currentFps = ref(0);
-watchEffect(() => {
-  currentFps.value = trackerStatus.value?.fps ?? 0;
-});
+function onStreamingFpsUpdate(fps: number) {
+    streamingFps.value = fps;
+}
+
+// ── Live state (WebSocket) ────────────────────────────────────────────────
 
 const lastNewClip = useLastNewEventClip();
 watch(lastNewClip, c => {
@@ -187,7 +189,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
         <div class="top-bar">
             <SplashStatusIndicator />
         </div>
-        <Tabs value="camera">
+        <Tabs value="camera" lazy>
             <TabList>
                 <Tab value="camera">Camera</Tab>
                 <Tab value="detection">Detection</Tab>
@@ -199,27 +201,29 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
             <TabPanels>
                 <TabPanel value="camera">
                     <div class="feed-wrapper">
-                        <CameraFeed alt="camera feed">
+                        <CameraFeed alt="camera feed" @fps-update="onStreamingFpsUpdate">
                             <template #overlay>
                                 <DetectionOverlay :show-boxes="options.showBoxes" />
                             </template>
                         </CameraFeed>
-                        <div class="fps-badge">{{ currentFps.toFixed(1) }} FPS</div>
-                        <div class="stream-controls">
-                            <label class="stream-fps-label">
-                                Stream FPS
-                                <Select
-                                    :model-value="targetFps"
-                                    :options="FPS_OPTIONS"
-                                    @update:model-value="(v: number) => setTargetFps(v)"
-                                    class="stream-fps-select"
-                                />
-                            </label>
-                        </div>
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
                         </div>
+                    </div>
+                    <div class="stream-controls">
+                        <label class="stream-fps-label">
+                            Stream FPS
+                            <Select
+                                :model-value="targetFps"
+                                :options="FPS_OPTIONS"
+                                @update:model-value="(v: number) => setTargetFps(v)"
+                                class="stream-fps-select"
+                            />
+                        </label>
+                        <span class="stream-fps-actual">
+                            actual: {{ streamingFps !== null && streamingFps > 0 ? streamingFps.toFixed(1) : '--' }} fps
+                        </span>
                     </div>
                 </TabPanel>
 
@@ -291,49 +295,32 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
     overflow: hidden;
     line-height: 0;
 }
-.fps-badge {
-    position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    font-family: monospace;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    background: rgba(0, 0, 0, 0.55);
-    color: #aaa;
-    pointer-events: none;
-}
 .stream-controls {
-    position: absolute;
-    top: 0.5rem;
-    left: 0.5rem;
     display: flex;
-    gap: 0.4rem;
-    pointer-events: auto;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    font-family: monospace;
 }
 .stream-fps-label {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #ddd;
-    font-size: 0.7rem;
-    font-family: monospace;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    line-height: 1;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--p-text-color, #ddd);
 }
 .stream-fps-select {
-    min-width: 70px;
-    font-size: 0.75rem;
+    min-width: 80px;
+    font-size: 0.8rem;
 }
 .stream-fps-select :deep(.p-select-label) {
-    padding: 0.2rem 0.4rem;
+    padding: 0.25rem 0.5rem;
     line-height: 1.2;
+}
+.stream-fps-actual {
+    font-size: 0.75rem;
+    color: var(--p-text-muted-color, #888);
+    letter-spacing: 0.03em;
 }
 .overlay-toggles {
     position: absolute;

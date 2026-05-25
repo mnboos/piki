@@ -5,10 +5,56 @@ import ExclamationTriangleIcon from "@primevue/icons/exclamationtriangle";
 import { useBackendHost } from "@/utils";
 
 const props = defineProps<{ alt?: string }>();
+const emit = defineEmits<{ "fps-update": [number] }>();
 
 type Status = "connecting" | "connected" | "error";
 const status = ref<Status>("connecting");
 const video = ref<HTMLVideoElement | null>(null);
+
+// Rolling-window FPS counter driven by requestVideoFrameCallback — fires
+// once per painted video frame, so it reflects what the user actually sees
+// (matches the server-side WebRTC encode rate, unlike the camera input rate).
+const FPS_WINDOW_MS = 2000;
+const FPS_EMIT_INTERVAL_MS = 250;
+const frameTimestamps: number[] = [];
+let rvfcId: number | null = null;
+let lastEmitMs = 0;
+
+function startFpsMeasurement(): void {
+    const el = video.value;
+    if (!el || typeof el.requestVideoFrameCallback !== "function" || rvfcId !== null) return;
+    frameTimestamps.length = 0;
+    lastEmitMs = 0;
+    const tick = (now: DOMHighResTimeStamp) => {
+        rvfcId = null;
+        frameTimestamps.push(now);
+        const cutoff = now - FPS_WINDOW_MS;
+        while (frameTimestamps.length && frameTimestamps[0] < cutoff) {
+            frameTimestamps.shift();
+        }
+        if (now - lastEmitMs >= FPS_EMIT_INTERVAL_MS) {
+            const n = frameTimestamps.length;
+            const fps = n >= 2 ? ((n - 1) * 1000) / (frameTimestamps[n - 1] - frameTimestamps[0]) : 0;
+            emit("fps-update", fps);
+            lastEmitMs = now;
+        }
+        const next = video.value;
+        if (next && typeof next.requestVideoFrameCallback === "function") {
+            rvfcId = next.requestVideoFrameCallback(tick);
+        }
+    };
+    rvfcId = el.requestVideoFrameCallback(tick);
+}
+
+function stopFpsMeasurement(): void {
+    const el = video.value;
+    if (el && typeof el.cancelVideoFrameCallback === "function" && rvfcId !== null) {
+        el.cancelVideoFrameCallback(rvfcId);
+    }
+    rvfcId = null;
+    frameTimestamps.length = 0;
+    emit("fps-update", 0);
+}
 
 // Backoff between reconnect attempts when the negotiation fails.
 const RECONNECT_INITIAL_MS = 1000;
@@ -37,6 +83,9 @@ async function negotiate() {
         if (e.track.kind !== "video") return;
         if (video.value && e.streams[0]) {
             video.value.srcObject = e.streams[0];
+            video.value.addEventListener("playing", () => {
+                startFpsMeasurement();
+            }, { once: true });
         }
     });
 
@@ -106,6 +155,7 @@ function scheduleReconnect() {
 }
 
 function closePc() {
+    stopFpsMeasurement();
     if (pc) {
         try { pc.close(); } catch { /* ignore */ }
         pc = null;

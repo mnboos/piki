@@ -16,6 +16,7 @@ models/ExclusionZoneSchemaPatch.ts
 models/GpuMetrics.ts
 models/IspMetrics.ts
 models/MemoryMetrics.ts
+models/NetInterface.ts
 models/NetMetrics.ts
 models/PikiOptions.ts
 models/PikiOptionsPatch.ts

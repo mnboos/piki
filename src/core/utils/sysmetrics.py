@@ -41,7 +41,8 @@ import psutil
 logger = logging.getLogger(__name__)
 
 # Cumulative net-throughput state so we can compute deltas across calls.
-_last_net_sample: tuple[float, int, int] | None = None
+# Stores (timestamp, {iface: (bytes_recv, bytes_sent)}) from the previous call.
+_last_net_sample: tuple[float, dict[str, tuple[int, int]]] | None = None
 
 
 def _read_int(path: str | Path) -> int | None:
@@ -82,27 +83,44 @@ def _vpu_clock_mhz() -> float | None:
     return hz / 1_000_000.0 if hz else None
 
 
-def _net_throughput() -> tuple[float, float]:
+def _net_throughput() -> tuple[float, float, list[dict]]:
     """Bytes/s rx, tx across all non-loopback interfaces, smoothed over the
-    interval between calls. Returns (0, 0) on the first call."""
+    interval between calls. Returns (aggregate_rx_bps, aggregate_tx_bps, per_iface_list)
+    where each per_iface entry is {"name": str, "rx_bytes_per_s": float, "tx_bytes_per_s": float}.
+    Returns (0, 0, []) on the first call."""
     global _last_net_sample
     now = time.monotonic()
-    total_rx = 0
-    total_tx = 0
+    cur: dict[str, tuple[int, int]] = {}
     counters = psutil.net_io_counters(pernic=True)
     for iface, c in counters.items():
         if iface == "lo":
             continue
-        total_rx += c.bytes_recv
-        total_tx += c.bytes_sent
+        cur[iface] = (c.bytes_recv, c.bytes_sent)
+
     if _last_net_sample is None:
-        _last_net_sample = (now, total_rx, total_tx)
-        return 0.0, 0.0
+        _last_net_sample = (now, cur)
+        return 0.0, 0.0, []
+
     dt = max(1e-3, now - _last_net_sample[0])
-    rx_per_s = (total_rx - _last_net_sample[1]) / dt
-    tx_per_s = (total_tx - _last_net_sample[2]) / dt
-    _last_net_sample = (now, total_rx, total_tx)
-    return max(0.0, rx_per_s), max(0.0, tx_per_s)
+    prev = _last_net_sample[1]
+    interfaces: list[dict] = []
+    for iface, (rx, tx) in cur.items():
+        prv = prev.get(iface)
+        if prv is None:
+            continue
+        rx_bps = (rx - prv[0]) / dt
+        tx_bps = (tx - prv[1]) / dt
+        interfaces.append({
+            "name": iface,
+            "rx_bytes_per_s": round(max(0.0, rx_bps), 1),
+            "tx_bytes_per_s": round(max(0.0, tx_bps), 1),
+        })
+
+    # Aggregate from per-interface deltas so new/removed ifaces don't skew totals.
+    agg_rx = sum(iface["rx_bytes_per_s"] for iface in interfaces)
+    agg_tx = sum(iface["tx_bytes_per_s"] for iface in interfaces)
+    _last_net_sample = (now, cur)
+    return agg_rx, agg_tx, interfaces
 
 
 def collect() -> dict:
@@ -117,7 +135,7 @@ def collect() -> dict:
     swap = psutil.swap_memory()
     disk = psutil.disk_usage("/")
 
-    rx_bps, tx_bps = _net_throughput()
+    rx_bps, tx_bps, interfaces = _net_throughput()
 
     uptime_s: float | None = None
     try:
@@ -172,6 +190,7 @@ def collect() -> dict:
         "net": {
             "rx_bytes_per_s": round(rx_bps, 1),
             "tx_bytes_per_s": round(tx_bps, 1),
+            "interfaces": interfaces,
         },
         "temps_c": temps,
         "bpu": {

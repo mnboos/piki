@@ -199,6 +199,16 @@ const tempEntries = computed<[string, number][]>(() =>
                     <span class="mp-label">↑ tx</span>
                     <span class="mp-val mp-val--med">{{ fmtRate(m.net.txBytesPerS) }}</span>
                 </div>
+                <div
+                    v-for="iface in m.net.interfaces"
+                    :key="iface.name"
+                    class="mp-row mp-row--small"
+                >
+                    <span>{{ iface.name }}</span>
+                    <span>
+                        ↓ {{ fmtRate(iface.rxBytesPerS) }} &nbsp; ↑ {{ fmtRate(iface.txBytesPerS) }}
+                    </span>
+                </div>
                 <div class="mp-row mp-row--small">
                     <span>uptime</span>
                     <span>{{ fmtUptime(m.uptimeS) }}</span>
