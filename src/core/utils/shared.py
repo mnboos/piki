@@ -1,14 +1,13 @@
 import logging
 import multiprocessing as mp
 import os
-import random
 import threading
 import time
 from collections import deque
 from collections.abc import Sequence
 from ctypes import c_float
 from multiprocessing import Event
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 from .interfaces import TuningSettings
 from .settings import AppSettings, AimSettings, DebugSettings
@@ -22,7 +21,6 @@ import cv2
 import numpy as np
 
 from .func import (
-    apply_non_max_suppression,
     cluster_with_constraints,
     edge_distance,
     expand_roi_to_min_size,
@@ -32,7 +30,7 @@ logger = logging.getLogger(__name__)
 logger.info("Setup shared module...")
 
 app_settings = AppSettings(
-    debug_settings=DebugSettings(show_boxes=True, show_mask=False, show_rois=False),
+    debug_settings=DebugSettings(show_boxes=True),
     aim_settings=AimSettings(target_classes=[], servo_enabled=False, target_lock_duration=3.0,
                              aim_confidence=0.4, pan_invert=False, tilt_invert=False),
 )
@@ -58,7 +56,6 @@ preview_downscale_factor = 2
 ai_input_size = 640
 
 settings = TuningSettings()
-mask_transparency = mp.Value(c_float, 0.5)
 servo_pan = mp.Value(c_float, 0.0)   # current pan angle in degrees
 servo_tilt = mp.Value(c_float, 0.0)  # current tilt angle in degrees
 servo_kalman_pan = mp.Value(c_float, 0.0)   # Kalman predicted pan (lookahead target)
@@ -80,10 +77,11 @@ servo_tilt_invert = mp.Value("i", 0)
 # is_mask_streaming_enabled = Event()
 is_object_detection_disabled = Event()
 
-# Set while at least one viewer is connected.  When clear, all display-only
-# work (frame caching, latest_frame updates) is skipped so the
-# inference/motion-detection loop runs at full speed.
+# Set while at least one viewer is connected (WebRTC subscriber or replay).
+# webrtc.py and replay flip it; nothing in the inference / motion pipeline
+# reads it post-WebRTC, but other modules still gate on it.
 streaming_active = threading.Event()
+
 
 # Set while at least one WebRTC peer is connected. Gates the hardware H.264
 # encoder in `process_frame()` so we don't burn VPU cycles when nobody's
@@ -98,7 +96,7 @@ webrtc_target_fps = mp.Value("i", 30)
 
 # Set while recording pipeline frames to a video file.
 recording_active = threading.Event()
-# Set while replaying a video through the pipeline (replay thread owns latest_frame).
+# Set while replaying a video through the pipeline (replay drives the WebRTC encoder).
 replaying_active = threading.Event()
 
 
@@ -151,40 +149,6 @@ class InferenceOutput(NamedTuple):
     embeddings: Sequence = ()
 
 
-# Pre-built Norfair Detection objects for the MJPEG stream — populated by
-# stream.py in on_done() and read by api.py's streaming generator.
-# Each Detection has .id monkey-patched from the tracker so draw_boxes
-# can use color="by_id".  GIL makes list assignment atomic.
-tracker_drawables: list = []
-
-
-class LatestFrame:
-    def __init__(self):
-        self.frame: Optional[np.ndarray] = None
-        self.detections: list[Detection] = []
-        self.timestamp: int = 0
-        self.condition = threading.Condition()
-
-    def update(self, frame: np.ndarray, detections: list[Detection], timestamp: int):
-        with self.condition:
-            self.frame = frame
-            self.detections = detections
-            self.timestamp = timestamp
-            self.condition.notify_all()
-
-    def get(self):
-        with self.condition:
-            return self.frame, self.detections, self.timestamp
-
-    def wait_for_frame(self, last_timestamp: int):
-        with self.condition:
-            self.condition.wait_for(lambda: self.timestamp > last_timestamp, timeout=1.0)
-            return self.frame, self.detections, self.timestamp
-
-
-latest_frame = LatestFrame()
-latest_debug_frame = LatestFrame()  # raw/distorted frame for the debug video feed
-
 # Detection confidence thresholds with hysteresis:
 #   prob_threshold      = "enter" threshold (default 0.40) — required to start
 #                          a lock, count toward the min-streak, or trigger an
@@ -202,9 +166,6 @@ min_consecutive_frames = mp.Value("i", 2)
 
 # Exponential-moving-average factor for smoothing the locked-target bbox.
 bbox_ema_alpha = mp.Value(c_float, 0.7)
-
-# Display-only persistence window after the last real detection (ms).
-ghost_frames_ms = mp.Value("i", 300)
 
 # --- SORT-style tracker (Phase B) ---
 # When enabled, on_done() routes detections through an IoU + Kalman tracker
@@ -321,48 +282,6 @@ class MotionDetector:
         if _t0 is not None:
             logger.info("PERF stage=roi_create ms=%.2f", (time.perf_counter() - _t0) * 1000)
         return final_rois
-
-    def get_bounding_boxes(
-        self,
-        foreground_mask: np.ndarray,
-    ):
-        res = self.create_rois(mask=foreground_mask)
-        res = apply_non_max_suppression(boxes=res)
-        return res
-
-    def highlight_movement_on(
-        self,
-        *,
-        frame: np.ndarray,
-        mask: np.ndarray,
-        transparency_factor: float = 0.4,
-        overlay_color_rgb: tuple[int, int, int] = (255, 0, 0),
-        draw_boxes: bool = True,
-    ) -> np.ndarray:
-        if draw_boxes:
-            boxes = self.get_bounding_boxes(mask)
-            for x, y, w, h in boxes:
-                # rect_color = (0, 0, 255)
-                rect_color = (
-                    random.randint(0, 255),  # noqa: S311
-                    random.randint(0, 255),  # noqa: S311
-                    random.randint(0, 255),  # noqa: S311
-                )
-                cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 2)
-
-        colored_overlay = np.full(frame.shape, overlay_color_rgb, dtype=np.uint8)  # TODO(mnboos): do this only once
-        blended = cv2.addWeighted(
-            frame,
-            transparency_factor,
-            colored_overlay,
-            1 - transparency_factor,
-            0,
-        )
-        return np.where(
-            mask[:, :, None] != 0,
-            blended,
-            frame,
-        )
 
 
 # --- Event-triggered recording state ---

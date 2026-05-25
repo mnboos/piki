@@ -219,7 +219,7 @@ def _slice_nv12_tile(*, nv12, buffer_h, tx, ty, tile_size):
     h_uv, w_uv = uv_src.shape
     uv_dest[:h_uv, :w_uv] = uv_src
 
-    return inference_buffer # This is a 1D view of the pre-allocated memory
+    return inference_buffer  # This is a 1D view of the pre-allocated memory
 
 
 def OLD_slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:

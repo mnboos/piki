@@ -5,13 +5,9 @@ class DebugSettings(SharedMemoryObject):
     """The in-memory version of our display settings."""
 
     show_boxes: bool
-    show_mask: bool
-    show_rois: bool
 
-    def __init__(self, *, show_boxes: bool = True, show_mask: bool = False,
-                 show_rois: bool = False, _dict_proxy=None):
-        super().__init__(show_boxes=show_boxes, show_mask=show_mask,
-                         show_rois=show_rois, _dict_proxy=_dict_proxy)
+    def __init__(self, *, show_boxes: bool = True, _dict_proxy=None):
+        super().__init__(show_boxes=show_boxes, _dict_proxy=_dict_proxy)
 
 
 class AimSettings(SharedMemoryObject):

@@ -34,6 +34,29 @@ def build_detections_snapshot() -> dict:
     }
 
 
+def build_rois_payload(rois_normalized: list[list[float]]) -> dict:
+    """Wire shape for the `rois` topic. Coordinates are normalized [0,1]."""
+    return {"rois": rois_normalized}
+
+
+def build_rois_snapshot() -> dict:
+    return build_rois_payload([])
+
+
+def build_mask_payload(polygons_normalized: list[list[float]]) -> dict:
+    """Wire shape for the `mask` topic.
+
+    Each polygon is a flat ``[x0, y0, x1, y1, ...]`` list of normalized
+    coordinates, ready to feed into a Canvas2D path. Only outer contours
+    are emitted (no holes) — good enough as a debug visualization.
+    """
+    return {"polygons": polygons_normalized}
+
+
+def build_mask_snapshot() -> dict:
+    return build_mask_payload([])
+
+
 def build_splash_payload() -> dict:
     now = time.time()
     is_enabled = _s.splash_enabled.is_set()
@@ -145,4 +168,6 @@ def snapshot() -> dict[str, dict]:
         "replay_status": build_replay_payload(),
         "event_clips": build_event_clips_snapshot(),
         "detections": build_detections_snapshot(),
+        "rois": build_rois_snapshot(),
+        "mask": build_mask_snapshot(),
     }

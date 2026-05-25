@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
-from multiprocessing import Lock, Semaphore
+from multiprocessing import Semaphore
 from pathlib import Path
 from typing import IO, Any, Optional
 
@@ -29,7 +29,9 @@ from .. import events
 from . import shared as _s
 from .ai import MODEL_INPUT_TYPE, detect_objects
 from .event_payloads import (
+    build_mask_payload,
     build_recording_payload,
+    build_rois_payload,
     build_splash_payload,
     build_tracker_payload,
 )
@@ -66,11 +68,7 @@ from .shared import (
     event_trigger_classes,
     event_trigger_classes_lock,
     fps_counter,
-    ghost_frames_ms,
     is_object_detection_disabled,
-    latest_debug_frame,
-    latest_frame,
-    mask_transparency,
     min_consecutive_frames,
     motion_detector,
     preview_downscale_factor,
@@ -80,7 +78,6 @@ from .shared import (
     servo_aim_confidence,
     replaying_active,
     settings,
-    streaming_active,
     tracker_confirm_hits,
     tracker_enabled,
     tracker_iou_threshold,
@@ -100,16 +97,12 @@ _locked_target_label: str | None = None
 _locked_target_lost_since: float | None = None   # time.time() when target was last seen
 _prev_aim_bbox: list[float] | None = None        # 1-frame delay buffer for servo feed
 
-# --- Phase A stability state (hysteresis, min-streak, ghost frames) ---
+# --- Phase A stability state (hysteresis, min-streak) ---
 _label_streak: dict[str, int] = {}
-_last_seen_monotonic_ns: int = 0
-_last_seen_denormalized: "list[Detection]" = []
 
 double_buffer: DoubleBuffer | None = None
 worker_semaphore = Semaphore(NUM_AI_WORKERS)
 ffmpeg_process: subprocess.Popen | None = None
-lowres_frame_cache = {}
-cache_lock = Lock()
 
 # Hardware H.264 encoder for WebRTC. Created lazily on the first frame after a
 # peer connects so we don't allocate VPU resources when nobody's watching.
@@ -129,9 +122,6 @@ def _get_hw_encoder(width: int, height: int) -> HwH264Encoder:
         _hw_encoder = HwH264Encoder(channel=0, width=width, height=height)
         _hw_encoder_dims = (width, height)
     return _hw_encoder
-
-latest_ai_detections = []
-latest_ai_lock = threading.Lock()
 
 # Latest foreground motion mask — updated every frame in process_frame() and used
 # by on_done() to compute a foreground-weighted aim centroid within the detection
@@ -205,34 +195,12 @@ class PikiVisionNode(Node):
     def __init__(self):
         super().__init__("piki_vision_node")
         topic_name = os.environ.get("ROS_IMAGE_TOPIC", "/StereoNetNode/rectified_image")
-        debug_topic = os.environ.get("ROS_DEBUG_TOPIC", "/image_right_raw")
 
         qos_profile = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
 
         self.get_logger().info(f"Subscribing to: {topic_name}")
         self.subscription = self.create_subscription(RosImage, topic_name, self.listener_callback_hbm, qos_profile)
         self.target_pub = self.create_publisher(String, "/piki/detections", 10)
-
-        self.get_logger().info(f"Debug feed subscribing to: {debug_topic}")
-        self.create_subscription(RosImage, debug_topic, self._debug_frame_callback, qos_profile)
-
-    def _debug_frame_callback(self, msg: Any):
-        try:
-            w, h = msg.width, msg.height
-            stride = msg.step if msg.step > 0 else w
-            if stride == w:
-                data_size = h * w * 3 // 2
-                nv12 = np.frombuffer(msg.data, dtype=np.uint8)[:data_size].reshape(h * 3 // 2, w)
-            else:
-                raw_buffer = np.frombuffer(msg.data, dtype=np.uint8) if not isinstance(msg.data, np.ndarray) else msg.data
-                y_plane = raw_buffer[: h * stride].reshape(h, stride)[:, :w]
-                uv_start = h * stride
-                uv_plane = raw_buffer[uv_start : uv_start + (h // 2) * stride].reshape(h // 2, stride)[:, :w]
-                nv12 = np.vstack([y_plane, uv_plane])
-            y = nv12[:h]
-            latest_debug_frame.update(y, [], time.time_ns())
-        except Exception:
-            logger.exception("Debug frame callback error")
 
     def listener_callback_hbm(self, msg: Any):
         if replaying_active.is_set():
@@ -281,20 +249,12 @@ class PikiVisionNode(Node):
         except Exception as e:
             self.get_logger().error(f"Inference Result Error: {e}")
 
-    def publish_detections(self, detections: list):
-        data = [
-            {
-                "label": d.label,
-                "confidence": float(d.confidence),
-                "bbox": [float(x) for x in d.bbox],
-            }
-            for d in detections
-        ]
-
+    def publish_detections(self, payload: list):
+        """Publish detection dicts (label/confidence/bbox normalised [xmin,ymin,xmax,ymax]) on /piki/detections."""
         if not self.context.ok():
             return
         msg = String()
-        msg.data = json.dumps(data)
+        msg.data = json.dumps(payload)
         self.target_pub.publish(msg)
 
 
@@ -324,6 +284,7 @@ def frame_producer(ffmpeg_stdout: IO[bytes], buffer_instance: DoubleBuffer):
 
 
 active_futures: list[Future[InferenceOutput]] = []
+_ai_tiles_saved = 0
 max_output_timestamp = 0
 dashboard = LiveMetricsDashboard()
 
@@ -440,6 +401,21 @@ def run_object_detection(
         all_detections: list[Detection] = []
 
         for tile_img, tile_x, tile_y in tiles:
+            # Save first 3 tiles for visual inspection.
+            global _ai_tiles_saved
+            if _ai_tiles_saved < 3:
+                try:
+                    nv12_2d = tile_img.reshape(ai_input_size * 3 // 2, ai_input_size)
+                    bgr = cv2.cvtColor(nv12_2d, cv2.COLOR_YUV2BGR_NV12)
+                    out = Path(django_settings.MEDIA_ROOT) / f"ai_tile_{_ai_tiles_saved + 1}.jpg"
+                    ok = cv2.imwrite(str(out), bgr)
+                    logger.info("Saved AI tile %d to %s (ok=%s, shape=%s, size=%d)",
+                                _ai_tiles_saved + 1, out, ok, nv12_2d.shape, tile_img.size)
+                    _ai_tiles_saved += 1
+                except Exception as exc:
+                    logger.warning("Failed to save AI tile %d: %s (tile_img size=%d)",
+                                   _ai_tiles_saved + 1, exc, tile_img.size)
+
             duration, detections = detect_objects(tile_img)
             total_duration += duration
 
@@ -485,35 +461,16 @@ def run_object_detection(
         raise
 
 
-def denormalize(*, bbox_normalized: Sequence[int], frame_shape: Sequence[int]) -> Box:
-    frame_height, frame_width = frame_shape
-    ymin, xmin, ymax, xmax = bbox_normalized
-
-    ymin = max(0.0, ymin)
-    xmin = max(0.0, xmin)
-    ymax = min(1.0, ymax)
-    xmax = min(1.0, xmax)
-
-    left = int(xmin * frame_width)
-    top = int(ymin * frame_height)
-    right = int(xmax * frame_width)
-    bottom = int(ymax * frame_height)
-    width = right - left
-    height = bottom - top
-    return Box(left, top, width, height)
-
-
 def on_done(future: Future[InferenceOutput]):
     """Handle completed inference."""
     global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since, _prev_aim_bbox
     active_futures.remove(future)
     try:
         worker_pid, timestamp, inference_time, detections, embeddings = future.result()
+        logger.info("YOLO_DONE ts=%d raw_detections=%d duration_ms=%d", timestamp, len(detections), inference_time)
 
         if timestamp < max_output_timestamp:
             logger.info(f"Inference result arrived late, discarding (timestamp={timestamp})")
-            with cache_lock:
-                lowres_frame_cache.pop(timestamp, None)
             return
 
         max_output_timestamp = timestamp
@@ -637,30 +594,38 @@ def on_done(future: Future[InferenceOutput]):
 
             detections = [(label, conf, bbox_norm, tid, age) for label, conf, bbox_norm, tid, age in visible]
 
-        # Push detections to any connected SPA clients. Normalized bbox is
-        # converted from internal [ymin, xmin, ymax, xmax] to wire-friendly
-        # [xmin, ymin, xmax, ymax] so the frontend can draw on a canvas
-        # without remembering the axis order.
+        # Push detections to any connected SPA clients. We publish every raw
+        # AI hit that survived the exclusion filter (with the matched track id
+        # attached when the tracker has one) — that way unconfirmed objects
+        # still render as boxes immediately. The tracker output (`detections`
+        # below) continues to drive servo aiming and event recording.
+        # Normalized bbox is converted from internal [ymin, xmin, ymax, xmax]
+        # to wire-friendly [xmin, ymin, xmax, ymax].
         det_payload: list[dict] = []
-        for entry in detections:
-            if len(entry) >= 5:
-                label, conf, bbox_yxyx, tid, _age = entry[:5]
-            elif len(entry) >= 3:
-                label, conf, bbox_yxyx = entry[:3]
-                tid = None
-            else:
+        for ent in log_entries:
+            if ent["inside_exclusion"]:
                 continue
-            ymin, xmin, ymax, xmax = bbox_yxyx
+            ymin, xmin, ymax, xmax = ent["bbox_norm"]
+            tid = ent.get("track_id")
             det_payload.append({
                 "tid": int(tid) if tid is not None else None,
-                "label": str(label),
-                "score": float(conf),
+                "label": str(ent["label"]),
+                "score": float(ent["confidence"]),
                 "bbox": [float(xmin), float(ymin), float(xmax), float(ymax)],
             })
         events.publish("detections", {
             "frame_ts_ns": int(timestamp),
             "detections": det_payload,
         })
+        if log_entries:
+            logger.info(
+                "YOLO_PUBLISH ts=%d log_entries=%d published=%d in_exclusion=%d tracker=%s",
+                timestamp,
+                len(log_entries),
+                len(det_payload),
+                sum(1 for e in log_entries if e["inside_exclusion"]),
+                "on" if tracker_on else "off",
+            )
 
         with _latest_inference_lock:
             global _latest_inference_log_entries
@@ -816,64 +781,10 @@ def on_done(future: Future[InferenceOutput]):
 
         dashboard.update(worker_id=worker_pid, inference_time=inference_time)
 
-        # --- Display work ---
-        global _last_seen_monotonic_ns, _last_seen_denormalized, latest_ai_detections
-        now_mono_ns = time.monotonic_ns()
-        ghost_window_ns = max(0, int(ghost_frames_ms.value)) * 1_000_000
-
-        if streaming_active.is_set():
-            with cache_lock:
-                lores_shape = lowres_frame_cache.pop(timestamp, None)
-
-            detections_denormalized: list[Detection] = []
-
-            _s.tracker_drawables.clear()
-            for entry in detections:
-                label, confidence, bbox_normalized = entry[0], entry[1], entry[2]
-                tid = entry[3] if len(entry) > 3 else None
-                age = entry[4] if len(entry) > 4 else None
-                if lores_shape is None:
-                    break
-                if confidence < conf_keep:
-                    continue
-                if aim_enabled and target_classes and label.strip().lower() not in target_classes:
-                    continue
-                x, y, w, h = denormalize(bbox_normalized=bbox_normalized, frame_shape=lores_shape)
-                if x < 0 or y < 0 or w < 0 or h < 0:
-                    logger.warning("Abnormal denormalized bbox: %s → %s", bbox_normalized, (x, y, w, h))
-                    continue
-                detections_denormalized.append(
-                    Detection(label=label, confidence=confidence, bbox=(x, y, w, h)),
-                )
-                d = norfair.Detection(
-                    points=np.array([[x, y], [x + w, y + h]], dtype=np.float32),
-                    scores=np.array([confidence], dtype=np.float32),
-                    label=label,
-                )
-                if tid is not None:
-                    d.id = tid
-                _s.tracker_drawables.append(d)
-
-            if detections_denormalized:
-                _last_seen_monotonic_ns = now_mono_ns
-                _last_seen_denormalized = detections_denormalized
-            elif ghost_window_ns > 0 and (now_mono_ns - _last_seen_monotonic_ns) <= ghost_window_ns:
-                detections_denormalized = list(_last_seen_denormalized)
-
-            if ros_node is not None:
-                ros_node.publish_detections(detections_denormalized)
-
-            with latest_ai_lock:
-                latest_ai_detections = detections_denormalized
-        else:
-            with cache_lock:
-                lowres_frame_cache.pop(timestamp, None)
-
-            if ros_node is not None:
-                ros_node.publish_detections([
-                    Detection(label=label, confidence=confidence, bbox=list(bbox))
-                    for label, confidence, bbox, *_ in detections
-                ])
+        # Mirror the normalised detection payload to the /piki/detections ROS
+        # topic for external consumers. Frontend already received it via WS.
+        if ros_node is not None:
+            ros_node.publish_detections(det_payload)
 
         # --- Event-triggered recording ---
         if (event_recording_enabled.is_set()
@@ -981,7 +892,6 @@ def _start_event_recording() -> None:
         "conf_threshold_keep": float(prob_threshold_keep.value),
         "min_consecutive_frames": int(min_consecutive_frames.value),
         "bbox_ema_alpha": float(bbox_ema_alpha.value),
-        "ghost_frames_ms": int(ghost_frames_ms.value),
         "pre_buffer_seconds": float(event_pre_buffer_seconds.value),
         "post_trigger_seconds": float(event_post_trigger_seconds.value),
         "cooldown_seconds": float(event_cooldown_seconds.value),
@@ -1101,17 +1011,50 @@ def _finalize_event_recording(*, reason: str = "post_trigger_elapsed") -> None:
         logger.warning("Event recording produced no output: error=%s", error)
 
 
-def _submit_yolo(*, nv12_frame: np.ndarray, frame_lores: np.ndarray, rois: list, timestamp: int) -> None:
-    if streaming_active.is_set():
-        with cache_lock:
-            lowres_frame_cache[timestamp] = frame_lores.shape[:2]
+def _submit_yolo(*, nv12_frame: np.ndarray, rois: list, timestamp: int) -> None:
+    logger.info("YOLO_SUBMIT rois=%d ts=%d", len(rois), timestamp)
     future = inference_pool.submit(run_object_detection, frame_hires=nv12_frame, rois=rois, timestamp=timestamp)
     active_futures.append(future)
     future.add_done_callback(on_done)
 
 
+# Minimum contour area (in lores pixels) before we send it as a mask polygon.
+# Filters specks below the noise floor; matches the magnitude of `min_area`.
+_MASK_MIN_CONTOUR_AREA = 20
+
+
+def _publish_motion_overlays(*, mask: "Optional[np.ndarray]", rois: list, frame_lores: np.ndarray) -> None:
+    """Publish ROIs + mask polygons over WebSocket for the SPA overlay.
+
+    Both topics throttle independently (10 Hz / 5 Hz) — the canvas just renders
+    the latest payload, so dropping intermediate frames is fine.
+    """
+    fh, fw = frame_lores.shape[:2]
+    inv_w = 1.0 / fw if fw else 1.0
+    inv_h = 1.0 / fh if fh else 1.0
+
+    rois_norm = [
+        [rx * inv_w, ry * inv_h, rw * inv_w, rh * inv_h]
+        for rx, ry, rw, rh in rois
+    ]
+    events.publish_throttled("rois", build_rois_payload(rois_norm), 0.1)
+
+    polygons: list[list[float]] = []
+    if mask is not None:
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+        for c in contours:
+            if cv2.contourArea(c) < _MASK_MIN_CONTOUR_AREA:
+                continue
+            pts = c.reshape(-1, 2)
+            flat: list[float] = []
+            for x, y in pts:
+                flat.append(float(x) * inv_w)
+                flat.append(float(y) * inv_h)
+            polygons.append(flat)
+    events.publish_throttled("mask", build_mask_payload(polygons), 0.2)
+
+
 def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
-    global latest_ai_detections
     global _latest_mask, _latest_mask_shape
 
     current_time = time.monotonic_ns()
@@ -1171,82 +1114,24 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
         if time.monotonic() >= _event_clip_until:
             _finalize_event_recording()
 
-    detections_to_show = []
+    rois: list = []
+    if has_movement:
+        rois = motion_detector.create_rois(mask=mask)
+        if rois and not active_futures and not os.environ.get("DISABLE_AI"):
+            try:
+                _submit_yolo(nv12_frame=nv12_frame, rois=rois, timestamp=time.monotonic_ns())
+            except Exception:
+                logger.exception("Error in process_frame AI logic")
 
-    if os.environ.get("DISABLE_AI"):
-        if app_settings.debug_settings.show_mask or app_settings.debug_settings.show_rois:
-            gray = frame_lores if frame_lores.ndim == 2 else cv2.cvtColor(frame_lores, cv2.COLOR_BGR2GRAY)
-            frame_lores = cv2.merge((gray, gray, gray))
+    if not has_movement and tracker_enabled.value:
+        # Age the tracker with an empty update so a stationary target's track
+        # expires consistently while inference is gated off. Guarded by
+        # _tracker_lock since on_done() also calls update().
+        with _tracker_lock:
+            if _tracker is not None:
+                _tracker.update(detections=[])
 
-            if app_settings.debug_settings.show_rois:
-                rois = motion_detector.create_rois(mask=mask)
-                for roi in rois:
-                    rx, ry, rw, rh = roi
-                    cv2.rectangle(frame_lores, (rx, ry), (rx + rw, ry + rh), (0, 200, 255), 2)
-
-            if app_settings.debug_settings.show_mask:
-                frame_lores = motion_detector.highlight_movement_on(
-                    frame=frame_lores,
-                    mask=mask,
-                    overlay_color_rgb=(147, 20, 255),
-                    transparency_factor=mask_transparency.value,
-                    draw_boxes=False,
-                )
-    elif has_movement:
-        try:
-            if not active_futures:
-                rois = motion_detector.create_rois(mask=mask)
-                if rois:
-                    _submit_yolo(nv12_frame=nv12_frame, frame_lores=frame_lores, rois=rois, timestamp=time.monotonic_ns())
-        except Exception:
-            logger.exception("Error in process_frame AI logic")
-
-        if streaming_active.is_set():
-            with latest_ai_lock:
-                detections_to_show = latest_ai_detections
-
-        if app_settings.debug_settings.show_mask or app_settings.debug_settings.show_rois:
-            if frame_lores.ndim == 2:
-                frame_lores = cv2.merge((frame_lores, frame_lores, frame_lores))
-            else:
-                frame_lores = frame_lores.copy()
-
-            if app_settings.debug_settings.show_rois:
-                rois = motion_detector.create_rois(mask=mask)
-                for roi in rois:
-                    rx, ry, rw, rh = roi
-                    cv2.rectangle(frame_lores, (rx, ry), (rx + rw, ry + rh), (0, 200, 255), 2)
-
-            if app_settings.debug_settings.show_mask:
-                frame_lores = motion_detector.highlight_movement_on(
-                    frame=frame_lores,
-                    mask=mask,
-                    overlay_color_rgb=(147, 20, 255),
-                    transparency_factor=mask_transparency.value,
-                    draw_boxes=False,
-                )
-    else:
-        # No movement — age the tracker with an empty update so a stationary
-        # target's track expires consistently while inference is gated off.
-        # Guarded by _tracker_lock since on_done() also calls update().
-        if tracker_enabled.value:
-            with _tracker_lock:
-                if _tracker is not None:
-                    _tracker.update(detections=[])
-        if streaming_active.is_set():
-            ghost_window_ns = max(0, int(ghost_frames_ms.value)) * 1_000_000
-            now_mono_ns = time.monotonic_ns()
-            if ghost_window_ns > 0 and (now_mono_ns - _last_seen_monotonic_ns) <= ghost_window_ns:
-                with latest_ai_lock:
-                    detections_to_show = list(_last_seen_denormalized)
-                    latest_ai_detections = detections_to_show
-            else:
-                with latest_ai_lock:
-                    latest_ai_detections = []
-                detections_to_show = []
-
-    if streaming_active.is_set():
-        latest_frame.update(frame_lores.copy(), detections_to_show, current_time)
+    _publish_motion_overlays(mask=mask if has_movement else None, rois=rois, frame_lores=frame_lores)
 
 
 def stream_nonblocking():

@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from "vue";
-import { useDetections, useTrackerStatus } from "@/composables/useEventStream";
+import { useDetections, useMask, useRois, useTrackerStatus } from "@/composables/useEventStream";
 
 const props = withDefaults(defineProps<{
     /** Draw detection bounding boxes. */
     showBoxes?: boolean;
     /** Draw the orange servo crosshair + cyan Kalman lead. */
     showCrosshair?: boolean;
+    /** Draw motion-mask polygons (purple translucent). */
+    showMask?: boolean;
+    /** Draw motion ROI tiles (dashed orange). */
+    showRois?: boolean;
 }>(), {
     showBoxes: true,
     showCrosshair: true,
+    showMask: false,
+    showRois: false,
 });
 
 // Servo field-of-view (matches `SERVO_HFOV`/`SERVO_VFOV` env defaults in engine.py).
@@ -22,6 +28,8 @@ const canvas = ref<HTMLCanvasElement | null>(null);
 
 const detections = useDetections();
 const trackerStatus = useTrackerStatus();
+const rois = useRois();
+const mask = useMask();
 
 // Cycle through a small palette by track id so each track has a stable colour.
 const PALETTE = [
@@ -63,6 +71,38 @@ function draw() {
     const w = c.width;
     const h = c.height;
     ctx.clearRect(0, 0, w, h);
+
+    // Mask polygons (bottom layer — purple fill matching the old server overlay).
+    if (props.showMask && mask.value) {
+        const polys = mask.value.polygons ?? [];
+        if (polys.length) {
+            ctx.fillStyle = "rgba(147, 20, 255, 0.35)";
+            for (const poly of polys) {
+                if (poly.length < 4) continue;
+                ctx.beginPath();
+                ctx.moveTo(poly[0] * w, poly[1] * h);
+                for (let i = 2; i < poly.length; i += 2) {
+                    ctx.lineTo(poly[i] * w, poly[i + 1] * h);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+    }
+
+    // ROI tiles (dashed orange, drawn over the mask but under the boxes).
+    if (props.showRois && rois.value) {
+        const items = rois.value.rois ?? [];
+        if (items.length) {
+            ctx.strokeStyle = "#FFA500";
+            ctx.lineWidth = Math.max(1, Math.round(w / 800));
+            ctx.setLineDash([6, 4]);
+            for (const [rx, ry, rw, rh] of items) {
+                ctx.strokeRect(rx * w, ry * h, rw * w, rh * h);
+            }
+            ctx.setLineDash([]);
+        }
+    }
 
     // Boxes
     if (props.showBoxes && detections.value) {
@@ -154,7 +194,15 @@ function schedule() {
 }
 
 // Redraw whenever state changes.
-watch([detections, trackerStatus, () => props.showBoxes, () => props.showCrosshair], schedule, { deep: true });
+watch(
+    [
+        detections, trackerStatus, rois, mask,
+        () => props.showBoxes, () => props.showCrosshair,
+        () => props.showRois, () => props.showMask,
+    ],
+    schedule,
+    { deep: true },
+);
 
 onMounted(() => {
     fitCanvas();

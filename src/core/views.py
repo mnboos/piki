@@ -13,7 +13,6 @@ def index(request):
 
 
 def config(request):
-    request.session.setdefault("mask_transparency", shared.mask_transparency.value * 100)
     request.session.setdefault("mog2_history", settings.foreground_mask_options.mog2_history.value)
     request.session.setdefault(
         "mog2_var_threshold",
@@ -25,10 +24,6 @@ def config(request):
     )
 
     if request.method == "POST":
-        mask_transparency = int(request.POST.get("mask_transparency"))
-        shared.mask_transparency.value = mask_transparency / 100
-        request.session["mask_transparency"] = mask_transparency
-
         mog2_history = int(request.POST.get("mog2_history"))
         settings.foreground_mask_options.mog2_history.value = mog2_history
         request.session["mog2_history"] = mog2_history

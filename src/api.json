@@ -1324,16 +1324,6 @@
                         "title": "Show Boxes",
                         "type": "boolean"
                     },
-                    "show_mask": {
-                        "default": false,
-                        "title": "Show Mask",
-                        "type": "boolean"
-                    },
-                    "show_rois": {
-                        "default": false,
-                        "title": "Show Rois",
-                        "type": "boolean"
-                    },
                     "conf_threshold": {
                         "anyOf": [
                             {
@@ -1377,17 +1367,6 @@
                             }
                         ],
                         "title": "Bbox Ema Alpha"
-                    },
-                    "ghost_frames_ms": {
-                        "anyOf": [
-                            {
-                                "type": "integer"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Ghost Frames Ms"
                     },
                     "tracker_enabled": {
                         "anyOf": [
@@ -1520,17 +1499,6 @@
                             }
                         ],
                         "title": "Denoise Kernelsize"
-                    },
-                    "mask_transparency": {
-                        "anyOf": [
-                            {
-                                "type": "number"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Mask Transparency"
                     },
                     "servo_pid_kp": {
                         "anyOf": [
@@ -1615,28 +1583,6 @@
                         ],
                         "title": "Show Boxes"
                     },
-                    "show_mask": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Show Mask"
-                    },
-                    "show_rois": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Show Rois"
-                    },
                     "conf_threshold": {
                         "anyOf": [
                             {
@@ -1680,17 +1626,6 @@
                             }
                         ],
                         "title": "Bbox Ema Alpha"
-                    },
-                    "ghost_frames_ms": {
-                        "anyOf": [
-                            {
-                                "type": "integer"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Ghost Frames Ms"
                     },
                     "tracker_enabled": {
                         "anyOf": [
@@ -1823,17 +1758,6 @@
                             }
                         ],
                         "title": "Denoise Kernelsize"
-                    },
-                    "mask_transparency": {
-                        "anyOf": [
-                            {
-                                "type": "number"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Mask Transparency"
                     },
                     "servo_pid_kp": {
                         "anyOf": [

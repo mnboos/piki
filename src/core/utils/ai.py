@@ -182,8 +182,10 @@ try:
 
     # Detect NV12 vs BGR input from model metadata.
     _input_type = str(_runtime.input_type[_model_name]) if hasattr(_runtime, "input_type") else ""
-    MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type.upper() or "YUV" in _input_type.upper() else "BGR"
-    print(f"Model input type: {MODEL_INPUT_TYPE} (raw: {_input_type})")
+    # The HBM runtime metadata may omit or misreport the format; the model
+    # binary filename is authoritative (yolo26n_detect_bayese_640x640_nv12.bin).
+    MODEL_INPUT_TYPE = "NV12" if "NV12" in _input_type.upper() or "YUV" in _input_type.upper() or "nv12" in str(model_file).lower() else "BGR"
+    print(f"Model input type: {MODEL_INPUT_TYPE} (raw: {_input_type}, file: {model_file.name})")
     print("done")
 
     worker_ready.set()
@@ -200,14 +202,23 @@ try:
 
         # Use the lower "keep" threshold so on_done()'s hysteresis still
         # receives low-confidence candidates.
-        conf = min(prob_threshold.value, prob_threshold_keep.value)
+        p_val = prob_threshold.value
+        pk_val = prob_threshold_keep.value
+        conf = min(p_val, pk_val)
         conf_raw = -np.log(1.0 / max(conf, 1e-6) - 1.0)
 
         all_boxes, all_scores, all_cls = [], [], []
+        max_logits_per_stride: list[float] = []
+        n_above_per_stride: list[int] = []
         for si, stride in enumerate([8, 16, 32]):
             cls_out = outputs[_output_names[si * 2]].squeeze(0)      # (H, W, 80)
             box_out = outputs[_output_names[si * 2 + 1]].squeeze(0)  # (H, W, 4)
             gh, gw = cls_out.shape[:2]
+
+            cls_flat = cls_out.reshape(-1, cls_out.shape[-1])
+            max_raw = cls_flat.max(axis=-1)
+            max_logits_per_stride.append(float(max_raw.max()) if max_raw.size else -999)
+            n_above_per_stride.append(int((max_raw >= conf_raw).sum()))
 
             scores, ids, valid = _filter_classification(cls_out, conf_raw)
             if not valid.size:
@@ -218,6 +229,15 @@ try:
             all_cls.append(ids)
 
         if not all_boxes:
+            img_stats = f"min={image.min()} max={image.max()} mean={image.mean():.1f}" if image.size else "empty"
+            logger.warning(
+                "AI_NO_DETS p_val=%.4f pk_val=%.4f conf=%.4f conf_raw=%.2f "
+                "max_logits=%s n_above=%s img=(%s)",
+                p_val, pk_val, conf, conf_raw,
+                ["%.2f" % v for v in max_logits_per_stride],
+                n_above_per_stride,
+                img_stats,
+            )
             return round((time.perf_counter() - t0) * 1000), []
 
         boxes = np.concatenate(all_boxes)

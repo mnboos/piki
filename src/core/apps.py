@@ -68,8 +68,6 @@ class CoreConfig(AppConfig):
             from .utils.shared import (  # noqa: PLC0415
                 app_settings,
                 bbox_ema_alpha,
-                ghost_frames_ms,
-                mask_transparency,
                 min_consecutive_frames,
                 prob_threshold,
                 prob_threshold_keep,
@@ -91,13 +89,10 @@ class CoreConfig(AppConfig):
 
             config = DetectionConfig.load()
             app_settings.debug_settings.show_boxes = config.show_boxes
-            app_settings.debug_settings.show_mask = config.show_mask
-            app_settings.debug_settings.show_rois = config.show_rois
             prob_threshold.value = config.conf_threshold
             prob_threshold_keep.value = min(float(config.conf_threshold_keep), float(config.conf_threshold))
             min_consecutive_frames.value = max(1, int(config.min_consecutive_frames))
             bbox_ema_alpha.value = max(0.0, min(1.0, float(config.bbox_ema_alpha)))
-            ghost_frames_ms.value = max(0, int(config.ghost_frames_ms))
             tracker_enabled.value = 1 if config.tracker_enabled else 0
             tracker_iou_threshold.value = max(0.0, min(1.0, float(config.tracker_iou_threshold)))
             tracker_max_misses.value = max(0, int(config.tracker_max_misses))
@@ -110,7 +105,6 @@ class CoreConfig(AppConfig):
             settings.foreground_mask_options.mog2_history.value = config.mog2_history
             settings.foreground_mask_options.mog2_var_threshold.value = config.mog2_var_threshold
             settings.foreground_mask_options.denoise_kernelsize.value = config.denoise_kernelsize
-            mask_transparency.value = config.mask_transparency
             servo_pid_kp.value = config.servo_pid_kp
             servo_pid_ki.value = config.servo_pid_ki
             servo_pid_kd.value = config.servo_pid_kd
@@ -119,10 +113,9 @@ class CoreConfig(AppConfig):
             servo_kalman_meas_noise.value = max(0.01, float(config.servo_kalman_meas_noise))
             print(
                 f"[DJANGO STARTUP] Loaded detection config: show_boxes={config.show_boxes}, "
-                f"show_mask={config.show_mask}, show_rois={config.show_rois}, "
                 f"conf_enter={config.conf_threshold}, conf_keep={prob_threshold_keep.value}, "
                 f"min_streak={min_consecutive_frames.value}, ema_alpha={bbox_ema_alpha.value}, "
-                f"ghost_ms={ghost_frames_ms.value}, mog2_history={config.mog2_history}, "
+                f"mog2_history={config.mog2_history}, "
                 f"tracker={'on' if tracker_enabled.value else 'off'} "
                 f"(iou={tracker_iou_threshold.value}, max_misses={tracker_max_misses.value}, "
                 f"confirm_hits={tracker_confirm_hits.value}, "

@@ -28,15 +28,12 @@ const api = new DefaultApi();
 
 const options = ref<PikiOptions>({
     showBoxes: true,
-    showMask: false,
-    showRois: false,
     confThreshold: 0.4,
     pixelcountThreshold: 500,
     minArea: 500,
     mog2History: 500,
     mog2VarThreshold: 16,
     denoiseKernelsize: 7,
-    maskTransparency: 0.5,
     servoPidKp: 1.0,
     servoPidKi: 0.0,
     servoPidKd: 0.0,
@@ -44,6 +41,11 @@ const options = ref<PikiOptions>({
     servoKalmanProcessNoise: 10.0,
     servoKalmanMeasNoise: 5.0,
 });
+
+// Client-only overlay toggles — these are not persisted server-side
+// because the mask + ROI overlays are pure visualizations.
+const showMask = ref(false);
+const showRois = ref(false);
 
 const aimConfig = ref<AimConfigSchema>({
     targetClasses: [],
@@ -66,7 +68,6 @@ const splashConfig = ref<SplashConfigSchema>({
 const debugPanel = ref<InstanceType<typeof ServoDebugPanel> | null>(null);
 const toast = useToast();
 const editingZones = ref(false);
-const mainTopic = import.meta.env.VITE_ROS_IMAGE_TOPIC ?? "/image_left_raw";
 
 // WebRTC stream FPS — read/write the backend setting; in-memory only there.
 const FPS_OPTIONS = [5, 10, 15, 20, 30];
@@ -140,15 +141,12 @@ onMounted(async () => {
     const current = await api.coreApiGetOptions();
     options.value = {
         showBoxes: current.showBoxes ?? true,
-        showMask: current.showMask ?? false,
-        showRois: current.showRois ?? false,
         confThreshold: current.confThreshold ?? 0.4,
         pixelcountThreshold: current.pixelcountThreshold ?? 500,
         minArea: current.minArea ?? 500,
         mog2History: current.mog2History ?? 500,
         mog2VarThreshold: current.mog2VarThreshold ?? 16,
         denoiseKernelsize: current.denoiseKernelsize ?? 7,
-        maskTransparency: current.maskTransparency ?? 0.5,
         servoPidKp: current.servoPidKp,
         servoPidKi: current.servoPidKi,
         servoPidKd: current.servoPidKd,
@@ -194,7 +192,6 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                 <Tab value="camera">Camera</Tab>
                 <Tab value="detection">Detection</Tab>
                 <Tab value="servo">Servo</Tab>
-                <Tab value="debug">Debug</Tab>
                 <Tab value="metrics">Metrics</Tab>
                 <Tab value="recordings">Recordings</Tab>
             </TabList>
@@ -203,12 +200,20 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                     <div class="feed-wrapper">
                         <CameraFeed alt="camera feed" @fps-update="onStreamingFpsUpdate">
                             <template #overlay>
-                                <DetectionOverlay :show-boxes="options.showBoxes" />
+                                <DetectionOverlay
+                                    :show-boxes="options.showBoxes"
+                                    :show-mask="showMask"
+                                    :show-rois="showRois"
+                                />
                             </template>
                         </CameraFeed>
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: showMask }]"
+                                @click="showMask = !showMask">Mask</button>
+                            <button :class="['ot-btn', { active: showRois }]"
+                                @click="showRois = !showRois">ROIs</button>
                         </div>
                     </div>
                     <div class="stream-controls">
@@ -227,30 +232,25 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                     </div>
                 </TabPanel>
 
-                <TabPanel value="debug">
-                    <div class="debug-feeds">
-                        <div class="debug-feed-item">
-                            <p class="feed-label">{{ mainTopic }}</p>
-                            <CameraFeed alt="main feed">
-                                <template #overlay>
-                                    <DetectionOverlay :show-boxes="options.showBoxes" />
-                                </template>
-                            </CameraFeed>
-                        </div>
-                    </div>
-                </TabPanel>
-
                 <TabPanel value="detection">
                     <div class="feed-wrapper">
                         <CameraFeed alt="camera feed">
                             <template #overlay>
-                                <DetectionOverlay :show-boxes="options.showBoxes" />
+                                <DetectionOverlay
+                                    :show-boxes="options.showBoxes"
+                                    :show-mask="showMask"
+                                    :show-rois="showRois"
+                                />
                                 <ExclusionZoneOverlay :enabled="editingZones" />
                             </template>
                         </CameraFeed>
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: showMask }]"
+                                @click="showMask = !showMask">Mask</button>
+                            <button :class="['ot-btn', { active: showRois }]"
+                                @click="showRois = !showRois">ROIs</button>
                             <button :class="['ot-btn', { active: editingZones }]"
                                 @click="editingZones = !editingZones">Zones</button>
                         </div>
@@ -350,21 +350,5 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
     background: rgba(0, 200, 255, 0.25);
     border-color: rgba(0, 200, 255, 0.6);
     color: #fff;
-}
-.debug-feeds {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-.debug-feed-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-.feed-label {
-    font-size: 0.75rem;
-    font-family: monospace;
-    color: var(--p-text-muted-color, #888);
-    margin: 0;
 }
 </style>

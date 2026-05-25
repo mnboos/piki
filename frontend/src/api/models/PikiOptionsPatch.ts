@@ -27,18 +27,6 @@ export interface PikiOptionsPatch {
     showBoxes?: boolean | null;
     /**
      * 
-     * @type {boolean}
-     * @memberof PikiOptionsPatch
-     */
-    showMask?: boolean | null;
-    /**
-     * 
-     * @type {boolean}
-     * @memberof PikiOptionsPatch
-     */
-    showRois?: boolean | null;
-    /**
-     * 
      * @type {number}
      * @memberof PikiOptionsPatch
      */
@@ -61,12 +49,6 @@ export interface PikiOptionsPatch {
      * @memberof PikiOptionsPatch
      */
     bboxEmaAlpha?: number | null;
-    /**
-     * 
-     * @type {number}
-     * @memberof PikiOptionsPatch
-     */
-    ghostFramesMs?: number | null;
     /**
      * 
      * @type {boolean}
@@ -144,12 +126,6 @@ export interface PikiOptionsPatch {
      * @type {number}
      * @memberof PikiOptionsPatch
      */
-    maskTransparency?: number | null;
-    /**
-     * 
-     * @type {number}
-     * @memberof PikiOptionsPatch
-     */
     servoPidKp?: number | null;
     /**
      * 
@@ -201,13 +177,10 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
     return {
         
         'showBoxes': json['show_boxes'] == null ? undefined : json['show_boxes'],
-        'showMask': json['show_mask'] == null ? undefined : json['show_mask'],
-        'showRois': json['show_rois'] == null ? undefined : json['show_rois'],
         'confThreshold': json['conf_threshold'] == null ? undefined : json['conf_threshold'],
         'confThresholdKeep': json['conf_threshold_keep'] == null ? undefined : json['conf_threshold_keep'],
         'minConsecutiveFrames': json['min_consecutive_frames'] == null ? undefined : json['min_consecutive_frames'],
         'bboxEmaAlpha': json['bbox_ema_alpha'] == null ? undefined : json['bbox_ema_alpha'],
-        'ghostFramesMs': json['ghost_frames_ms'] == null ? undefined : json['ghost_frames_ms'],
         'trackerEnabled': json['tracker_enabled'] == null ? undefined : json['tracker_enabled'],
         'trackerIouThreshold': json['tracker_iou_threshold'] == null ? undefined : json['tracker_iou_threshold'],
         'trackerMaxMisses': json['tracker_max_misses'] == null ? undefined : json['tracker_max_misses'],
@@ -220,7 +193,6 @@ export function PikiOptionsPatchFromJSONTyped(json: any, ignoreDiscriminator: bo
         'mog2History': json['mog2_history'] == null ? undefined : json['mog2_history'],
         'mog2VarThreshold': json['mog2_var_threshold'] == null ? undefined : json['mog2_var_threshold'],
         'denoiseKernelsize': json['denoise_kernelsize'] == null ? undefined : json['denoise_kernelsize'],
-        'maskTransparency': json['mask_transparency'] == null ? undefined : json['mask_transparency'],
         'servoPidKp': json['servo_pid_kp'] == null ? undefined : json['servo_pid_kp'],
         'servoPidKi': json['servo_pid_ki'] == null ? undefined : json['servo_pid_ki'],
         'servoPidKd': json['servo_pid_kd'] == null ? undefined : json['servo_pid_kd'],
@@ -242,13 +214,10 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
     return {
         
         'show_boxes': value['showBoxes'],
-        'show_mask': value['showMask'],
-        'show_rois': value['showRois'],
         'conf_threshold': value['confThreshold'],
         'conf_threshold_keep': value['confThresholdKeep'],
         'min_consecutive_frames': value['minConsecutiveFrames'],
         'bbox_ema_alpha': value['bboxEmaAlpha'],
-        'ghost_frames_ms': value['ghostFramesMs'],
         'tracker_enabled': value['trackerEnabled'],
         'tracker_iou_threshold': value['trackerIouThreshold'],
         'tracker_max_misses': value['trackerMaxMisses'],
@@ -261,7 +230,6 @@ export function PikiOptionsPatchToJSONTyped(value?: PikiOptionsPatch | null, ign
         'mog2_history': value['mog2History'],
         'mog2_var_threshold': value['mog2VarThreshold'],
         'denoise_kernelsize': value['denoiseKernelsize'],
-        'mask_transparency': value['maskTransparency'],
         'servo_pid_kp': value['servoPidKp'],
         'servo_pid_ki': value['servoPidKi'],
         'servo_pid_kd': value['servoPidKd'],

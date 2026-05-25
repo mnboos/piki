@@ -22,6 +22,16 @@ export interface DetectionsPayload {
     detections: DetectionEntry[];
 }
 
+export interface RoisPayload {
+    /** Each entry: [x, y, w, h] normalized to the lores frame [0, 1]. */
+    rois: [number, number, number, number][];
+}
+
+export interface MaskPayload {
+    /** Each polygon: flat [x0, y0, x1, y1, ...] in normalized [0, 1] coords. */
+    polygons: number[][];
+}
+
 interface State {
     tracker_status: SystemStatus | null;
     splash_status: SplashStatus | null;
@@ -29,6 +39,8 @@ interface State {
     replay_status: ReplayStatus | null;
     event_clips: EventClipSchema[];
     detections: DetectionsPayload;
+    rois: RoisPayload;
+    mask: MaskPayload;
 }
 
 const state = reactive<State>({
@@ -38,6 +50,8 @@ const state = reactive<State>({
     replay_status: null,
     event_clips: [],
     detections: { frameTsNs: 0, detections: [] },
+    rois: { rois: [] },
+    mask: { polygons: [] },
 });
 
 const seenClipKeys = new Set<string>();
@@ -202,11 +216,19 @@ watch(data, raw => {
         case "detections":
             state.detections = payload as unknown as DetectionsPayload;
             break;
+        case "rois":
+            state.rois = payload as unknown as RoisPayload;
+            break;
+        case "mask":
+            state.mask = payload as unknown as MaskPayload;
+            break;
     }
 });
 
 export const useTrackerStatus = () => computed(() => state.tracker_status);
 export const useDetections = () => computed(() => state.detections);
+export const useRois = () => computed(() => state.rois);
+export const useMask = () => computed(() => state.mask);
 export const useSplashStatus = () => computed(() => state.splash_status);
 export const useSplashDisplayRemaining = () => computed(() => splashDisplayRemaining.value);
 export const useRecordingStatus = () => computed(() => state.recording_status);

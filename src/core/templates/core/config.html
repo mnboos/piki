@@ -1,35 +1,11 @@
 {% extends "core/base.html" %}
 
 {% block main %}
-    <div class="card p-2">
-        <h2>Foreground</h2>
-        <img id="mask-feed" src="{% url 'mask_feed' %}" alt="mask feed">
-    </div>
     <div class=" card p-2">
         <h2>Foreground Detection</h2>
         <form action="{{ request.path }}" method="post">
             {% csrf_token %}
             <div class="card ">
-                <div class="card-body">
-                    <h5 class="card-title">
-                        Debug Settings
-                    </h5>
-
-                    <div class="form-check form-switch">
-                        <label class="form-check-label">
-                            Show mask full size
-                            <input type="checkbox" name="fullsize_mask" class="form-check-input"
-                                   value="{{ request.session.fullsize_mask }}">
-                        </label>
-                    </div>
-                    <br>
-
-                    <label class="">
-                        Mask Transparency
-                        <input type="range" name="mask_transparency" class="form-range " min="0" max="90"
-                               value="{{ request.session.mask_transparency }}">
-                    </label>
-                </div>
                 <div class="card-body">
                     <h5 class="card-title">
                         Background Model

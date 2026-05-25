@@ -49,9 +49,7 @@ from .utils.shared import (
     event_trigger_classes,
     event_trigger_classes_lock,
     fps_counter,
-    ghost_frames_ms,
     is_object_detection_disabled,
-    mask_transparency,
     min_consecutive_frames,
     motion_detector,
     prob_threshold,
@@ -246,13 +244,10 @@ def get_metrics(request: HttpRequest):
 
 class PikiOptions(Schema):
     show_boxes: bool = True
-    show_mask: bool = False
-    show_rois: bool = False
     conf_threshold: Optional[float] = None
     conf_threshold_keep: Optional[float] = None
     min_consecutive_frames: Optional[int] = None
     bbox_ema_alpha: Optional[float] = None
-    ghost_frames_ms: Optional[int] = None
     tracker_enabled: Optional[bool] = None
     tracker_iou_threshold: Optional[float] = None
     tracker_max_misses: Optional[int] = None
@@ -265,7 +260,6 @@ class PikiOptions(Schema):
     mog2_history: Optional[int] = None
     mog2_var_threshold: Optional[int] = None
     denoise_kernelsize: Optional[int] = None
-    mask_transparency: Optional[float] = None
     servo_pid_kp: Optional[float] = None
     servo_pid_ki: Optional[float] = None
     servo_pid_kd: Optional[float] = None
@@ -279,10 +273,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
 
     if (v := options.get("show_boxes")) is not None:
         app_settings.debug_settings.show_boxes = v
-    if (v := options.get("show_mask")) is not None:
-        app_settings.debug_settings.show_mask = v
-    if (v := options.get("show_rois")) is not None:
-        app_settings.debug_settings.show_rois = v
 
     if (v := options.get("conf_threshold")) is not None:
         prob_threshold.value = float(v)
@@ -299,9 +289,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
 
     if (v := options.get("bbox_ema_alpha")) is not None:
         bbox_ema_alpha.value = max(0.0, min(1.0, float(v)))
-
-    if (v := options.get("ghost_frames_ms")) is not None:
-        ghost_frames_ms.value = max(0, int(v))
 
     if (v := options.get("tracker_enabled")) is not None:
         tracker_enabled.value = 1 if v else 0
@@ -339,9 +326,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     if (v := options.get("denoise_kernelsize")) is not None:
         settings.foreground_mask_options.denoise_kernelsize.value = int(v)
 
-    if (v := options.get("mask_transparency")) is not None:
-        mask_transparency.value = float(v)
-
     if (v := options.get("servo_pid_kp")) is not None:
         servo_pid_kp.value = max(0.0, float(v))
 
@@ -363,13 +347,10 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     # Persist all current values to DB so they survive restarts.
     config = DetectionConfig.load()
     config.show_boxes = app_settings.debug_settings.show_boxes
-    config.show_mask = app_settings.debug_settings.show_mask
-    config.show_rois = app_settings.debug_settings.show_rois
     config.conf_threshold = prob_threshold.value
     config.conf_threshold_keep = prob_threshold_keep.value
     config.min_consecutive_frames = min_consecutive_frames.value
     config.bbox_ema_alpha = bbox_ema_alpha.value
-    config.ghost_frames_ms = ghost_frames_ms.value
     config.tracker_enabled = bool(tracker_enabled.value)
     config.tracker_iou_threshold = tracker_iou_threshold.value
     config.tracker_max_misses = tracker_max_misses.value
@@ -382,7 +363,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.mog2_history = settings.foreground_mask_options.mog2_history.value
     config.mog2_var_threshold = settings.foreground_mask_options.mog2_var_threshold.value
     config.denoise_kernelsize = settings.foreground_mask_options.denoise_kernelsize.value
-    config.mask_transparency = mask_transparency.value
     config.servo_pid_kp = servo_pid_kp.value
     config.servo_pid_ki = servo_pid_ki.value
     config.servo_pid_kd = servo_pid_kd.value
@@ -393,13 +373,10 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
 
     return PikiOptions(
         show_boxes=app_settings.debug_settings.show_boxes,
-        show_mask=app_settings.debug_settings.show_mask,
-        show_rois=app_settings.debug_settings.show_rois,
         conf_threshold=prob_threshold.value,
         conf_threshold_keep=prob_threshold_keep.value,
         min_consecutive_frames=min_consecutive_frames.value,
         bbox_ema_alpha=bbox_ema_alpha.value,
-        ghost_frames_ms=ghost_frames_ms.value,
         tracker_enabled=bool(tracker_enabled.value),
         tracker_iou_threshold=tracker_iou_threshold.value,
         tracker_max_misses=tracker_max_misses.value,
@@ -412,7 +389,6 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         mog2_history=settings.foreground_mask_options.mog2_history.value,
         mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
         denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
-        mask_transparency=mask_transparency.value,
         servo_pid_kp=servo_pid_kp.value,
         servo_pid_ki=servo_pid_ki.value,
         servo_pid_kd=servo_pid_kd.value,
@@ -434,13 +410,10 @@ def get_options(request: HttpRequest):
     """Return current tuning values so the frontend can initialise its controls."""
     return PikiOptions(
         show_boxes=app_settings.debug_settings.show_boxes,
-        show_mask=app_settings.debug_settings.show_mask,
-        show_rois=app_settings.debug_settings.show_rois,
         conf_threshold=prob_threshold.value,
         conf_threshold_keep=prob_threshold_keep.value,
         min_consecutive_frames=min_consecutive_frames.value,
         bbox_ema_alpha=bbox_ema_alpha.value,
-        ghost_frames_ms=ghost_frames_ms.value,
         tracker_enabled=bool(tracker_enabled.value),
         tracker_iou_threshold=tracker_iou_threshold.value,
         tracker_max_misses=tracker_max_misses.value,
@@ -453,7 +426,6 @@ def get_options(request: HttpRequest):
         mog2_history=settings.foreground_mask_options.mog2_history.value,
         mog2_var_threshold=settings.foreground_mask_options.mog2_var_threshold.value,
         denoise_kernelsize=settings.foreground_mask_options.denoise_kernelsize.value,
-        mask_transparency=mask_transparency.value,
         servo_pid_kp=servo_pid_kp.value,
         servo_pid_ki=servo_pid_ki.value,
         servo_pid_kd=servo_pid_kd.value,

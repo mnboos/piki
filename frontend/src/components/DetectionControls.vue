@@ -57,10 +57,6 @@ const bboxEmaAlpha = computed({
     get: () => model.value.bboxEmaAlpha ?? 0.4,
     set: (v: number) => { model.value.bboxEmaAlpha = v; },
 });
-const ghostFramesMs = computed({
-    get: () => model.value.ghostFramesMs ?? 300,
-    set: (v: number) => { model.value.ghostFramesMs = v; },
-});
 const trackerEnabled = computed({
     get: () => model.value.trackerEnabled ?? true,
     set: (v: boolean) => { model.value.trackerEnabled = v; },
@@ -78,14 +74,6 @@ const trackerConfirmHits = computed({
     set: (v: number) => { model.value.trackerConfirmHits = v; },
 });
 
-// Servo smoothing — removed (PID controls moved to ServoAimPanel)
-
-// Display
-const maskTransparency = computed({
-    get: () => model.value.maskTransparency ?? 0.5,
-    set: (v: number) => { model.value.maskTransparency = v; },
-});
-
 const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), value: v }));
 </script>
 
@@ -95,7 +83,6 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
             <TabList>
                 <Tab value="motion">Motion</Tab>
                 <Tab value="object">Object</Tab>
-                <Tab value="display">Display</Tab>
             </TabList>
             <TabPanels>
                 <TabPanel value="motion">
@@ -164,12 +151,6 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">Ghost Frames Window: {{ ghostFramesMs }} ms</label>
-                            <Slider v-model="ghostFramesMs" :min="0" :max="1000" :step="50" class="slider" />
-                            <p class="help-text">After the model briefly returns no detections, keep painting the last result for up to this long (visual continuity only — does not affect aim or recording).</p>
-                        </div>
-
-                        <div class="control-item">
                             <label class="control-label">Tracker</label>
                             <ToggleButton v-model="trackerEnabled" on-label="On" off-label="Off" class="tb-btn" />
                             <p class="help-text">SORT-style IoU + Kalman tracker. Keeps identity across frames and fills brief detection gaps with predicted bounding boxes. Disable to revert to per-frame detection.</p>
@@ -191,26 +172,6 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                             <label class="control-label">Tracker Confirm Hits: {{ trackerConfirmHits }}</label>
                             <Slider v-model="trackerConfirmHits" :min="1" :max="10" :step="1" class="slider" />
                             <p class="help-text">Detections needed before a tentative track becomes &ldquo;confirmed&rdquo; (eligible for aim and event triggering). Higher = more conservative.</p>
-                        </div>
-                    </div>
-                </TabPanel>
-
-                <TabPanel value="display">
-                    <div class="controls-grid">
-                        <div class="control-item">
-                            <label class="control-label">Overlays</label>
-                            <div class="toggle-group">
-                                <ToggleButton v-model="model.showBoxes" on-label="Boxes" off-label="Boxes" class="tb-btn" />
-                                <ToggleButton v-model="model.showMask" on-label="Mask" off-label="Mask" class="tb-btn" />
-                                <ToggleButton v-model="model.showRois" on-label="Tiles / ROIs" off-label="Tiles / ROIs" class="tb-btn" />
-                            </div>
-                            <p class="help-text">Toggle overlays independently. <strong>Boxes</strong>: YOLO detection boxes. <strong>Mask</strong>: motion foreground mask. <strong>Tiles / ROIs</strong>: motion-detection tile rectangles sent to the detector.</p>
-                        </div>
-
-                        <div class="control-item">
-                            <label class="control-label">Mask Transparency: {{ maskTransparency.toFixed(2) }}</label>
-                            <Slider v-model="maskTransparency" :min="0" :max="1" :step="0.05" class="slider" />
-                            <p class="help-text">Opacity of the motion mask overlay used in <em>mask</em> and <em>rois</em> modes. 0 = fully transparent (overlay invisible), 1 = background fully replaced by the mask colour.</p>
                         </div>
                     </div>
                 </TabPanel>
