@@ -43,6 +43,23 @@ function colorForTrack(tid: number | null, label: string): string {
     return PALETTE[h % PALETTE.length];
 }
 
+// --- Track trails -----------------------------------------------------------
+// Each track stores its last N center-point positions (normalized [0,1]).
+// Tracks not seen for STALE_TRACK_GRACE frames are removed.
+interface TrailPoint { x: number; y: number; }
+const MAX_TRAIL_LENGTH = 30;
+const STALE_TRACK_GRACE = 60;
+const TRAIL_ALPHA = 0.35;
+const trailMap = new Map<number, TrailPoint[]>();
+const trackMissCounter = new Map<number, number>();
+
+function hexToRgba(hex: string, alpha: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // ResizeObserver keeps the canvas backing store in sync with the displayed
 // size (CSS pixels × devicePixelRatio).
 let ro: ResizeObserver | null = null;
@@ -104,6 +121,34 @@ function draw() {
         }
     }
 
+    // Track trails (drawn behind boxes so trails don't obscure the current bbox).
+    if (props.showBoxes && detections.value) {
+        const dets = detections.value.detections ?? [];
+        const trailWidth = Math.max(1, Math.round(w / 1000));
+
+        for (const [tid, points] of trailMap) {
+            if (points.length < 2) continue;
+            // Use the same palette colour as the box — find a detection for this track
+            // to get its colour, or fall back to the palette by id alone.
+            const detForTid = dets.find(d => d.tid === tid);
+            const color = detForTid
+                ? colorForTrack(tid, detForTid.label)
+                : PALETTE[tid % PALETTE.length];
+
+            // Draw trail as segments with fading opacity (older → more transparent).
+            const n = points.length;
+            for (let i = 1; i < n; i++) {
+                const alpha = TRAIL_ALPHA * ((i + 1) / n); // newer segments = more opaque
+                ctx.strokeStyle = hexToRgba(color, alpha);
+                ctx.lineWidth = trailWidth;
+                ctx.beginPath();
+                ctx.moveTo(points[i - 1].x * w, points[i - 1].y * h);
+                ctx.lineTo(points[i].x * w, points[i].y * h);
+                ctx.stroke();
+            }
+        }
+    }
+
     // Boxes
     if (props.showBoxes && detections.value) {
         const dets = detections.value.detections ?? [];
@@ -134,6 +179,36 @@ function draw() {
             ctx.fillRect(x, labelY, labelW, labelH);
             ctx.fillStyle = "#fff";
             ctx.fillText(text, x + padX, labelY + fh + padY - 2);
+        }
+
+        // Update trail history from this frame's detections.
+        const seenTids = new Set<number>();
+        for (const d of dets) {
+            if (d.tid == null) continue;
+            const tid = d.tid;
+            seenTids.add(tid);
+            const [xmin, ymin, xmax, ymax] = d.bbox;
+            const cx = (xmin + xmax) / 2;
+            const cy = (ymin + ymax) / 2;
+            let points = trailMap.get(tid);
+            if (!points) {
+                points = [];
+                trailMap.set(tid, points);
+            }
+            points.push({ x: cx, y: cy });
+            if (points.length > MAX_TRAIL_LENGTH) points.shift();
+            trackMissCounter.set(tid, 0);
+        }
+        // Age unseen tracks.
+        for (const [tid, misses] of trackMissCounter) {
+            if (seenTids.has(tid)) continue;
+            const next = misses + 1;
+            if (next >= STALE_TRACK_GRACE) {
+                trailMap.delete(tid);
+                trackMissCounter.delete(tid);
+            } else {
+                trackMissCounter.set(tid, next);
+            }
         }
     }
 

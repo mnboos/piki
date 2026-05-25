@@ -93,7 +93,7 @@ mipi_io_method:=ros \
 mipi_camera_calibration_file_path:=/opt/tros/humble/lib/mipi_cam/config/SC230ai_dual_calibration.yaml &
 CAM_PID=$!
 
-sleep 2
+sleep 0.5
 
 # ── Start Django ──────────────────────────────────────────────────────────────
 # PIKI_PROD=1 → daphne on 127.0.0.1:8000 (production, served via Caddy).

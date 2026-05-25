@@ -23,8 +23,6 @@ from sensor_msgs.msg import Image as RosImage
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
-from trackforge import OCSORT
-
 from .. import events
 from . import shared as _s
 from .ai import MODEL_INPUT_TYPE, detect_objects
@@ -142,7 +140,8 @@ _latest_inference_log_entries: list[dict] = []
 _latest_inference_lock = threading.Lock()
 
 # Module-level OC-Sort tracker, lazily constructed on first inference.
-_tracker: "Optional[OCSORT]" = None
+# OCSORT is imported lazily (Rust .so) to avoid delaying stream startup.
+_tracker: "Optional[Any]" = None
 _tracker_params: "Optional[tuple[float, int, int, int, float]]" = None
 # Guard concurrent _tracker.update() calls — process_frame() (ROS thread) and
 # on_done() (inference thread) both call into the tracker.
@@ -452,6 +451,8 @@ def on_done(future: Future[InferenceOutput]):
             )
             with _tracker_lock:
                 if _tracker is None or _tracker_params != desired_params:
+                    from trackforge import OCSORT  # noqa: PLC0415 — lazy load Rust .so
+
                     _tracker = OCSORT(
                         max_age=desired_params[1],
                         min_hits=desired_params[2],
@@ -1038,9 +1039,7 @@ def stream_with_ros():
     try:
         global ros_node
 
-        delay_seconds = 1
-        logger.info(f"Starting ROS 2 videostream in {delay_seconds}s...")
-        time.sleep(delay_seconds)
+        logger.info("Starting ROS 2 videostream...")
 
         print("------------!!!!!!!!!!!!! STREAM (ROS 2)")
 
