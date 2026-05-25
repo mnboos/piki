@@ -77,12 +77,11 @@ from .utils.shared import (
     splash_enabled,
     streaming_active,
     tracker_confirm_hits,
+    tracker_delta_t,
     tracker_enabled,
+    tracker_inertia,
     tracker_iou_threshold,
     tracker_max_misses,
-    tracker_reid_enabled,
-    tracker_reid_hit_counter_max,
-    tracker_reid_threshold,
     vertical_angle_offset,
 )
 # Splash *state* (splash_armed_at / splash_firing_until / splash_cooldown_until) are
@@ -252,9 +251,8 @@ class PikiOptions(Schema):
     tracker_iou_threshold: Optional[float] = None
     tracker_max_misses: Optional[int] = None
     tracker_confirm_hits: Optional[int] = None
-    tracker_reid_enabled: Optional[bool] = None
-    tracker_reid_threshold: Optional[float] = None
-    tracker_reid_hit_counter_max: Optional[int] = None
+    tracker_delta_t: Optional[int] = None
+    tracker_inertia: Optional[float] = None
     pixelcount_threshold: Optional[int] = None
     min_area: Optional[int] = None
     mog2_history: Optional[int] = None
@@ -302,14 +300,11 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     if (v := options.get("tracker_confirm_hits")) is not None:
         tracker_confirm_hits.value = max(1, int(v))
 
-    if (v := options.get("tracker_reid_enabled")) is not None:
-        tracker_reid_enabled.value = 1 if v else 0
+    if (v := options.get("tracker_delta_t")) is not None:
+        tracker_delta_t.value = max(1, int(v))
 
-    if (v := options.get("tracker_reid_threshold")) is not None:
-        tracker_reid_threshold.value = max(0.0, min(1.0, float(v)))
-
-    if (v := options.get("tracker_reid_hit_counter_max")) is not None:
-        tracker_reid_hit_counter_max.value = max(1, int(v))
+    if (v := options.get("tracker_inertia")) is not None:
+        tracker_inertia.value = max(0.0, min(1.0, float(v)))
 
     if (v := options.get("pixelcount_threshold")) is not None:
         settings.foreground_mask_options.pixelcount_threshold.value = int(v)
@@ -355,9 +350,8 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.tracker_iou_threshold = tracker_iou_threshold.value
     config.tracker_max_misses = tracker_max_misses.value
     config.tracker_confirm_hits = tracker_confirm_hits.value
-    config.tracker_reid_enabled = bool(tracker_reid_enabled.value)
-    config.tracker_reid_threshold = tracker_reid_threshold.value
-    config.tracker_reid_hit_counter_max = tracker_reid_hit_counter_max.value
+    config.tracker_delta_t = tracker_delta_t.value
+    config.tracker_inertia = tracker_inertia.value
     config.pixelcount_threshold = settings.foreground_mask_options.pixelcount_threshold.value
     config.min_area = settings.foreground_mask_options.min_area.value
     config.mog2_history = settings.foreground_mask_options.mog2_history.value
@@ -381,9 +375,8 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         tracker_iou_threshold=tracker_iou_threshold.value,
         tracker_max_misses=tracker_max_misses.value,
         tracker_confirm_hits=tracker_confirm_hits.value,
-        tracker_reid_enabled=bool(tracker_reid_enabled.value),
-        tracker_reid_threshold=tracker_reid_threshold.value,
-        tracker_reid_hit_counter_max=tracker_reid_hit_counter_max.value,
+        tracker_delta_t=tracker_delta_t.value,
+        tracker_inertia=tracker_inertia.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
         mog2_history=settings.foreground_mask_options.mog2_history.value,
@@ -418,9 +411,8 @@ def get_options(request: HttpRequest):
         tracker_iou_threshold=tracker_iou_threshold.value,
         tracker_max_misses=tracker_max_misses.value,
         tracker_confirm_hits=tracker_confirm_hits.value,
-        tracker_reid_enabled=bool(tracker_reid_enabled.value),
-        tracker_reid_threshold=tracker_reid_threshold.value,
-        tracker_reid_hit_counter_max=tracker_reid_hit_counter_max.value,
+        tracker_delta_t=tracker_delta_t.value,
+        tracker_inertia=tracker_inertia.value,
         pixelcount_threshold=settings.foreground_mask_options.pixelcount_threshold.value,
         min_area=settings.foreground_mask_options.min_area.value,
         mog2_history=settings.foreground_mask_options.mog2_history.value,

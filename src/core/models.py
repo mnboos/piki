@@ -37,21 +37,16 @@ class DetectionConfig(models.Model):
     # Lower = smoother (more lag); higher = more responsive (more jitter).
     bbox_ema_alpha = models.FloatField(default=0.7)
 
-    # --- SORT-style tracker (Phase B) ---
-    # When enabled, on_done feeds detections through an IoU + Kalman tracker
-    # that maintains identity across frames and fills brief detection gaps.
+    # --- OC-Sort tracker (Phase B) ---
+    # When enabled, on_done feeds detections through OC-Sort (Observation-Centric
+    # SORT), which adds velocity-direction consistency (OCM) and Kalman re-update
+    # (ORU) for robustness to occlusion without needing appearance features.
     tracker_enabled = models.BooleanField(default=True)
     tracker_iou_threshold = models.FloatField(default=0.3)
-    tracker_max_misses = models.IntegerField(default=10)
+    tracker_max_misses = models.IntegerField(default=30)
     tracker_confirm_hits = models.IntegerField(default=3)
-
-    # --- Re-identification (appearance-based) ---
-    # When enabled, lost tracks are re-matched to new detections by comparing
-    # color-histogram embeddings, so an object that leaves and re-enters (or is
-    # briefly occluded past tracker_max_misses) keeps its original track id.
-    tracker_reid_enabled = models.BooleanField(default=False)
-    tracker_reid_threshold = models.FloatField(default=0.5)
-    tracker_reid_hit_counter_max = models.IntegerField(default=500)
+    tracker_delta_t = models.IntegerField(default=3)
+    tracker_inertia = models.FloatField(default=0.2)
 
     class Meta:
         verbose_name = "Detection Config"

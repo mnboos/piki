@@ -1412,29 +1412,7 @@
                         ],
                         "title": "Tracker Confirm Hits"
                     },
-                    "tracker_reid_enabled": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Reid Enabled"
-                    },
-                    "tracker_reid_threshold": {
-                        "anyOf": [
-                            {
-                                "type": "number"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Reid Threshold"
-                    },
-                    "tracker_reid_hit_counter_max": {
+                    "tracker_delta_t": {
                         "anyOf": [
                             {
                                 "type": "integer"
@@ -1443,7 +1421,18 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Tracker Reid Hit Counter Max"
+                        "title": "Tracker Delta T"
+                    },
+                    "tracker_inertia": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Inertia"
                     },
                     "pixelcount_threshold": {
                         "anyOf": [
@@ -1671,29 +1660,7 @@
                         ],
                         "title": "Tracker Confirm Hits"
                     },
-                    "tracker_reid_enabled": {
-                        "anyOf": [
-                            {
-                                "type": "boolean"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Reid Enabled"
-                    },
-                    "tracker_reid_threshold": {
-                        "anyOf": [
-                            {
-                                "type": "number"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "title": "Tracker Reid Threshold"
-                    },
-                    "tracker_reid_hit_counter_max": {
+                    "tracker_delta_t": {
                         "anyOf": [
                             {
                                 "type": "integer"
@@ -1702,7 +1669,18 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Tracker Reid Hit Counter Max"
+                        "title": "Tracker Delta T"
+                    },
+                    "tracker_inertia": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Tracker Inertia"
                     },
                     "pixelcount_threshold": {
                         "anyOf": [

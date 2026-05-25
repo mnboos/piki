@@ -66,12 +66,20 @@ const trackerIouThreshold = computed({
     set: (v: number) => { model.value.trackerIouThreshold = v; },
 });
 const trackerMaxMisses = computed({
-    get: () => model.value.trackerMaxMisses ?? 10,
+    get: () => model.value.trackerMaxMisses ?? 30,
     set: (v: number) => { model.value.trackerMaxMisses = v; },
 });
 const trackerConfirmHits = computed({
     get: () => model.value.trackerConfirmHits ?? 3,
     set: (v: number) => { model.value.trackerConfirmHits = v; },
+});
+const trackerDeltaT = computed({
+    get: () => model.value.trackerDeltaT ?? 3,
+    set: (v: number) => { model.value.trackerDeltaT = v; },
+});
+const trackerInertia = computed({
+    get: () => model.value.trackerInertia ?? 0.2,
+    set: (v: number) => { model.value.trackerInertia = v; },
 });
 
 const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), value: v }));
@@ -151,9 +159,9 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                         </div>
 
                         <div class="control-item">
-                            <label class="control-label">Tracker</label>
+                            <label class="control-label">Tracker (OC-Sort)</label>
                             <ToggleButton v-model="trackerEnabled" on-label="On" off-label="Off" class="tb-btn" />
-                            <p class="help-text">SORT-style IoU + Kalman tracker. Keeps identity across frames and fills brief detection gaps with predicted bounding boxes. Disable to revert to per-frame detection.</p>
+                            <p class="help-text">Observation-Centric SORT: extends Kalman tracking with velocity-direction consistency (OCM) and re-update on re-association (ORU) for robust occlusion handling without appearance features.</p>
                         </div>
 
                         <div class="control-item">
@@ -172,6 +180,18 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                             <label class="control-label">Tracker Confirm Hits: {{ trackerConfirmHits }}</label>
                             <Slider v-model="trackerConfirmHits" :min="1" :max="10" :step="1" class="slider" />
                             <p class="help-text">Detections needed before a tentative track becomes &ldquo;confirmed&rdquo; (eligible for aim and event triggering). Higher = more conservative.</p>
+                        </div>
+
+                        <div class="control-item">
+                            <label class="control-label">OC-Sort Delta T: {{ trackerDeltaT }}</label>
+                            <Slider v-model="trackerDeltaT" :min="1" :max="30" :step="1" class="slider" />
+                            <p class="help-text">Observation window (frames) for velocity-direction consistency check (OCM). Larger values use more history for direction estimation.</p>
+                        </div>
+
+                        <div class="control-item">
+                            <label class="control-label">OC-Sort Inertia: {{ trackerInertia.toFixed(2) }}</label>
+                            <Slider v-model="trackerInertia" :min="0.0" :max="1.0" :step="0.05" class="slider" />
+                            <p class="help-text">Weight of the direction-consistency cost bonus in the association step. Higher = stronger bias toward same-direction matches.</p>
                         </div>
                     </div>
                 </TabPanel>

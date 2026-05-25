@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
-import norfair
 from django.test import SimpleTestCase
+from trackforge import OCSORT
 
 from .utils.interfaces import Box
 from .utils.tracker_safety import is_bbox_safe_for_update, required_update_margin, sanitize_bbox_for_frame
@@ -33,71 +33,57 @@ class TrackerSafetyTests(SimpleTestCase):
         assert is_bbox_safe_for_update(bbox=(40, 30, 20, 20), frame_shape=(100, 200))
 
 
-def _box(x: float, label: str, conf: float = 0.9) -> norfair.Detection:
-    """A normalized [0,1] bbox detection as stream.py builds it for Norfair."""
-    return norfair.Detection(
-        points=np.array([[x, 0.1], [x + 0.2, 0.3]], dtype=np.float32),
-        scores=np.array([conf, conf], dtype=np.float32),
-        label=label,
-    )
+def _make_ocsort() -> OCSORT:
+    return OCSORT(max_age=30, min_hits=1, iou_threshold=0.3, delta_t=3, inertia=0.2)
 
 
-def _make_tracker() -> norfair.Tracker:
-    return norfair.Tracker(
-        distance_function="iou",
-        distance_threshold=1.0 - 0.3,  # iou_threshold 0.3 → distance 0.7
-        hit_counter_max=10,
-        initialization_delay=_CONFIRM_DELAY,
-    )
+class OCSortContractTests(SimpleTestCase):
+    """Guard the OC-Sort behaviors stream.py's tracker block relies on."""
 
+    def test_return_format_is_track_id_tlwh_score_class(self):
+        t = _make_ocsort()
+        for _ in range(3):
+            tracks = t.update([([0.1, 0.1, 0.2, 0.2], 0.9, 0)])
+        assert len(tracks) == 1
+        tid, tlwh, score, cls_id = tracks[0]
+        assert isinstance(tid, int) and tid > 0
+        assert len(tlwh) == 4
+        assert isinstance(score, float)
+        assert isinstance(cls_id, int)
 
-class NorfairContractTests(SimpleTestCase):
-    """Guard the Norfair behaviors stream.py's tracker block relies on."""
-
-    def test_id_appears_after_delay_then_stays_stable(self):
-        t = _make_tracker()
+    def test_track_id_stays_stable(self):
+        t = _make_ocsort()
         ids = []
-        for f in range(6):
-            objs = t.update(detections=[_box(0.10 + f * 0.02, "cat")])
-            ids.append(objs[0].id if objs else None)
-        assert ids[:_CONFIRM_DELAY] == [None] * _CONFIRM_DELAY  # withheld during delay
+        for f in range(5):
+            tracks = t.update([([0.10 + f * 0.02, 0.1, 0.2, 0.2], 0.9, 0)])
+            ids.append(tracks[0][0] if tracks else None)
         confirmed = [i for i in ids if i is not None]
-        assert confirmed and len(set(confirmed)) == 1  # one stable id afterwards
+        assert confirmed and len(set(confirmed)) == 1
 
-    def test_estimate_is_two_corner_points(self):
-        t = _make_tracker()
-        for f in range(4):
-            objs = t.update(detections=[_box(0.10 + f * 0.02, "cat")])
-        est = objs[0].estimate
-        assert est.shape == (2, 2)  # [[x1,y1],[x2,y2]] — stream.py rebuilds bbox from this
-
-    def test_matched_this_frame_identity(self):
-        # stream.py uses `id(obj.last_detection) in {id(d) for this-frame dets}`
-        # to tell a real match from a Kalman-predicted gap fill (strict zones).
-        t = _make_tracker()
-        for f in range(4):
-            d = _box(0.10 + f * 0.02, "cat")
-            objs = t.update(detections=[d])
-        assert objs[0].last_detection is d                 # matched this frame
-        objs = t.update(detections=[])                     # gap → prediction only
-        assert objs and objs[0].last_detection is not None
-        assert objs[0].last_detection is d                 # stale instance, not this frame's
-
-    def test_same_label_matching(self):
-        # A confirmed cat track must not absorb an overlapping dog detection;
-        # the dog must spawn its own id (Norfair matches within a label).
-        t = _make_tracker()
+    def test_different_classes_track_independently(self):
+        t = _make_ocsort()
         for _ in range(4):
-            objs = t.update(detections=[_box(0.30, "cat")])
-        cat_id = objs[0].id
-        dog_id = None
-        for _ in range(6):
-            objs = t.update(detections=[_box(0.30, "dog")])
-            for o in objs:
-                if o.last_detection.label == "dog":
-                    dog_id = o.id
-        assert dog_id is not None
-        assert dog_id != cat_id
+            tracks = t.update([
+                ([0.30, 0.10, 0.20, 0.20], 0.9, 0),  # class 0 = cat
+                ([0.30, 0.10, 0.20, 0.20], 0.9, 1),  # class 1 = dog (overlapping)
+            ])
+        # Both classes should have separate track IDs
+        assert len(tracks) == 2
+        ids = sorted(t[0] for t in tracks)
+        assert ids[0] != ids[1]
+
+    def test_track_expires_after_max_age(self):
+        t = OCSORT(max_age=2, min_hits=1, iou_threshold=0.3, delta_t=3, inertia=0.2)
+        for _ in range(3):
+            tracks = t.update([([0.1, 0.1, 0.2, 0.2], 0.9, 0)])
+        assert len(tracks) == 1
+        tid = tracks[0][0]
+        # Feed empty detections for max_age+1 frames
+        for _ in range(3):
+            tracks = t.update([])
+        # Track should be gone
+        remaining_ids = [t[0] for t in tracks]
+        assert tid not in remaining_ids
 
 
 # ---------------------------------------------------------------------------

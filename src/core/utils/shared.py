@@ -143,10 +143,6 @@ class InferenceOutput(NamedTuple):
     timestamp: int
     avg_duration: int
     detections: list[Detection]
-    # Parallel to `detections` (same order). Each entry is a color-histogram
-    # embedding (np.ndarray) when re-id is enabled, else None. Kept out of the
-    # Detection tuple so existing 3-field unpacking of detections is unaffected.
-    embeddings: Sequence = ()
 
 
 # Detection confidence thresholds with hysteresis:
@@ -167,22 +163,16 @@ min_consecutive_frames = mp.Value("i", 2)
 # Exponential-moving-average factor for smoothing the locked-target bbox.
 bbox_ema_alpha = mp.Value(c_float, 0.7)
 
-# --- SORT-style tracker (Phase B) ---
-# When enabled, on_done() routes detections through an IoU + Kalman tracker
-# whose confirmed tracks become the source of identity for the technical log
-# and the source of truth for downstream consumers (aim, recording trigger).
+# --- OC-Sort tracker (Phase B) ---
+# When enabled, on_done() routes detections through an OC-Sort tracker whose
+# confirmed tracks become the source of identity for the technical log and the
+# source of truth for downstream consumers (aim, recording trigger).
 tracker_enabled = mp.Value("i", 1)  # 1 = on, 0 = off (mp.Value has no bool type)
 tracker_iou_threshold = mp.Value(c_float, 0.3)
-tracker_max_misses = mp.Value("i", 10)
+tracker_max_misses = mp.Value("i", 30)
 tracker_confirm_hits = mp.Value("i", 3)
-
-# --- Appearance-based re-identification ---
-# When on, the worker computes a color-histogram embedding per detection and the
-# tracker re-matches lost tracks to new detections by histogram correlation,
-# preserving track ids across occlusion / re-entry. See stream.py.
-tracker_reid_enabled = mp.Value("i", 0)
-tracker_reid_threshold = mp.Value(c_float, 0.5)      # reid_distance_threshold (1 - hist correlation)
-tracker_reid_hit_counter_max = mp.Value("i", 500)    # frames a lost track stays eligible for reid
+tracker_delta_t = mp.Value("i", 3)
+tracker_inertia = mp.Value(c_float, 0.2)
 
 
 class MotionDetector:
