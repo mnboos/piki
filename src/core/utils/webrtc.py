@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from fractions import Fraction
+from struct import pack
 from typing import TYPE_CHECKING
 
 import av
@@ -56,12 +58,98 @@ def _passthrough_encode(
 _h264.H264Encoder.encode = _passthrough_encode  # type: ignore[method-assign]
 
 
+# ---------------------------------------------------------------------------
+# NAL packetizer patches — accept buffer-protocol objects (memoryview)
+#
+# aiortc's stock packetizers use `bytes + memoryview` which raises TypeError.
+# We replace them with versions that only materialise `bytes()` at MTU
+# boundaries (~1200 B) rather than copying each whole NAL upfront.  This is
+# the main win for large IDR NALs (20–50 KB) coming from hw_encoder.py as
+# memoryview slices.
+# ---------------------------------------------------------------------------
+
+def _packetize_fu_a_mv(data: bytes | memoryview) -> list[bytes]:  # type: ignore[misc]
+    available_size = _h264.PACKET_MAX - _h264.FU_A_HEADER_SIZE
+    payload_size = len(data) - _h264.NAL_HEADER_SIZE
+    num_packets = math.ceil(payload_size / available_size)
+    num_larger_packets = payload_size % num_packets
+    package_size = payload_size // num_packets
+
+    f_nri = data[0] & (0x80 | 0x60)
+    nal_type = data[0] & 0x1F
+    fu_indicator = f_nri | _h264.NAL_TYPE_FU_A
+
+    fu_header_end = bytes([fu_indicator, nal_type | 0x40])
+    fu_header_middle = bytes([fu_indicator, nal_type])
+    fu_header_start = bytes([fu_indicator, nal_type | 0x80])
+    fu_header = fu_header_start
+
+    packages: list[bytes] = []
+    offset = _h264.NAL_HEADER_SIZE
+    while offset < len(data):
+        if num_larger_packets > 0:
+            num_larger_packets -= 1
+            payload = data[offset : offset + package_size + 1]
+            offset += package_size + 1
+        else:
+            payload = data[offset : offset + package_size]
+            offset += package_size
+        if offset == len(data):
+            fu_header = fu_header_end
+        # bytes() here is MTU-sized (~1200 B), not whole-NAL-sized (~20–50 KB).
+        packages.append(fu_header + bytes(payload))
+        fu_header = fu_header_middle
+    return packages
+
+
+def _packetize_stap_a_mv(  # type: ignore[misc]
+    data: bytes | memoryview,
+    packages_iterator: object,
+) -> tuple[bytes, bytes | memoryview | None]:
+    from collections.abc import Iterator  # noqa: PLC0415
+    assert isinstance(packages_iterator, Iterator)
+    counter = 0
+    available_size = _h264.PACKET_MAX - _h264.STAP_A_HEADER_SIZE
+    stap_header = _h264.NAL_TYPE_STAP_A | (data[0] & 0xE0)
+    payload = bytearray()
+    try:
+        nalu: bytes | memoryview = data
+        while len(nalu) <= available_size and counter < 9:
+            stap_header |= nalu[0] & 0x80
+            nri = nalu[0] & 0x60
+            if stap_header & 0x60 < nri:
+                stap_header = stap_header & 0x9F | nri
+            available_size -= _h264.LENGTH_FIELD_SIZE + len(nalu)
+            counter += 1
+            payload += pack("!H", len(nalu)) + bytes(nalu)
+            nalu = next(packages_iterator)
+        if counter == 0:
+            nalu = next(packages_iterator)
+    except StopIteration:
+        nalu = None
+    if counter <= 1:
+        return bytes(data), nalu
+    return bytes([stap_header]) + bytes(payload), nalu
+
+
+_h264.H264Encoder._packetize_fu_a = staticmethod(_packetize_fu_a_mv)    # type: ignore[method-assign]
+_h264.H264Encoder._packetize_stap_a = staticmethod(_packetize_stap_a_mv)  # type: ignore[method-assign]
+
+
 def assert_passthrough_active() -> None:
-    """Fail loud if a transitive dep upgrade silently undid the patch."""
+    """Fail loud if a transitive dep upgrade silently undid any patch."""
     if _h264.H264Encoder.encode is not _passthrough_encode:
         raise RuntimeError(
             "aiortc H264 passthrough patch is no longer applied. "
             "An aiortc upgrade may have changed the encode() method.",
+        )
+    if _h264.H264Encoder._packetize_fu_a is not _packetize_fu_a_mv:
+        raise RuntimeError(
+            "aiortc _packetize_fu_a patch is no longer applied.",
+        )
+    if _h264.H264Encoder._packetize_stap_a is not _packetize_stap_a_mv:
+        raise RuntimeError(
+            "aiortc _packetize_stap_a patch is no longer applied.",
         )
 
 

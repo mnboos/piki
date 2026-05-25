@@ -110,6 +110,16 @@ _hw_encoder_dims: tuple[int, int] | None = None
 # Monotonic ns of the last encode call — drives the target-FPS frame skip.
 _last_encode_ns: int = 0
 
+# When ROS_WEBRTC_TOPIC is set, a dedicated subscription delivers
+# hardware-scaled sub-stream frames for WebRTC encoding (Phase 1 of the
+# zero-copy pipeline).  process_frame() skips its own encode path so the VPU
+# encoder is not shared between the two callbacks.
+_WEBRTC_SUBSTREAM_TOPIC: str = os.environ.get("ROS_WEBRTC_TOPIC", "")
+
+# Separate encoder state for the sub-stream path (VPU channel 1).
+_hw_encoder_webrtc: HwH264Encoder | None = None
+_hw_encoder_webrtc_dims: tuple[int, int] | None = None
+
 
 def _get_hw_encoder(width: int, height: int) -> HwH264Encoder:
     global _hw_encoder, _hw_encoder_dims
@@ -119,6 +129,17 @@ def _get_hw_encoder(width: int, height: int) -> HwH264Encoder:
         _hw_encoder = HwH264Encoder(channel=0, width=width, height=height)
         _hw_encoder_dims = (width, height)
     return _hw_encoder
+
+
+def _get_hw_encoder_webrtc(width: int, height: int) -> HwH264Encoder:
+    """Return the WebRTC-dedicated encoder (VPU channel 1, sub-stream dims)."""
+    global _hw_encoder_webrtc, _hw_encoder_webrtc_dims
+    if _hw_encoder_webrtc is None or _hw_encoder_webrtc_dims != (width, height):
+        if _hw_encoder_webrtc is not None:
+            _hw_encoder_webrtc.close()
+        _hw_encoder_webrtc = HwH264Encoder(channel=1, width=width, height=height)
+        _hw_encoder_webrtc_dims = (width, height)
+    return _hw_encoder_webrtc
 
 # Latest foreground motion mask — updated every frame in process_frame() and used
 # by on_done() to compute a foreground-weighted aim centroid within the detection
@@ -201,6 +222,44 @@ class PikiVisionNode(Node):
         self.get_logger().info(f"Subscribing to: {topic_name}")
         self.subscription = self.create_subscription(RosImage, topic_name, self.listener_callback_hbm, qos_profile)
         self.target_pub = self.create_publisher(String, "/piki/detections", 10)
+
+        if _WEBRTC_SUBSTREAM_TOPIC:
+            self.get_logger().info(f"WebRTC sub-stream topic: {_WEBRTC_SUBSTREAM_TOPIC}")
+            self._webrtc_subscription = self.create_subscription(
+                RosImage, _WEBRTC_SUBSTREAM_TOPIC, self.listener_callback_webrtc, qos_profile,
+            )
+
+    def listener_callback_webrtc(self, msg: Any):
+        """Encode a hardware-scaled sub-stream frame directly to H.264 for WebRTC.
+
+        This callback is only active when ROS_WEBRTC_TOPIC is set. It runs
+        independently of listener_callback_hbm so WebRTC encoding never competes
+        with motion detection / inference for CPU time.
+        """
+        if not _s.webrtc_active.is_set():
+            return
+        try:
+            w, h = msg.width, msg.height
+            stride = msg.step if msg.step > 0 else w
+            if stride == w:
+                data_size = h * w * 3 // 2
+                nv12 = np.frombuffer(msg.data, dtype=np.uint8)[:data_size].reshape(h * 3 // 2, w)
+            else:
+                raw_buffer = (
+                    np.frombuffer(msg.data, dtype=np.uint8)
+                    if not isinstance(msg.data, np.ndarray)
+                    else msg.data
+                )
+                y_plane = raw_buffer[: h * stride].reshape(h, stride)[:, :w]
+                uv_start = h * stride
+                uv_plane = raw_buffer[uv_start : uv_start + (h // 2) * stride].reshape(h // 2, stride)[:, :w]
+                nv12 = np.vstack([y_plane, uv_plane])
+            enc = _get_hw_encoder_webrtc(w, h)
+            nals = enc.encode_nv12(nv12)
+            if nals:
+                webrtc_publish(nals, time.monotonic_ns())
+        except Exception:
+            logger.exception("WebRTC sub-stream encode failed")
 
     def listener_callback_hbm(self, msg: Any):
         if replaying_active.is_set():
@@ -967,7 +1026,10 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     # Hardware H.264 encode for any connected WebRTC peers. Runs on the VPU,
     # so this should be a fast call that doesn't impact motion/inference timing.
     # Frame skipping honours `webrtc_target_fps` (set to camera rate to disable).
-    if _s.webrtc_active.is_set():
+    # Skip this entire block when ROS_WEBRTC_TOPIC is set — in that case
+    # listener_callback_webrtc encodes the dedicated sub-stream independently,
+    # freeing process_frame from any VPU contention.
+    if _s.webrtc_active.is_set() and not _WEBRTC_SUBSTREAM_TOPIC:
         global _last_encode_ns
         target_fps = max(1, int(_s.webrtc_target_fps.value))
         min_interval_ns = 1_000_000_000 // target_fps
@@ -1074,5 +1136,9 @@ def cleanup():
     inference_pool.shutdown(wait=True, cancel_futures=True)
     if ffmpeg_process:
         ffmpeg_process.kill()
+    if _hw_encoder is not None:
+        _hw_encoder.close()
+    if _hw_encoder_webrtc is not None:
+        _hw_encoder_webrtc.close()
 
     logger.info("[DJANGO SHUTDOWN] Processes stopped..")

@@ -31,8 +31,13 @@ _NAL_TYPE_SPS = 7
 _NAL_TYPE_PPS = 8
 
 
-def _split_annex_b(buf: bytes) -> list[bytes]:
-    """Split an annex-B H.264 bitstream into NAL units (no start codes)."""
+def _split_annex_b(buf: bytes) -> list[memoryview]:
+    """Split an annex-B H.264 bitstream into NAL units (no start codes).
+
+    Returns zero-copy ``memoryview`` slices over *buf* rather than new
+    ``bytes`` objects.  The caller keeps *buf* alive for as long as the
+    returned views are needed.
+    """
     n = len(buf)
     starts: list[tuple[int, int]] = []
     i = 0
@@ -47,16 +52,17 @@ def _split_annex_b(buf: bytes) -> list[bytes]:
                 i += 4
                 continue
         i += 1
-    nals: list[bytes] = []
+    view = memoryview(buf)
+    nals: list[memoryview] = []
     for k, (off, prefix_len) in enumerate(starts):
         body_start = off + prefix_len
         body_end = starts[k + 1][0] if k + 1 < len(starts) else n
         if body_end > body_start:
-            nals.append(bytes(buf[body_start:body_end]))
+            nals.append(view[body_start:body_end])
     return nals
 
 
-def _nal_type(nal: bytes) -> int:
+def _nal_type(nal: memoryview) -> int:
     return nal[0] & 0x1F if nal else 0
 
 
@@ -122,7 +128,7 @@ class HwH264Encoder:
     def have_parameter_sets(self) -> bool:
         return self._sps is not None and self._pps is not None
 
-    def encode_nv12(self, nv12: np.ndarray) -> list[bytes]:
+    def encode_nv12(self, nv12: np.ndarray) -> list[memoryview]:
         """Push one NV12 frame, return its NAL units (each without start code).
 
         ``nv12`` must be a numpy array shaped ``(h*3//2, w)`` matching the
@@ -150,23 +156,28 @@ class HwH264Encoder:
         nals = _split_annex_b(annex_b)
         return self._fixup(nals)
 
-    def _fixup(self, nals: list[bytes]) -> list[bytes]:
-        """Cache SPS/PPS the first time we see them and re-inject before IDRs."""
+    def _fixup(self, nals: list[memoryview]) -> list[memoryview]:
+        """Cache SPS/PPS the first time we see them and re-inject before IDRs.
+
+        SPS/PPS are converted to ``bytes`` when cached so they survive after
+        the originating ``get_frame()`` buffer is released.  All other NALs
+        stay as zero-copy ``memoryview`` slices.
+        """
         has_idr = False
-        passthrough: list[bytes] = []
+        passthrough: list[memoryview] = []
         for nal in nals:
             t = _nal_type(nal)
             if t == _NAL_TYPE_SPS:
-                self._sps = nal
-                continue  # we inject ourselves
+                self._sps = bytes(nal)  # must outlive this frame's buffer
+                continue
             if t == _NAL_TYPE_PPS:
-                self._pps = nal
+                self._pps = bytes(nal)
                 continue
             if t == _NAL_TYPE_IDR:
                 has_idr = True
             passthrough.append(nal)
         if has_idr and self._sps is not None and self._pps is not None:
-            return [self._sps, self._pps, *passthrough]
+            return [memoryview(self._sps), memoryview(self._pps), *passthrough]
         return passthrough
 
     def close(self) -> None:

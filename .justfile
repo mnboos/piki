@@ -172,3 +172,8 @@ claude-deepseek:
     claude --model opus --effort max
 
 alias claude := claude-deepseek
+
+run-foxglove:
+    #!/usr/bin/env bash
+    source /opt/ros/humble/setup.bash
+    ros2 launch foxglove_bridge foxglove_bridge_launch.xml
