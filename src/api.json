@@ -970,6 +970,24 @@
                 "title": "BpuMetrics",
                 "type": "object"
             },
+            "CoolingDevice": {
+                "properties": {
+                    "cur_state": {
+                        "title": "Cur State",
+                        "type": "integer"
+                    },
+                    "max_state": {
+                        "title": "Max State",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "cur_state",
+                    "max_state"
+                ],
+                "title": "CoolingDevice",
+                "type": "object"
+            },
             "CpuMetrics": {
                 "properties": {
                     "percent_total": {
@@ -990,6 +1008,25 @@
                         "title": "Freq Mhz Per Core",
                         "type": "array"
                     },
+                    "freq_min_mhz": {
+                        "title": "Freq Min Mhz",
+                        "type": "number"
+                    },
+                    "freq_max_mhz": {
+                        "title": "Freq Max Mhz",
+                        "type": "number"
+                    },
+                    "governor": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Governor"
+                    },
                     "core_count": {
                         "title": "Core Count",
                         "type": "integer"
@@ -999,6 +1036,9 @@
                     "percent_total",
                     "percent_per_core",
                     "freq_mhz_per_core",
+                    "freq_min_mhz",
+                    "freq_max_mhz",
+                    "governor",
                     "core_count"
                 ],
                 "title": "CpuMetrics",
@@ -1145,6 +1185,17 @@
                     "tx_bytes_per_s": {
                         "title": "Tx Bytes Per S",
                         "type": "number"
+                    },
+                    "signal_dbm": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Signal Dbm"
                     }
                 },
                 "required": [
@@ -1264,6 +1315,13 @@
                     },
                     "isp": {
                         "$ref": "#/components/schemas/IspMetrics"
+                    },
+                    "cooling": {
+                        "additionalProperties": {
+                            "$ref": "#/components/schemas/CoolingDevice"
+                        },
+                        "title": "Cooling",
+                        "type": "object"
                     }
                 },
                 "required": [
@@ -1280,7 +1338,8 @@
                     "vpu",
                     "gpu",
                     "ddr",
-                    "isp"
+                    "isp",
+                    "cooling"
                 ],
                 "title": "SystemMetrics",
                 "type": "object"
@@ -1367,6 +1426,17 @@
                             }
                         ],
                         "title": "Bbox Ema Alpha"
+                    },
+                    "coord_ema_alpha": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Coord Ema Alpha"
                     },
                     "tracker_enabled": {
                         "anyOf": [
@@ -1615,6 +1685,17 @@
                             }
                         ],
                         "title": "Bbox Ema Alpha"
+                    },
+                    "coord_ema_alpha": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Coord Ema Alpha"
                     },
                     "tracker_enabled": {
                         "anyOf": [

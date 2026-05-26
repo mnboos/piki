@@ -188,8 +188,8 @@ function draw() {
             const tid = d.tid;
             seenTids.add(tid);
             const [xmin, ymin, xmax, ymax] = d.bbox;
-            const cx = (xmin + xmax) / 2;
-            const cy = (ymin + ymax) / 2;
+            const cx = d.center ? d.center[0] : (xmin + xmax) / 2;
+            const cy = d.center ? d.center[1] : (ymin + ymax) / 2;
             let points = trailMap.get(tid);
             if (!points) {
                 points = [];

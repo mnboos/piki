@@ -15,6 +15,8 @@ export interface DetectionEntry {
     score: number;
     /** Normalized [xmin, ymin, xmax, ymax]. */
     bbox: [number, number, number, number];
+    /** Normalized [cx, cy] mask centroid. */
+    center?: [number, number];
 }
 
 export interface DetectionsPayload {

@@ -15,6 +15,7 @@ The codec runs on the VPU so this call should not consume meaningful CPU.
 from __future__ import annotations
 
 import logging
+import time
 
 import numpy as np
 
@@ -111,6 +112,7 @@ class HwH264Encoder:
         self._sps: bytes | None = None
         self._pps: bytes | None = None
         self._closed = False
+        self._last_force_idr = 0.0
         logger.info(
             "HwH264Encoder opened channel=%d %dx%d (aligned from %dx%d, pad=%s)",
             channel, self._aligned_w, self._aligned_h, width, height, self._needs_pad,
@@ -127,6 +129,26 @@ class HwH264Encoder:
     @property
     def have_parameter_sets(self) -> bool:
         return self._sps is not None and self._pps is not None
+
+    def force_idr(self) -> None:
+        """Reinitialize the VPU encoder so the next frame is an IDR.
+
+        Rate-limited to once per 500 ms to avoid thrashing on burst PLI/FIR.
+        """
+        now = time.monotonic()
+        elapsed = now - self._last_force_idr
+        if elapsed < 0.5:
+            return
+        self._last_force_idr = now
+        logger.info("Forcing IDR on VPU encoder channel=%d (last was %.1fs ago)",
+                    self._channel, elapsed)
+        self._enc.close()
+        rc = self._enc.encode(self._channel, _TYPE_H264, self._aligned_w, self._aligned_h)
+        if rc != 0:
+            raise RuntimeError(
+                f"libsrcampy.Encoder re-init failed after force_idr: rc={rc} "
+                f"channel={self._channel} {self._aligned_w}x{self._aligned_h}",
+            )
 
     def encode_nv12(self, nv12: np.ndarray) -> list[memoryview]:
         """Push one NV12 frame, return its NAL units (each without start code).

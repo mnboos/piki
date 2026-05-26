@@ -38,6 +38,7 @@ from .utils.replay import (
 from .utils.shared import (
     app_settings,
     bbox_ema_alpha,
+    coord_ema_alpha,
     event_clip_queue,
     event_clip_queue_lock,
     event_cooldown_seconds,
@@ -160,7 +161,15 @@ class CpuMetrics(Schema):
     percent_total: float
     percent_per_core: list[float]
     freq_mhz_per_core: list[float]
+    freq_min_mhz: float
+    freq_max_mhz: float
+    governor: Optional[str]
     core_count: int
+
+
+class CoolingDevice(Schema):
+    cur_state: int
+    max_state: int
 
 
 class MemoryMetrics(Schema):
@@ -187,6 +196,7 @@ class NetInterface(Schema):
     name: str
     rx_bytes_per_s: float
     tx_bytes_per_s: float
+    signal_dbm: Optional[int] = None
 
 
 class NetMetrics(Schema):
@@ -233,6 +243,7 @@ class SystemMetrics(Schema):
     gpu: GpuMetrics
     ddr: DdrMetrics
     isp: IspMetrics
+    cooling: dict[str, CoolingDevice]
 
 
 @api.get("/metrics", response=SystemMetrics)
@@ -247,6 +258,7 @@ class PikiOptions(Schema):
     conf_threshold_keep: Optional[float] = None
     min_consecutive_frames: Optional[int] = None
     bbox_ema_alpha: Optional[float] = None
+    coord_ema_alpha: Optional[float] = None
     tracker_enabled: Optional[bool] = None
     tracker_iou_threshold: Optional[float] = None
     tracker_max_misses: Optional[int] = None
@@ -287,6 +299,9 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
 
     if (v := options.get("bbox_ema_alpha")) is not None:
         bbox_ema_alpha.value = max(0.0, min(1.0, float(v)))
+
+    if (v := options.get("coord_ema_alpha")) is not None:
+        coord_ema_alpha.value = max(0.0, min(1.0, float(v)))
 
     if (v := options.get("tracker_enabled")) is not None:
         tracker_enabled.value = 1 if v else 0
@@ -346,6 +361,7 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
     config.conf_threshold_keep = prob_threshold_keep.value
     config.min_consecutive_frames = min_consecutive_frames.value
     config.bbox_ema_alpha = bbox_ema_alpha.value
+    config.coord_ema_alpha = coord_ema_alpha.value
     config.tracker_enabled = bool(tracker_enabled.value)
     config.tracker_iou_threshold = tracker_iou_threshold.value
     config.tracker_max_misses = tracker_max_misses.value
@@ -371,6 +387,7 @@ def update_options(request: HttpRequest, options: PatchDict[PikiOptions]):
         conf_threshold_keep=prob_threshold_keep.value,
         min_consecutive_frames=min_consecutive_frames.value,
         bbox_ema_alpha=bbox_ema_alpha.value,
+        coord_ema_alpha=coord_ema_alpha.value,
         tracker_enabled=bool(tracker_enabled.value),
         tracker_iou_threshold=tracker_iou_threshold.value,
         tracker_max_misses=tracker_max_misses.value,
@@ -407,6 +424,7 @@ def get_options(request: HttpRequest):
         conf_threshold_keep=prob_threshold_keep.value,
         min_consecutive_frames=min_consecutive_frames.value,
         bbox_ema_alpha=bbox_ema_alpha.value,
+        coord_ema_alpha=coord_ema_alpha.value,
         tracker_enabled=bool(tracker_enabled.value),
         tracker_iou_threshold=tracker_iou_threshold.value,
         tracker_max_misses=tracker_max_misses.value,

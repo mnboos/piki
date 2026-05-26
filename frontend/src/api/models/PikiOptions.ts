@@ -51,6 +51,12 @@ export interface PikiOptions {
     bboxEmaAlpha?: number | null;
     /**
      * 
+     * @type {number}
+     * @memberof PikiOptions
+     */
+    coordEmaAlpha?: number | null;
+    /**
+     * 
      * @type {boolean}
      * @memberof PikiOptions
      */
@@ -175,6 +181,7 @@ export function PikiOptionsFromJSONTyped(json: any, ignoreDiscriminator: boolean
         'confThresholdKeep': json['conf_threshold_keep'] == null ? undefined : json['conf_threshold_keep'],
         'minConsecutiveFrames': json['min_consecutive_frames'] == null ? undefined : json['min_consecutive_frames'],
         'bboxEmaAlpha': json['bbox_ema_alpha'] == null ? undefined : json['bbox_ema_alpha'],
+        'coordEmaAlpha': json['coord_ema_alpha'] == null ? undefined : json['coord_ema_alpha'],
         'trackerEnabled': json['tracker_enabled'] == null ? undefined : json['tracker_enabled'],
         'trackerIouThreshold': json['tracker_iou_threshold'] == null ? undefined : json['tracker_iou_threshold'],
         'trackerMaxMisses': json['tracker_max_misses'] == null ? undefined : json['tracker_max_misses'],
@@ -211,6 +218,7 @@ export function PikiOptionsToJSONTyped(value?: PikiOptions | null, ignoreDiscrim
         'conf_threshold_keep': value['confThresholdKeep'],
         'min_consecutive_frames': value['minConsecutiveFrames'],
         'bbox_ema_alpha': value['bboxEmaAlpha'],
+        'coord_ema_alpha': value['coordEmaAlpha'],
         'tracker_enabled': value['trackerEnabled'],
         'tracker_iou_threshold': value['trackerIouThreshold'],
         'tracker_max_misses': value['trackerMaxMisses'],

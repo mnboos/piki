@@ -3,6 +3,7 @@
 export * from './AimConfigSchema';
 export * from './AimConfigSchemaPatch';
 export * from './BpuMetrics';
+export * from './CoolingDevice';
 export * from './CpuMetrics';
 export * from './DdrMetrics';
 export * from './DiskMetrics';

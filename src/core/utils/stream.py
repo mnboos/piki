@@ -54,6 +54,7 @@ from .shared import (
     ai_input_size,
     app_settings,
     bbox_ema_alpha,
+    coord_ema_alpha,
     cv2,
     event_clip_queue,
     event_clip_queue_lock,
@@ -170,6 +171,11 @@ _tracker_lock = threading.Lock()
 _label_to_id: dict[str, int] = {}
 _id_to_label: dict[int, str] = {}
 
+# Per-frame smoothed detection center state for the coord EMA filter.
+# Each entry is (cx, cy, label) in normalized coords; matched greedily to the
+# next frame's raw detections by label + center distance before tracking.
+_smoothed_raw_coords: list[tuple[float, float, str]] = []
+
 
 def _foreground_centroid(
     bbox_normalized: "list[float]",
@@ -255,6 +261,9 @@ class PikiVisionNode(Node):
                 uv_plane = raw_buffer[uv_start : uv_start + (h // 2) * stride].reshape(h // 2, stride)[:, :w]
                 nv12 = np.vstack([y_plane, uv_plane])
             enc = _get_hw_encoder_webrtc(w, h)
+            if _s.webrtc_keyframe_requested.is_set():
+                enc.force_idr()
+                _s.webrtc_keyframe_requested.clear()
             nals = enc.encode_nv12(nv12)
             if nals:
                 webrtc_publish(nals, time.monotonic_ns())
@@ -454,7 +463,7 @@ def run_object_detection(
 
 def on_done(future: Future[InferenceOutput]):
     """Handle completed inference."""
-    global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since, _prev_aim_bbox
+    global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since, _prev_aim_bbox, _smoothed_raw_coords
     active_futures.remove(future)
     try:
         worker_pid, timestamp, inference_time, detections = future.result()
@@ -496,6 +505,61 @@ def on_done(future: Future[InferenceOutput]):
                 "Exclusion filter dropped %d/%d detection(s) inside zones.",
                 n_dropped_by_zone, n_dropped_by_zone + len(kept),
             )
+
+        # --- Coord EMA smoothing (applied before tracker) ---
+        # Smooths the mask centroid (x, y) of each raw detection using:
+        #   smoothed = alpha * new + (1 - alpha) * old
+        # Detections are matched to the previous frame's state by label +
+        # nearest centroid distance (greedy).  Works with tracker on or off.
+        # _latest_mask is always set when on_done() fires (inference only runs
+        # after movement is detected); _foreground_centroid falls back to the
+        # bbox midpoint internally if the bbox region has no foreground pixels.
+        c_alpha = max(0.0, min(1.0, float(coord_ema_alpha.value)))
+        smoothed_centers: list[tuple[float, float]] = []
+        if c_alpha < 0.999 and kept:
+            new_state: list[tuple[float, float, str]] = []
+            smoothed_kept = []
+            used_prev: set[int] = set()
+            for label, confidence, bbox_norm in kept:
+                ymin, xmin, ymax, xmax = bbox_norm
+                cx_raw, cy_raw = _foreground_centroid(bbox_norm, _latest_mask, _latest_mask_shape)
+                w = xmax - xmin
+                h = ymax - ymin
+                threshold = (w + h) / 2.0
+                best_i, best_dist = None, float("inf")
+                for i, (pcx, pcy, plabel) in enumerate(_smoothed_raw_coords):
+                    if i in used_prev or plabel != label:
+                        continue
+                    dist = ((cx_raw - pcx) ** 2 + (cy_raw - pcy) ** 2) ** 0.5
+                    if dist < threshold and dist < best_dist:
+                        best_dist, best_i = dist, i
+                if best_i is not None:
+                    used_prev.add(best_i)
+                    cx = c_alpha * cx_raw + (1.0 - c_alpha) * _smoothed_raw_coords[best_i][0]
+                    cy = c_alpha * cy_raw + (1.0 - c_alpha) * _smoothed_raw_coords[best_i][1]
+                else:
+                    cx, cy = cx_raw, cy_raw
+                new_state.append((cx, cy, label))
+                smoothed_centers.append((cx, cy))
+                smoothed_kept.append((label, confidence, [cy - h / 2.0, cx - w / 2.0, cy + h / 2.0, cx + w / 2.0]))
+            _smoothed_raw_coords = new_state
+            kept = smoothed_kept
+        else:
+            new_state = []
+            for label, confidence, bbox_norm in kept:
+                cx, cy = _foreground_centroid(bbox_norm, _latest_mask, _latest_mask_shape)
+                new_state.append((cx, cy, label))
+                smoothed_centers.append((cx, cy))
+            _smoothed_raw_coords = new_state
+        # Propagate smoothed coords back into log_entries so det_payload and
+        # event-log entries reflect the smoothed positions.
+        ki = 0
+        for ent in log_entries:
+            if not ent["inside_exclusion"]:
+                ent["bbox_norm"] = [float(v) for v in kept[ki][2]]
+                ent["center_norm"] = [float(smoothed_centers[ki][0]), float(smoothed_centers[ki][1])]
+                ki += 1
+        detections = kept
 
         # --- OC-Sort tracker (Phase B) ---
         global _tracker, _tracker_params, _label_to_id, _id_to_label
@@ -571,11 +635,13 @@ def on_done(future: Future[InferenceOutput]):
                 continue
             ymin, xmin, ymax, xmax = ent["bbox_norm"]
             tid = ent.get("track_id")
+            cx, cy = ent["center_norm"]
             det_payload.append({
                 "tid": int(tid) if tid is not None else None,
                 "label": str(ent["label"]),
                 "score": float(ent["confidence"]),
                 "bbox": [float(xmin), float(ymin), float(xmax), float(ymax)],
+                "center": [float(cx), float(cy)],
             })
         events.publish("detections", {
             "frame_ts_ns": int(timestamp),
@@ -1039,6 +1105,9 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
             try:
                 frame_w = nv12_frame.shape[1]
                 enc = _get_hw_encoder(frame_w, frame_h)
+                if _s.webrtc_keyframe_requested.is_set():
+                    enc.force_idr()
+                    _s.webrtc_keyframe_requested.clear()
                 nals = enc.encode_nv12(nv12_frame)
                 if nals:
                     webrtc_publish(nals, current_time)

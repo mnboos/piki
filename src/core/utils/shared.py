@@ -88,6 +88,10 @@ streaming_active = threading.Event()
 # watching. webrtc.py keeps this in lock-step with streaming_active.
 webrtc_active = threading.Event()
 
+# Set by the passthrough encoder when the browser requests a keyframe (PLI/FIR).
+# The ROS callback checks this before encoding and forces an IDR on the VPU.
+webrtc_keyframe_requested = threading.Event()
+
 # Target frame rate for the WebRTC video stream. The hardware encoder always
 # sees frames at the camera's native rate (~30 fps); when this is lower we
 # skip encode calls in process_frame() so the wire bitrate scales linearly
@@ -162,6 +166,11 @@ min_consecutive_frames = mp.Value("i", 2)
 
 # Exponential-moving-average factor for smoothing the locked-target bbox.
 bbox_ema_alpha = mp.Value(c_float, 0.7)
+
+# EMA factor for smoothing raw detection center (x, y) per track before
+# publishing to the frontend.  Formula: smoothed = α·new + (1-α)·old.
+# 1.0 = raw pass-through; lower = smoother / laggier.
+coord_ema_alpha = mp.Value(c_float, 1.0)
 
 # --- OC-Sort tracker (Phase B) ---
 # When enabled, on_done() routes detections through an OC-Sort tracker whose

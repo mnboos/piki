@@ -68,6 +68,7 @@ class CoreConfig(AppConfig):
             from .utils.shared import (  # noqa: PLC0415
                 app_settings,
                 bbox_ema_alpha,
+                coord_ema_alpha,
                 min_consecutive_frames,
                 prob_threshold,
                 prob_threshold_keep,
@@ -92,6 +93,7 @@ class CoreConfig(AppConfig):
             prob_threshold_keep.value = min(float(config.conf_threshold_keep), float(config.conf_threshold))
             min_consecutive_frames.value = max(1, int(config.min_consecutive_frames))
             bbox_ema_alpha.value = max(0.0, min(1.0, float(config.bbox_ema_alpha)))
+            coord_ema_alpha.value = max(0.0, min(1.0, float(config.coord_ema_alpha)))
             tracker_enabled.value = 1 if config.tracker_enabled else 0
             tracker_iou_threshold.value = max(0.0, min(1.0, float(config.tracker_iou_threshold)))
             tracker_max_misses.value = max(0, int(config.tracker_max_misses))

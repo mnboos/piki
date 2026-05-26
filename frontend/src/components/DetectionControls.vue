@@ -57,6 +57,10 @@ const bboxEmaAlpha = computed({
     get: () => model.value.bboxEmaAlpha ?? 0.4,
     set: (v: number) => { model.value.bboxEmaAlpha = v; },
 });
+const coordEmaAlpha = computed({
+    get: () => model.value.coordEmaAlpha ?? 1.0,
+    set: (v: number) => { model.value.coordEmaAlpha = v; },
+});
 const trackerEnabled = computed({
     get: () => model.value.trackerEnabled ?? true,
     set: (v: boolean) => { model.value.trackerEnabled = v; },
@@ -156,6 +160,12 @@ const kernelOptions = [1, 3, 5, 7, 9, 11, 13, 15].map(v => ({ name: String(v), v
                             <label class="control-label">Bbox Smoothing (EMA α): {{ bboxEmaAlpha.toFixed(2) }}</label>
                             <Slider v-model="bboxEmaAlpha" :min="0.05" :max="1.0" :step="0.05" class="slider" />
                             <p class="help-text">Exponential smoothing on the locked bounding box. Lower = smoother (laggier) servo and on-screen box; higher = more responsive (jitterier). 1.0 disables smoothing.</p>
+                        </div>
+
+                        <div class="control-item">
+                            <label class="control-label">Coord Smoothing (EMA α): {{ coordEmaAlpha.toFixed(2) }}</label>
+                            <Slider v-model="coordEmaAlpha" :min="0.05" :max="1.0" :step="0.05" class="slider" />
+                            <p class="help-text">Exponential smoothing on the raw detection center (x, y) per track before publishing. Formula: smoothed = α·new + (1−α)·old. Lower = smoother / laggier overlay boxes; 1.0 = raw coordinates.</p>
                         </div>
 
                         <div class="control-item">

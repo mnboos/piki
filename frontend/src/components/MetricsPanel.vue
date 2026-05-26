@@ -65,6 +65,14 @@ function tempClass(c: number): string {
 const tempEntries = computed<[string, number][]>(() =>
     Object.entries(m.value?.tempsC ?? {}) as [string, number][],
 );
+
+const coolingEntries = computed<[string, { curState: number; maxState: number }][]>(() =>
+    Object.entries(m.value?.cooling ?? {}),
+);
+
+const anyThrottling = computed(() =>
+    coolingEntries.value.some(([, d]) => d.curState > 0),
+);
 </script>
 
 <template>
@@ -93,6 +101,14 @@ const tempEntries = computed<[string, number][]>(() =>
                 <div class="mp-row mp-row--small">
                     <span>freq</span>
                     <span>{{ fmtFreq(m.cpu.freqMhzPerCore[0]) }}</span>
+                </div>
+                <div class="mp-row mp-row--small">
+                    <span>governor</span>
+                    <span>{{ m.cpu.governor ?? 'n/a' }}</span>
+                </div>
+                <div class="mp-row mp-row--small">
+                    <span>range</span>
+                    <span>{{ fmtFreq(m.cpu.freqMinMhz) }} – {{ fmtFreq(m.cpu.freqMaxMhz) }}</span>
                 </div>
             </template>
         </Card>
@@ -132,6 +148,18 @@ const tempEntries = computed<[string, number][]>(() =>
                     <span :class="['mp-val mp-val--med', tempClass(c)]">{{ c.toFixed(1) }} °C</span>
                 </div>
                 <div v-if="tempEntries.length === 0" class="mp-sub">No thermal zones available</div>
+                <div v-if="coolingEntries.length > 0" class="mp-cooling">
+                    <div
+                        v-for="[name, d] in coolingEntries"
+                        :key="name"
+                        class="mp-row mp-row--small"
+                    >
+                        <span :class="{ 'throttle-active': d.curState > 0 }">{{ name }}</span>
+                        <span :class="{ 'throttle-active': d.curState > 0 }">
+                            {{ d.curState }} / {{ d.maxState }}
+                        </span>
+                    </div>
+                </div>
             </template>
         </Card>
 
@@ -322,6 +350,15 @@ const tempEntries = computed<[string, number][]>(() =>
 }
 .signal-poor {
     color: #e74c3c;
+}
+.mp-cooling {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--p-content-border-color, #444);
+}
+.throttle-active {
+    color: #e74c3c;
+    font-weight: 600;
 }
 </style>
 

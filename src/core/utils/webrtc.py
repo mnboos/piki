@@ -46,9 +46,12 @@ VIDEO_TIME_BASE = _h264.VIDEO_TIME_BASE
 def _passthrough_encode(
     self: _h264.H264Encoder,  # noqa: ARG001
     frame: av.VideoFrame,
-    force_keyframe: bool = False,  # noqa: ARG001, FBT001, FBT002
+    force_keyframe: bool = False,  # noqa: FBT001, FBT002
 ) -> tuple[list[bytes], int]:
     """Skip libx264. Use the NALs already attached to the frame."""
+    if force_keyframe:
+        _s.webrtc_keyframe_requested.set()
+        logger.debug("WebRTC keyframe requested by browser (PLI/FIR)")
     nals: list[bytes] = getattr(frame, "_hw_nals", None) or []
     packetized = _h264.H264Encoder._packetize(nals)
     timestamp = _h264.convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)

@@ -42,6 +42,24 @@ export interface CpuMetrics {
      * @type {number}
      * @memberof CpuMetrics
      */
+    freqMinMhz: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof CpuMetrics
+     */
+    freqMaxMhz: number;
+    /**
+     * 
+     * @type {string}
+     * @memberof CpuMetrics
+     */
+    governor: string | null;
+    /**
+     * 
+     * @type {number}
+     * @memberof CpuMetrics
+     */
     coreCount: number;
 }
 
@@ -52,6 +70,9 @@ export function instanceOfCpuMetrics(value: object): value is CpuMetrics {
     if (!('percentTotal' in value) || value['percentTotal'] === undefined) return false;
     if (!('percentPerCore' in value) || value['percentPerCore'] === undefined) return false;
     if (!('freqMhzPerCore' in value) || value['freqMhzPerCore'] === undefined) return false;
+    if (!('freqMinMhz' in value) || value['freqMinMhz'] === undefined) return false;
+    if (!('freqMaxMhz' in value) || value['freqMaxMhz'] === undefined) return false;
+    if (!('governor' in value) || value['governor'] === undefined) return false;
     if (!('coreCount' in value) || value['coreCount'] === undefined) return false;
     return true;
 }
@@ -69,6 +90,9 @@ export function CpuMetricsFromJSONTyped(json: any, ignoreDiscriminator: boolean)
         'percentTotal': json['percent_total'],
         'percentPerCore': json['percent_per_core'],
         'freqMhzPerCore': json['freq_mhz_per_core'],
+        'freqMinMhz': json['freq_min_mhz'],
+        'freqMaxMhz': json['freq_max_mhz'],
+        'governor': json['governor'],
         'coreCount': json['core_count'],
     };
 }
@@ -87,6 +111,9 @@ export function CpuMetricsToJSONTyped(value?: CpuMetrics | null, ignoreDiscrimin
         'percent_total': value['percentTotal'],
         'percent_per_core': value['percentPerCore'],
         'freq_mhz_per_core': value['freqMhzPerCore'],
+        'freq_min_mhz': value['freqMinMhz'],
+        'freq_max_mhz': value['freqMaxMhz'],
+        'governor': value['governor'],
         'core_count': value['coreCount'],
     };
 }

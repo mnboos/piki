@@ -20,6 +20,13 @@ import {
     MemoryMetricsToJSON,
     MemoryMetricsToJSONTyped,
 } from './MemoryMetrics';
+import type { CoolingDevice } from './CoolingDevice';
+import {
+    CoolingDeviceFromJSON,
+    CoolingDeviceFromJSONTyped,
+    CoolingDeviceToJSON,
+    CoolingDeviceToJSONTyped,
+} from './CoolingDevice';
 import type { DdrMetrics } from './DdrMetrics';
 import {
     DdrMetricsFromJSON,
@@ -174,6 +181,12 @@ export interface SystemMetrics {
      * @memberof SystemMetrics
      */
     isp: IspMetrics;
+    /**
+     * 
+     * @type {{ [key: string]: CoolingDevice; }}
+     * @memberof SystemMetrics
+     */
+    cooling: { [key: string]: CoolingDevice; };
 }
 
 /**
@@ -194,6 +207,7 @@ export function instanceOfSystemMetrics(value: object): value is SystemMetrics {
     if (!('gpu' in value) || value['gpu'] === undefined) return false;
     if (!('ddr' in value) || value['ddr'] === undefined) return false;
     if (!('isp' in value) || value['isp'] === undefined) return false;
+    if (!('cooling' in value) || value['cooling'] === undefined) return false;
     return true;
 }
 
@@ -221,6 +235,7 @@ export function SystemMetricsFromJSONTyped(json: any, ignoreDiscriminator: boole
         'gpu': GpuMetricsFromJSON(json['gpu']),
         'ddr': DdrMetricsFromJSON(json['ddr']),
         'isp': IspMetricsFromJSON(json['isp']),
+        'cooling': (mapValues(json['cooling'], CoolingDeviceFromJSON)),
     };
 }
 
@@ -249,6 +264,7 @@ export function SystemMetricsToJSONTyped(value?: SystemMetrics | null, ignoreDis
         'gpu': GpuMetricsToJSON(value['gpu']),
         'ddr': DdrMetricsToJSON(value['ddr']),
         'isp': IspMetricsToJSON(value['isp']),
+        'cooling': (mapValues(value['cooling'], CoolingDeviceToJSON)),
     };
 }
 

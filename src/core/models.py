@@ -37,6 +37,12 @@ class DetectionConfig(models.Model):
     # Lower = smoother (more lag); higher = more responsive (more jitter).
     bbox_ema_alpha = models.FloatField(default=0.7)
 
+    # EMA factor applied to the raw detection center (x, y) before the
+    # coordinates are published to the frontend or used for aiming.
+    # Formula: smoothed = α·new + (1-α)·old  (per track ID).
+    # 1.0 = no smoothing (raw coordinates); lower = smoother / laggier.
+    coord_ema_alpha = models.FloatField(default=1.0)
+
     # --- OC-Sort tracker (Phase B) ---
     # When enabled, on_done feeds detections through OC-Sort (Observation-Centric
     # SORT), which adds velocity-direction consistency (OCM) and Kalman re-update

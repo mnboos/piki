@@ -4,6 +4,7 @@ index.ts
 models/AimConfigSchema.ts
 models/AimConfigSchemaPatch.ts
 models/BpuMetrics.ts
+models/CoolingDevice.ts
 models/CpuMetrics.ts
 models/DdrMetrics.ts
 models/DiskMetrics.ts

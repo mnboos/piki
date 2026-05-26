@@ -83,6 +83,58 @@ def _vpu_clock_mhz() -> float | None:
     return hz / 1_000_000.0 if hz else None
 
 
+def _wifi_signals() -> dict[str, int]:
+    """Return signal level (dBm) for each active wireless interface.
+
+    Reads ``/proc/net/wireless``; returns an empty dict if the file is absent
+    (i.e. no wireless hardware or no loaded drivers).
+    """
+    result: dict[str, int] = {}
+    try:
+        with open("/proc/net/wireless") as f:
+            lines = f.readlines()
+    except OSError:
+        return result
+    for line in lines[2:]:  # first two lines are headers
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        iface = parts[0].rstrip(":")
+        # Column index 3 is the signal/level field; strip trailing '.' or '*'.
+        signal_str = parts[3].rstrip(".*")
+        try:
+            result[iface] = int(float(signal_str))
+        except ValueError:
+            continue
+    return result
+
+
+def _cpu_governor() -> str | None:
+    try:
+        with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _cooling_states() -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for cdev in sorted(Path("/sys/class/thermal").glob("cooling_device*")):
+        try:
+            ctype = (cdev / "type").read_text().strip()
+            cur = int((cdev / "cur_state").read_text().strip())
+            max_s = int((cdev / "max_state").read_text().strip())
+        except OSError:
+            continue
+        key = ctype
+        i = 2
+        while key in result:
+            key = f"{ctype}_{i}"
+            i += 1
+        result[key] = {"cur_state": cur, "max_state": max_s}
+    return result
+
+
 def _net_throughput() -> tuple[float, float, list[dict]]:
     """Bytes/s rx, tx across all non-loopback interfaces, smoothed over the
     interval between calls. Returns (aggregate_rx_bps, aggregate_tx_bps, per_iface_list)
@@ -136,6 +188,11 @@ def collect() -> dict:
     disk = psutil.disk_usage("/")
 
     rx_bps, tx_bps, interfaces = _net_throughput()
+    wifi_sigs = _wifi_signals()
+    for iface in interfaces:
+        sig = wifi_sigs.get(iface["name"])
+        if sig is not None:
+            iface["signal_dbm"] = sig
 
     uptime_s: float | None = None
     try:
@@ -168,6 +225,9 @@ def collect() -> dict:
             "percent_total": round(cpu_percent_total, 1),
             "percent_per_core": [round(p, 1) for p in cpu_percent_per_core],
             "freq_mhz_per_core": _cpu_freqs_mhz(),
+            "freq_min_mhz": (_read_int("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq") or 0) / 1000.0,
+            "freq_max_mhz": (_read_int("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") or 0) / 1000.0,
+            "governor": _cpu_governor(),
             "core_count": psutil.cpu_count(logical=True),
         },
         "memory": {
@@ -214,4 +274,5 @@ def collect() -> dict:
         "isp": {
             "load_percent": None,
         },
+        "cooling": _cooling_states(),
     }
