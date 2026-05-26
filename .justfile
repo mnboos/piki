@@ -1,5 +1,20 @@
 set dotenv-load
 
+_BASE := "https://archive.d-robotics.cc/downloads/rdk_model_zoo/rdk_x5/Ultralytics_YOLO_OE_1.2.8"
+_MODEL_DIR := "model"
+
+# Set system timezone to Europe/Zurich and ensure NTP is running
+set-timezone:
+    sudo timedatectl set-timezone Europe/Zurich
+    sudo systemctl enable --now ntp
+    timedatectl
+
+# Download the YOLO26 nano segmentation model into the repo's model/ directory
+download-seg-model:
+    wget -q --show-progress \
+        "{{_BASE}}/yolo26n_seg_bayese_640x640_nv12.bin" \
+        -O "{{_MODEL_DIR}}/yolo26n_seg_bayese_640x640_nv12.bin"
+
 # Run the full stack (mirrors run.sh)
 run:
     ./run.sh

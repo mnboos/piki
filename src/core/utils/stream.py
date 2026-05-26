@@ -27,6 +27,7 @@ from .. import events
 from . import shared as _s
 from .ai import MODEL_INPUT_TYPE, detect_objects
 from .event_payloads import (
+    build_fps_payload,
     build_mask_payload,
     build_recording_payload,
     build_rois_payload,
@@ -276,6 +277,7 @@ class PikiVisionNode(Node):
         try:
             fps_counter.tick()
             events.publish_throttled("tracker_status", build_tracker_payload(), 0.1)
+            events.publish_throttled("pipeline_fps", build_fps_payload(), 5.0)
             w, h = msg.width, msg.height
             stride = msg.step if msg.step > 0 else w
 
@@ -432,7 +434,7 @@ def run_object_detection(
             duration, detections = detect_objects(tile_img)
             total_duration += duration
 
-            for label, confidence, local_pixel_bbox in detections:
+            for label, confidence, local_pixel_bbox, centroid_tile_px, polygon_tile_px in detections:
                 local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
 
                 global_px_xmin = local_px_xmin + tile_x
@@ -446,7 +448,36 @@ def run_object_detection(
                     global_px_ymax / frame_h,
                     global_px_xmax / frame_w,
                 ]
-                all_detections.append(Detection(label=label, confidence=confidence, bbox=final_norm_coords))
+
+                # Map mask centroid from tile-pixel → global normalized coords.
+                if centroid_tile_px is not None:
+                    cx_tile, cy_tile = centroid_tile_px
+                    mask_centroid_norm: "tuple[float,float] | None" = (
+                        (cx_tile + tile_x) / frame_w,
+                        (cy_tile + tile_y) / frame_h,
+                    )
+                else:
+                    mask_centroid_norm = None
+
+                # Map polygon contours to global normalized coords.
+                if polygon_tile_px is not None:
+                    mask_polygon_norm: "list[list[float]] | None" = []
+                    for contour in polygon_tile_px:
+                        pts: list[float] = []
+                        for j in range(0, len(contour) - 1, 2):
+                            pts.append((contour[j] + tile_x) / frame_w)
+                            pts.append((contour[j + 1] + tile_y) / frame_h)
+                        mask_polygon_norm.append(pts)
+                else:
+                    mask_polygon_norm = None
+
+                all_detections.append(Detection(
+                    label=label,
+                    confidence=confidence,
+                    bbox=final_norm_coords,
+                    mask_centroid=mask_centroid_norm,
+                    mask_polygon=mask_polygon_norm,
+                ))
 
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
@@ -481,8 +512,11 @@ def on_done(future: Future[InferenceOutput]):
         zones_active = _exclusion.has_zones()
         log_entries: list[dict] = []
         kept: list = []
+        mask_centroid_per_kept: list = []
+        mask_polygon_per_kept: list = []
         n_dropped_by_zone = 0
-        for label, confidence, bbox_normalized in detections:
+        for det in detections:
+            label, confidence, bbox_normalized = det.label, det.confidence, det.bbox
             inside = (
                 _exclusion.bbox_centroid_inside_any(bbox_normalized)
                 if zones_active else False
@@ -497,6 +531,8 @@ def on_done(future: Future[InferenceOutput]):
             })
             if not inside:
                 kept.append((label, confidence, bbox_normalized))
+                mask_centroid_per_kept.append(det.mask_centroid)
+                mask_polygon_per_kept.append(det.mask_polygon)
             else:
                 n_dropped_by_zone += 1
         detections = kept
@@ -520,19 +556,23 @@ def on_done(future: Future[InferenceOutput]):
             new_state: list[tuple[float, float, str]] = []
             smoothed_kept = []
             used_prev: set[int] = set()
-            for label, confidence, bbox_norm in kept:
+            for i, (label, confidence, bbox_norm) in enumerate(kept):
                 ymin, xmin, ymax, xmax = bbox_norm
-                cx_raw, cy_raw = _foreground_centroid(bbox_norm, _latest_mask, _latest_mask_shape)
+                mc = mask_centroid_per_kept[i]
+                if mc is not None:
+                    cx_raw, cy_raw = mc
+                else:
+                    cx_raw, cy_raw = _foreground_centroid(bbox_norm, _latest_mask, _latest_mask_shape)
                 w = xmax - xmin
                 h = ymax - ymin
                 threshold = (w + h) / 2.0
                 best_i, best_dist = None, float("inf")
-                for i, (pcx, pcy, plabel) in enumerate(_smoothed_raw_coords):
-                    if i in used_prev or plabel != label:
+                for j, (pcx, pcy, plabel) in enumerate(_smoothed_raw_coords):
+                    if j in used_prev or plabel != label:
                         continue
                     dist = ((cx_raw - pcx) ** 2 + (cy_raw - pcy) ** 2) ** 0.5
                     if dist < threshold and dist < best_dist:
-                        best_dist, best_i = dist, i
+                        best_dist, best_i = dist, j
                 if best_i is not None:
                     used_prev.add(best_i)
                     cx = c_alpha * cx_raw + (1.0 - c_alpha) * _smoothed_raw_coords[best_i][0]
@@ -546,8 +586,12 @@ def on_done(future: Future[InferenceOutput]):
             kept = smoothed_kept
         else:
             new_state = []
-            for label, confidence, bbox_norm in kept:
-                cx, cy = _foreground_centroid(bbox_norm, _latest_mask, _latest_mask_shape)
+            for i, (label, confidence, bbox_norm) in enumerate(kept):
+                mc = mask_centroid_per_kept[i]
+                if mc is not None:
+                    cx, cy = mc
+                else:
+                    cx, cy = _foreground_centroid(bbox_norm, _latest_mask, _latest_mask_shape)
                 new_state.append((cx, cy, label))
                 smoothed_centers.append((cx, cy))
             _smoothed_raw_coords = new_state
@@ -558,6 +602,7 @@ def on_done(future: Future[InferenceOutput]):
             if not ent["inside_exclusion"]:
                 ent["bbox_norm"] = [float(v) for v in kept[ki][2]]
                 ent["center_norm"] = [float(smoothed_centers[ki][0]), float(smoothed_centers[ki][1])]
+                ent["mask_polygon"] = mask_polygon_per_kept[ki]
                 ki += 1
         detections = kept
 
@@ -642,6 +687,7 @@ def on_done(future: Future[InferenceOutput]):
                 "score": float(ent["confidence"]),
                 "bbox": [float(xmin), float(ymin), float(xmax), float(ymax)],
                 "center": [float(cx), float(cy)],
+                "mask_polygon": ent.get("mask_polygon"),
             })
         events.publish("detections", {
             "frame_ts_ns": int(timestamp),
@@ -770,10 +816,9 @@ def on_done(future: Future[InferenceOutput]):
                 from .engine import feed_target  # noqa: PLC0415
 
                 aim_bbox = _prev_aim_bbox if _prev_aim_bbox is not None else smoothed_bbox
-                _aim_center = None
-                if _latest_mask is not None:
-                    _aim_center = _foreground_centroid(aim_bbox, _latest_mask, _latest_mask_shape)
-                feed_target(bbox_normalized=aim_bbox, aim_center=_aim_center)
+                # aim_bbox is already recentered on the seg mask centroid (via EMA smoothing);
+                # pass aim_center=None so feed_target uses bbox_to_angles(aim_bbox) directly.
+                feed_target(bbox_normalized=aim_bbox, aim_center=None)
             _prev_aim_bbox = smoothed_bbox
 
             # --- Splash logic: fire relay when a splash-class target is locked ---

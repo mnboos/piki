@@ -2,9 +2,9 @@ import logging
 import os
 import threading
 import time
-import traceback
 from pathlib import Path
 
+import cv2
 import numpy as np
 from hbm_runtime import HB_HBMRuntime
 
@@ -160,6 +160,55 @@ def _nms_per_class(boxes: np.ndarray, scores: np.ndarray, cls_ids: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# Segmentation mask helpers
+# ---------------------------------------------------------------------------
+
+def _crop_mask(masks: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+    """Zero out mask pixels outside the corresponding bounding box.
+
+    masks: (N, H, W) float32
+    boxes: (N, 4) float32 [x1, y1, x2, y2] in mask-space coords
+    """
+    n, h, w = masks.shape
+    x1 = boxes[:, 0].reshape(n, 1, 1)
+    y1 = boxes[:, 1].reshape(n, 1, 1)
+    x2 = boxes[:, 2].reshape(n, 1, 1)
+    y2 = boxes[:, 3].reshape(n, 1, 1)
+    r = np.arange(w, dtype=np.float32).reshape(1, 1, w)
+    c = np.arange(h, dtype=np.float32).reshape(1, h, 1)
+    return masks * ((r >= x1) & (r < x2) & (c >= y1) & (c < y2))
+
+
+def _process_mask(
+    protos: np.ndarray,
+    masks_in: np.ndarray,
+    bboxes: np.ndarray,
+    shape: tuple[int, int],
+    upsample: bool = True,
+) -> np.ndarray:
+    """Decode mask coefficients → (N, H, W) boolean masks.
+
+    protos:   (32, mh, mw)
+    masks_in: (N, 32)
+    bboxes:   (N, 4) [x1,y1,x2,y2] in image-space pixels
+    shape:    (img_h, img_w)
+    """
+    c, mh, mw = protos.shape
+    ih, iw = shape
+    # (N, 32) × (32, mh*mw) → sigmoid → (N, mh, mw)
+    masks = _sigmoid(masks_in @ protos.reshape(c, -1)).reshape(-1, mh, mw)
+    # Scale bboxes down to proto resolution and crop
+    scale = np.array([mw / iw, mh / ih, mw / iw, mh / ih], dtype=np.float32)
+    masks = _crop_mask(masks, bboxes * scale)
+    if upsample:
+        masks = np.stack([
+            cv2.resize(m.astype(np.float32), (iw, ih), interpolation=cv2.INTER_LINEAR)
+            for m in masks
+        ])
+    return masks > 0.5
+
+
+# ---------------------------------------------------------------------------
 # Model loading + inference
 # ---------------------------------------------------------------------------
 # The BPU model is loaded lazily on the first detect_objects() call so that
@@ -170,7 +219,7 @@ _model_file_env = os.environ.get("MODEL_FILE")
 _model_file = (
     Path(_model_file_env).resolve()
     if _model_file_env
-    else Path("/app/model/basic/yolo26n_detect_bayese_640x640_nv12.bin")
+    else Path(__file__).parents[3] / "model" / "yolo26n_seg_bayese_640x640_nv12.bin"
 )
 
 # MODEL_INPUT_TYPE is derived from the filename alone so it's available at
@@ -181,7 +230,32 @@ _runtime: "HB_HBMRuntime | None" = None
 _model_name: str = ""
 _input_name: str = ""
 _output_names: list[str] = []
+_sorted_output_names: list[str] = []   # populated on first inference
 _model_lock = threading.Lock()
+
+# Within each stride group the last-dim order is: cls(80) → box(4) → mc(32).
+_C_ORDER: dict[int, int] = {80: 0, 4: 1, 32: 2}
+
+
+def _sort_outputs(raw_outputs: dict) -> list[str]:
+    """Return output names in the canonical seg order:
+    [cls0, box0, mc0, cls1, box1, mc1, cls2, box2, mc2, proto]
+    Detection heads: shape (1,H,W,C) with H∈{20,40,80}, C∈{4,32,80}.
+    Proto:           shape (1,H,W,32) with H=160 (largest spatial dimension).
+    Sorted H descending so si=0 → stride-8 (H=80), si=1 → stride-16, si=2 → stride-32.
+    """
+    info: list[tuple[int, int, str]] = []
+    for name, arr in raw_outputs.items():
+        a = arr.squeeze(0)
+        h = int(a.shape[0])
+        c = int(a.shape[-1])
+        info.append((h, c, name))
+    max_h = max(x[0] for x in info)
+    det = [(h, c, name) for h, c, name in info if h < max_h]
+    proto = [name for h, c, name in info if h == max_h]
+    # Largest H first (stride-8 first), within a stride group: cls, box, mc
+    det.sort(key=lambda x: (-x[0], _C_ORDER.get(x[1], 9)))
+    return [name for _, _, name in det] + proto
 
 
 def _init_model() -> None:
@@ -202,16 +276,28 @@ def _init_model() -> None:
 
 
 def detect_objects(image: np.ndarray) -> tuple[int, list]:
-    """Run inference on a single 640x640 tile; return (elapsed_ms, detections).
+    """Run inference on a single 640×640 tile; return ``(elapsed_ms, detections)``.
 
-    Each detection is ``(label_str, confidence, np.array([x1,y1,x2,y2]))``
-    in pixel coordinates relative to the 640x640 tile.
+    Each detection is a 5-tuple:
+    ``(label_str, confidence, xyxy_px_array, centroid_tile_px, polygon_tile_px_list)``
+
+    * ``xyxy_px_array``        – ``np.array([x1,y1,x2,y2])`` in 640×640 tile pixel coords
+    * ``centroid_tile_px``     – ``(cx, cy)`` float tile-pixel coords, or ``None`` if the
+                                  instance mask contains no foreground pixels
+    * ``polygon_tile_px_list`` – list of contours; each contour is a flat ``[x1,y1,...]``
+                                  list in tile pixel coords, or ``None``
     """
+    global _sorted_output_names
     _init_model()  # no-op after first call
 
     t0 = time.perf_counter()
     outputs = _runtime.run({_model_name: {_input_name: image}})
     outputs = outputs[_model_name]
+
+    # Sort outputs into canonical order on the very first inference.
+    if not _sorted_output_names:
+        _sorted_output_names = _sort_outputs(outputs)
+        logger.debug("Seg output order resolved: %s", _sorted_output_names)
 
     # Use the lower "keep" threshold so on_done()'s hysteresis still
     # receives low-confidence candidates.
@@ -220,12 +306,17 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
     conf = min(p_val, pk_val)
     conf_raw = -np.log(1.0 / max(conf, 1e-6) - 1.0)
 
-    all_boxes, all_scores, all_cls = [], [], []
+    all_boxes: list[np.ndarray] = []
+    all_scores: list[np.ndarray] = []
+    all_cls: list[np.ndarray] = []
+    all_mc: list[np.ndarray] = []
     max_logits_per_stride: list[float] = []
     n_above_per_stride: list[int] = []
+
     for si, stride in enumerate([8, 16, 32]):
-        cls_out = outputs[_output_names[si * 2]].squeeze(0)      # (H, W, 80)
-        box_out = outputs[_output_names[si * 2 + 1]].squeeze(0)  # (H, W, 4)
+        cls_out = outputs[_sorted_output_names[si * 3]].squeeze(0)       # (H, W, 80)
+        box_out = outputs[_sorted_output_names[si * 3 + 1]].squeeze(0)   # (H, W, 4)
+        mc_out  = outputs[_sorted_output_names[si * 3 + 2]].squeeze(0)   # (H, W, 32)
         gh, gw = cls_out.shape[:2]
 
         cls_flat = cls_out.reshape(-1, cls_out.shape[-1])
@@ -240,6 +331,7 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
         all_boxes.append(boxes)
         all_scores.append(scores)
         all_cls.append(ids)
+        all_mc.append(mc_out.reshape(-1, 32)[valid])
 
     if not all_boxes:
         img_stats = f"min={image.min()} max={image.max()} mean={image.mean():.1f}" if image.size else "empty"
@@ -253,13 +345,46 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
         )
         return round((time.perf_counter() - t0) * 1000), []
 
-    boxes = np.concatenate(all_boxes)
-    scores = np.concatenate(all_scores)
-    cls_ids = np.concatenate(all_cls)
-    indices = _nms_per_class(boxes, scores, cls_ids, NMS_THRESH)
-    results = [
-        (CLASSES[cls_ids[i]].strip(), float(scores[i]), boxes[i])
-        for i in indices
-    ]
-    tt = round((time.perf_counter() - t0) * 1000)
-    return tt, results
+    boxes    = np.concatenate(all_boxes)
+    scores   = np.concatenate(all_scores)
+    cls_ids  = np.concatenate(all_cls)
+    mc       = np.concatenate(all_mc)          # (N_pre, 32)
+
+    indices     = _nms_per_class(boxes, scores, cls_ids, NMS_THRESH)
+    kept_boxes  = boxes[indices].astype(np.float32)
+    kept_scores = scores[indices]
+    kept_cls    = cls_ids[indices]
+    kept_mc     = mc[indices].astype(np.float32)   # (N, 32)
+
+    # Decode proto and generate per-instance binary masks.
+    proto_raw = outputs[_sorted_output_names[9]].squeeze(0)               # (160, 160, 32)
+    proto = np.ascontiguousarray(proto_raw.transpose(2, 0, 1).astype(np.float32))  # (32, 160, 160)
+    masks = _process_mask(proto, kept_mc, kept_boxes, (IMG_SIZE, IMG_SIZE))  # (N, 640, 640) bool
+
+    results: list = []
+    for i in range(len(indices)):
+        label    = CLASSES[kept_cls[i]].strip()
+        conf_val = float(kept_scores[i])
+        box      = kept_boxes[i]
+        mask     = masks[i]  # (640, 640) bool
+
+        ys, xs = np.where(mask)
+        if xs.size > 0:
+            centroid_px: "tuple[float,float] | None" = (float(xs.mean()), float(ys.mean()))
+            mask_u8 = mask.astype(np.uint8) * 255
+            contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            polygon: "list[list[float]] | None" = []
+            for cnt in contours:
+                eps = 0.01 * cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, eps, True)
+                if len(approx) >= 3:
+                    polygon.append(approx.reshape(-1).tolist())
+            if not polygon:
+                polygon = None
+        else:
+            centroid_px = None
+            polygon = None
+
+        results.append((label, conf_val, box, centroid_px, polygon))
+
+    return round((time.perf_counter() - t0) * 1000), results

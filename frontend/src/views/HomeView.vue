@@ -46,6 +46,7 @@ const options = ref<PikiOptions>({
 // because the mask + ROI overlays are pure visualizations.
 const showMask = ref(false);
 const showRois = ref(false);
+const showSegMasks = ref(false);
 
 const aimConfig = ref<AimConfigSchema>({
     targetClasses: [],
@@ -203,6 +204,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                                 <DetectionOverlay
                                     :show-boxes="options.showBoxes"
                                     :show-mask="showMask"
+                                    :show-seg-masks="showSegMasks"
                                     :show-rois="showRois"
                                 />
                             </template>
@@ -210,6 +212,8 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: showSegMasks }]"
+                                @click="showSegMasks = !showSegMasks">Seg</button>
                             <button :class="['ot-btn', { active: showMask }]"
                                 @click="showMask = !showMask">Mask</button>
                             <button :class="['ot-btn', { active: showRois }]"
@@ -239,6 +243,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                                 <DetectionOverlay
                                     :show-boxes="options.showBoxes"
                                     :show-mask="showMask"
+                                    :show-seg-masks="showSegMasks"
                                     :show-rois="showRois"
                                 />
                                 <ExclusionZoneOverlay :enabled="editingZones" />
@@ -247,6 +252,8 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
                         <div class="overlay-toggles">
                             <button :class="['ot-btn', { active: options.showBoxes }]"
                                 @click="options.showBoxes = !options.showBoxes">Boxes</button>
+                            <button :class="['ot-btn', { active: showSegMasks }]"
+                                @click="showSegMasks = !showSegMasks">Seg</button>
                             <button :class="['ot-btn', { active: showMask }]"
                                 @click="showMask = !showMask">Mask</button>
                             <button :class="['ot-btn', { active: showRois }]"

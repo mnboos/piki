@@ -21,7 +21,7 @@ from . import events
 from .utils import exclusion, sysmetrics, webrtc
 from .utils.engine import move_to
 from .utils.event_log import summarize_log
-from .utils.event_payloads import build_recording_payload, build_replay_payload, build_splash_payload, build_tracker_payload
+from .utils.event_payloads import build_fps_payload, build_recording_payload, build_replay_payload, build_splash_payload, build_tracker_payload
 from .utils.recording import (
     get_recording_stats,
     is_recording,
@@ -545,7 +545,7 @@ class SystemStatus(Schema):
 @api.get("/tracker_status", response=SystemStatus)
 def get_tracker_status(request: HttpRequest):
     """Return current system status (FPS + servo position)."""
-    payload = build_tracker_payload()
+    payload = {**build_tracker_payload(), **build_fps_payload()}
     return SystemStatus(**payload)
 
 

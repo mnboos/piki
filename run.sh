@@ -122,7 +122,7 @@ export PYTHONUNBUFFERED=1
 ROS_IMAGE_TOPIC="/image_left_raw"
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
 
-export  MODEL_FILE=/app/model/basic/yolo26n_detect_bayese_640x640_nv12.bin
+export  MODEL_FILE=/home/sunrise/src/piki/model/yolo26n_seg_bayese_640x640_nv12.bin
 
 if [ "${PIKI_PROD:-0}" = "1" ]; then
     echo "[piki] Starting daphne (prod, 127.0.0.1:8000)..."

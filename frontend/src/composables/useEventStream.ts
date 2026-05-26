@@ -17,6 +17,8 @@ export interface DetectionEntry {
     bbox: [number, number, number, number];
     /** Normalized [cx, cy] mask centroid. */
     center?: [number, number];
+    /** Per-detection instance mask contours: each inner array is [x1,y1,x2,y2,...] normalized. */
+    maskPolygon?: number[][];
 }
 
 export interface DetectionsPayload {
@@ -34,8 +36,13 @@ export interface MaskPayload {
     polygons: number[][];
 }
 
+export interface PipelineFpsPayload {
+    fps: number;
+}
+
 interface State {
     tracker_status: SystemStatus | null;
+    pipeline_fps: PipelineFpsPayload;
     splash_status: SplashStatus | null;
     recording_status: RecordingStatus | null;
     replay_status: ReplayStatus | null;
@@ -47,6 +54,7 @@ interface State {
 
 const state = reactive<State>({
     tracker_status: null,
+    pipeline_fps: { fps: 0 },
     splash_status: null,
     recording_status: null,
     replay_status: null,
@@ -193,6 +201,9 @@ watch(data, raw => {
         case "tracker_status":
             state.tracker_status = payload as unknown as SystemStatus;
             break;
+        case "pipeline_fps":
+            state.pipeline_fps = payload as unknown as PipelineFpsPayload;
+            break;
         case "splash_status":
             applySplashPayload(payload as unknown as Record<string, unknown>);
             break;
@@ -228,6 +239,7 @@ watch(data, raw => {
 });
 
 export const useTrackerStatus = () => computed(() => state.tracker_status);
+export const usePipelineFps = () => computed(() => state.pipeline_fps.fps);
 export const useDetections = () => computed(() => state.detections);
 export const useRois = () => computed(() => state.rois);
 export const useMask = () => computed(() => state.mask);

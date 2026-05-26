@@ -12,6 +12,7 @@ events dropped during the no-client window aren't a correctness problem.
 """
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -25,6 +26,7 @@ GROUP = "events"
 _loop: asyncio.AbstractEventLoop | None = None
 _channel_layer = None
 _throttle_last: dict[str, float] = {}
+_last_payload: dict[str, str] = {}
 _throttle_lock = threading.Lock()
 
 
@@ -56,11 +58,20 @@ def publish(topic: str, payload: dict) -> None:
 
 
 def publish_throttled(topic: str, payload: dict, min_interval: float) -> None:
-    """Publish at most once per `min_interval` seconds for a given topic."""
+    """Publish at most once per `min_interval` seconds for a given topic.
+
+    Skips identical payloads (content-based dedup).  The throttle timestamp
+    is *not* updated on a content match, so the next different payload
+    passes the time gate immediately.
+    """
+    serialized = json.dumps(payload, sort_keys=True)
     now = time.monotonic()
     with _throttle_lock:
         last = _throttle_last.get(topic, 0.0)
         if now - last < min_interval:
             return
+        if _last_payload.get(topic) == serialized:
+            return  # same content, do NOT bump the throttle timestamp
         _throttle_last[topic] = now
+        _last_payload[topic] = serialized
     publish(topic, payload)

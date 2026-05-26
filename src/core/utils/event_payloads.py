@@ -15,8 +15,11 @@ from .replay import get_replay_stats, is_replaying
 
 
 def build_tracker_payload() -> dict:
+    """Servo-only payload for the high-frequency ``tracker_status`` WS topic.
+    FPS is sent separately on ``pipeline_fps`` at a lower rate so that content
+    dedup can suppress unchanged servo positions.
+    """
     return {
-        "fps": round(_s.fps_counter.fps, 1),
         "servo": {
             "pan": round(float(_s.servo_pan.value), 2),
             "tilt": round(float(_s.servo_tilt.value), 2),
@@ -24,6 +27,10 @@ def build_tracker_payload() -> dict:
             "kalman_tilt": round(float(_s.servo_kalman_tilt.value), 2),
         },
     }
+
+
+def build_fps_payload() -> dict:
+    return {"fps": round(_s.fps_counter.fps, 1)}
 
 
 def build_detections_snapshot() -> dict:
@@ -163,6 +170,7 @@ def snapshot() -> dict[str, dict]:
     """Full per-topic state for a fresh WS connection."""
     return {
         "tracker_status": build_tracker_payload(),
+        "pipeline_fps": build_fps_payload(),
         "splash_status": build_splash_payload(),
         "recording_status": build_recording_payload(),
         "replay_status": build_replay_payload(),

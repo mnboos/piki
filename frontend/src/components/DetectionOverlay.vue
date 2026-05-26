@@ -11,11 +11,14 @@ const props = withDefaults(defineProps<{
     showMask?: boolean;
     /** Draw motion ROI tiles (dashed orange). */
     showRois?: boolean;
+    /** Draw per-detection YOLO instance seg mask fills. */
+    showSegMasks?: boolean;
 }>(), {
     showBoxes: true,
     showCrosshair: true,
     showMask: false,
     showRois: false,
+    showSegMasks: false,
 });
 
 // Servo field-of-view (matches `SERVO_HFOV`/`SERVO_VFOV` env defaults in engine.py).
@@ -100,6 +103,26 @@ function draw() {
                 ctx.moveTo(poly[0] * w, poly[1] * h);
                 for (let i = 2; i < poly.length; i += 2) {
                     ctx.lineTo(poly[i] * w, poly[i + 1] * h);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+    }
+
+    // Seg instance mask fills (drawn above MOG mask, below trails and boxes).
+    if (props.showSegMasks && detections.value) {
+        const dets = detections.value.detections ?? [];
+        for (const d of dets) {
+            if (!d.maskPolygon || d.maskPolygon.length === 0) continue;
+            const color = colorForTrack(d.tid, d.label);
+            ctx.fillStyle = hexToRgba(color, 0.35);
+            for (const contour of d.maskPolygon) {
+                if (contour.length < 4) continue;
+                ctx.beginPath();
+                ctx.moveTo(contour[0] * w, contour[1] * h);
+                for (let pi = 2; pi < contour.length - 1; pi += 2) {
+                    ctx.lineTo(contour[pi] * w, contour[pi + 1] * h);
                 }
                 ctx.closePath();
                 ctx.fill();
@@ -273,7 +296,7 @@ watch(
     [
         detections, trackerStatus, rois, mask,
         () => props.showBoxes, () => props.showCrosshair,
-        () => props.showRois, () => props.showMask,
+        () => props.showRois, () => props.showMask, () => props.showSegMasks,
     ],
     schedule,
     { deep: true },

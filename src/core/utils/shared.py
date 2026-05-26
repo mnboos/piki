@@ -136,10 +136,11 @@ fps_counter = FPSCounter()
 
 
 class Detection(NamedTuple):
-    # ("tracker", 1, bbox)
     label: str
     confidence: float
-    bbox: Sequence[int]
+    bbox: Sequence[float]
+    mask_centroid: "tuple[float, float] | None" = None
+    mask_polygon: "list[list[float]] | None" = None  # [[x1,y1,...], ...] contours, normalized
 
 
 class InferenceOutput(NamedTuple):
