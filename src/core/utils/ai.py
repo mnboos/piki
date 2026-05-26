@@ -216,11 +216,15 @@ def _process_mask(
 # 5-15s HB_HBMRuntime constructor on cold boot.
 
 _model_file_env = os.environ.get("MODEL_FILE")
-_model_file = (
-    Path(_model_file_env).resolve()
-    if _model_file_env
-    else Path(__file__).parents[3] / "model" / "yolo26n_seg_bayese_640x640_nv12.bin"
-)
+if _model_file_env:
+    _model_file = Path(_model_file_env).resolve()
+else:
+    _variant = os.environ.get("YOLO_VARIANT", "n")
+    _model_file = (
+        Path(__file__).parents[3]
+        / "model"
+        / f"yolo26{_variant}_seg_bayese_640x640_nv12.bin"
+    )
 
 # MODEL_INPUT_TYPE is derived from the filename alone so it's available at
 # import time without touching the BPU. The filename is authoritative.

@@ -8,6 +8,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
 # ── Source environments ───────────────────────────────────────────────────────
+# Load .env variables into the environment so Python can read them via os.environ.
+set -a
+source "${SCRIPT_DIR}/.env"
+set +a
+
 # tros.b must be sourced BEFORE the venv — it injects rclpy, hobot_dnn etc.
 # into the Python path. Activating the venv afterwards layers on top correctly.
 source /opt/tros/humble/setup.bash
@@ -121,8 +126,6 @@ export PYTHONUNBUFFERED=1
 # 1280x640 → up to 2 native 640x640 tiles → no resize → best YOLO accuracy.
 ROS_IMAGE_TOPIC="/image_left_raw"
 export ROS_IMAGE_TOPIC="${ROS_IMAGE_TOPIC}"
-
-export  MODEL_FILE=/home/sunrise/src/piki/model/yolo26n_seg_bayese_640x640_nv12.bin
 
 if [ "${PIKI_PROD:-0}" = "1" ]; then
     echo "[piki] Starting daphne (prod, 127.0.0.1:8000)..."
