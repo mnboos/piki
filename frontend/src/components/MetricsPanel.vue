@@ -45,6 +45,17 @@ function fmtUptime(s: number | null | undefined): string {
     return `${min}m`;
 }
 
+function signalClass(dbm: number): string {
+    if (dbm >= -60) return "signal-good";
+    if (dbm >= -75) return "signal-fair";
+    return "signal-poor";
+}
+
+function fmtSignal(dbm: number | null | undefined): string {
+    if (dbm == null) return "";
+    return `${dbm} dBm`;
+}
+
 function tempClass(c: number): string {
     if (c >= 85) return "temp-hot";
     if (c >= 75) return "temp-warm";
@@ -207,6 +218,10 @@ const tempEntries = computed<[string, number][]>(() =>
                     <span>{{ iface.name }}</span>
                     <span>
                         ↓ {{ fmtRate(iface.rxBytesPerS) }} &nbsp; ↑ {{ fmtRate(iface.txBytesPerS) }}
+                        <span
+                            v-if="iface.signalDbm != null"
+                            :class="['mp-signal', signalClass(iface.signalDbm)]"
+                        >&nbsp;{{ fmtSignal(iface.signalDbm) }}</span>
                     </span>
                 </div>
                 <div class="mp-row mp-row--small">
@@ -299,9 +314,14 @@ const tempEntries = computed<[string, number][]>(() =>
 .temp-hot {
     color: #e74c3c;
 }
-.mp-info {
-    font-size: 0.7rem;
-    color: var(--p-text-muted-color, #888);
-    cursor: help;
+.signal-good {
+    color: #2ecc71;
+}
+.signal-fair {
+    color: #f5a623;
+}
+.signal-poor {
+    color: #e74c3c;
 }
 </style>
+

@@ -37,6 +37,12 @@ export interface NetInterface {
      * @memberof NetInterface
      */
     txBytesPerS: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof NetInterface
+     */
+    signalDbm?: number | null;
 }
 
 /**
@@ -62,6 +68,7 @@ export function NetInterfaceFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'name': json['name'],
         'rxBytesPerS': json['rx_bytes_per_s'],
         'txBytesPerS': json['tx_bytes_per_s'],
+        'signalDbm': json['signal_dbm'] == null ? undefined : json['signal_dbm'],
     };
 }
 
@@ -79,6 +86,7 @@ export function NetInterfaceToJSONTyped(value?: NetInterface | null, ignoreDiscr
         'name': value['name'],
         'rx_bytes_per_s': value['rxBytesPerS'],
         'tx_bytes_per_s': value['txBytesPerS'],
+        'signal_dbm': value['signalDbm'],
     };
 }
 

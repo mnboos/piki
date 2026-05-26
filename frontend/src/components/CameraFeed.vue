@@ -132,16 +132,31 @@ async function negotiate() {
     }
 }
 
+// Cap how long we'll wait for ICE gathering to reach "complete". Chrome will
+// otherwise sit on an unreachable STUN server for ~30–60 s before giving up,
+// which manifests as a long black screen on every prod page load (Chrome's
+// mDNS obfuscation forces srflx gathering even on LAN). Host candidates land
+// in <500 ms on a healthy LAN; 2 s is a generous ceiling before we ship the
+// offer with whatever's already gathered.
+const ICE_GATHER_TIMEOUT_MS = 2000;
+
 function iceComplete(pc: RTCPeerConnection): Promise<void> {
     if (pc.iceGatheringState === "complete") return Promise.resolve();
     return new Promise(resolve => {
-        const check = () => {
-            if (pc.iceGatheringState === "complete") {
-                pc.removeEventListener("icegatheringstatechange", check);
-                resolve();
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const finish = () => {
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
             }
+            pc.removeEventListener("icegatheringstatechange", check);
+            resolve();
+        };
+        const check = () => {
+            if (pc.iceGatheringState === "complete") finish();
         };
         pc.addEventListener("icegatheringstatechange", check);
+        timer = setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
     });
 }
 
