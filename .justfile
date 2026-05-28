@@ -1,7 +1,9 @@
 set dotenv-load
 
-_BASE := "https://archive.d-robotics.cc/downloads/rdk_model_zoo/rdk_x5/Ultralytics_YOLO_OE_1.2.8"
+_BASE     := "https://archive.d-robotics.cc/downloads/rdk_model_zoo/rdk_x5/Ultralytics_YOLO_OE_1.2.8"
 _MODEL_DIR := "model"
+_NAL_DIR  := justfile_directory() / "piki_nal"
+_VENV     := justfile_directory() / ".venv"
 
 # Set system timezone to Europe/Zurich and ensure NTP is running
 set-timezone:
@@ -43,6 +45,45 @@ profile-staged:
 profile-report:
     uv run python benchmarks/parse_perf_log.py $(ls -t logs/profile_*.log | head -1)
 
+# ── piki_nal Rust extension ──────────────────────────────────────────────────
+
+# Build the piki_nal Rust extension in release mode (~30–90 s first build,
+# ~30 s incremental).  Re-run whenever piki_nal/src/ changes.
+build-nal:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    cd "{{_NAL_DIR}}"
+    VIRTUAL_ENV="{{_VENV}}" \
+        PATH="{{_VENV}}/bin:$PATH" \
+        "$HOME/.local/bin/maturin" develop --release
+
+# Fast (unoptimised) piki_nal build for development iteration.
+build-nal-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    cd "{{_NAL_DIR}}"
+    VIRTUAL_ENV="{{_VENV}}" \
+        PATH="{{_VENV}}/bin:$PATH" \
+        "$HOME/.local/bin/maturin" develop
+
+# Type-check piki_nal without linking a .so (fast, no Python needed).
+check-nal:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    cd "{{_NAL_DIR}}"
+    cargo check
+
+# Run piki_nal Rust unit tests.
+test-nal:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    cd "{{_NAL_DIR}}"
+    cargo test
+
 # ── Production deploy ────────────────────────────────────────────────────────
 
 # Build the Vue frontend to frontend/dist/
@@ -53,8 +94,8 @@ build-frontend:
 collectstatic:
     cd src && uv run python manage.py collectstatic --noinput
 
-# Full prod build: frontend + staticfiles. Run after pulling changes.
-build-prod: build-frontend collectstatic
+# Full prod build: frontend + staticfiles + Rust extension. Run after pulling changes.
+build-prod: build-frontend collectstatic build-nal
 
 # One-time: symlink /etc/caddy/Caddyfile -> deploy/Caddyfile and add the
 # caddy user to the sunrise group so it can read the repo files. Backs up
