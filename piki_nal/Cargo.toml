@@ -1,0 +1,17 @@
+[package]
+name = "piki_nal"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "piki_nal"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+parking_lot = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

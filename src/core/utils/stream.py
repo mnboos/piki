@@ -1267,7 +1267,7 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     # If event recording is enabled (or an event clip is currently being
     # written), push the frame through the always-on rolling encoder on ch2 so
     # all recording paths share a single VPU encode per frame.
-    encoded_nals: list[bytes] = []
+    encoded_nals: list = []
     if event_recording_enabled.is_set() or event_recording_active.is_set():
         w = nv12_frame.shape[1]
         if _rolling_buffer is None:

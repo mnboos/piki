@@ -7,6 +7,13 @@ from typing import Any
 
 import numpy as np
 
+try:
+    import piki_nal as _nal
+    _HAS_PIKI_NAL = True
+except ImportError:
+    _nal = None  # type: ignore[assignment]
+    _HAS_PIKI_NAL = False
+
 logger = logging.getLogger(__name__)
 
 # Camera's nominal capture rate. Used as the recording timestamp rate and the
@@ -155,7 +162,7 @@ class _AsyncNalWriter:
     def isOpened(self) -> bool:  # noqa: N802
         return not self._stopping and self._sync.isOpened()
 
-    def write(self, nals: list[bytes], capture_ns: int) -> None:
+    def write(self, nals: list, capture_ns: int) -> None:
         if self._stopping:
             return
         item = (nals, capture_ns)
@@ -168,6 +175,10 @@ class _AsyncNalWriter:
                 self._dropped += 1
             except queue.Empty:
                 pass
+
+    def write_nals(self, nals: list, capture_ns: int) -> None:
+        """Alias for ``write`` — API-compatible with ``RustMp4Writer``."""
+        self.write(nals, capture_ns)
 
     def release(self) -> None:
         if self._stopping:
@@ -200,7 +211,7 @@ class H264RollingBuffer:
         from .hw_encoder import HwH264Encoder  # noqa: PLC0415
 
         self._enc = HwH264Encoder(channel=channel, width=width, height=height)
-        self._ring: deque[tuple[int, list[bytes], bool]] = deque()
+        self._ring: deque[tuple[int, list, bool]] = deque()
         self._lock = threading.Lock()
 
     @property
@@ -211,21 +222,24 @@ class H264RollingBuffer:
     def height(self) -> int:
         return self._enc.height
 
-    def push(self, nv12: np.ndarray, capture_ns: int, max_seconds: float) -> list[bytes]:
+    def push(self, nv12: np.ndarray, capture_ns: int, max_seconds: float) -> list:
         """Encode one NV12 frame, store its NALs in the ring, and return them.
 
-        The returned ``list[bytes]`` is the same object stored in the ring, so
-        callers can use it directly without an extra copy.  The encoder buffer
-        is already copied to ``bytes`` here so it remains valid after the next
-        ``send_frame`` call.
+        The returned list is the same object stored in the ring, so callers
+        can use it directly without an extra copy.  When ``piki_nal`` is
+        available the list contains ``NalSlice`` handles (zero-copy after the
+        one-time VPU-output copy); otherwise plain ``bytes`` objects.
         """
         nals_mv = self._enc.encode_nv12(nv12)
         if not nals_mv:
             return []
-        # Convert memoryviews → bytes: the encoder reuses its output buffer on
-        # the next send_frame() call, so views into it would become stale.
-        nals: list[bytes] = [bytes(mv) for mv in nals_mv]
-        is_idr = any((n[0] & 0x1F) == _NAL_IDR for n in nals)
+        if _HAS_PIKI_NAL:
+            nals = _nal.slices_from_views(nals_mv)
+            is_idr = any(s.is_idr for s in nals)
+        else:
+            # Fallback: copy memoryviews → bytes (encoder reuses its buffer).
+            nals = [bytes(mv) for mv in nals_mv]
+            is_idr = any((n[0] & 0x1F) == _NAL_IDR for n in nals)
 
         cutoff_ns = capture_ns - int(max_seconds * 1_000_000_000)
         max_frames = int(max_seconds * NOMINAL_FPS) + NOMINAL_FPS
@@ -237,7 +251,7 @@ class H264RollingBuffer:
                 self._ring.popleft()
         return nals
 
-    def snapshot(self, seconds: float) -> list[tuple[int, list[bytes]]]:
+    def snapshot(self, seconds: float) -> list[tuple[int, list]]:
         """Return an IDR-aligned window covering the last ``seconds`` seconds.
 
         Walks backwards from the first frame at or after the cutoff timestamp
@@ -311,37 +325,54 @@ class EventClipRecorder:
     """
 
     def __init__(self, output_path: str, fps: float,
-                 pre_frames: list[tuple[int, list[bytes]]],
+                 pre_frames: list[tuple[int, list]],
                  frame_w: int, frame_h: int):
-        from .hw_recorder import H264DirectMP4Writer  # noqa: PLC0415
-
         self._output_path = output_path
         self._frame_count = 0
         self._error: str | None = None
-        self._async_writer: _AsyncNalWriter | None = None
+        self._async_writer: Any = None
 
-        try:
-            direct = H264DirectMP4Writer(output_path, fps, frame_w, frame_h)
-        except Exception as exc:
-            self._error = f"Failed to create event recorder: {exc}"
-            logger.exception("EventClipRecorder open failed")
-            return
-
-        # Mux pre-buffer H.264 frames synchronously — muxing is fast (no VPU
-        # encode) so no overflow risk.  Then switch to async for live frames.
-        for capture_ns, nals in pre_frames:
+        if _HAS_PIKI_NAL:
             try:
-                direct.write_nals(nals, capture_ns)
-                self._frame_count += 1
-            except Exception:
-                logger.exception("EventClipRecorder: error writing pre-frame")
+                writer = _nal.RustMp4Writer(output_path, fps, frame_w, frame_h)
+            except Exception as exc:
+                self._error = f"Failed to create event recorder: {exc}"
+                logger.exception("EventClipRecorder open failed")
+                return
 
-        self._async_writer = _AsyncNalWriter(direct)
-        self._async_writer.start_async()
+            for capture_ns, nals in pre_frames:
+                try:
+                    writer.write_nals(nals, capture_ns)
+                    self._frame_count += 1
+                except Exception:
+                    logger.exception("EventClipRecorder: error writing pre-frame")
 
-    def write_nals(self, nals: list[bytes], capture_ns: int) -> None:
+            self._async_writer = writer
+        else:
+            from .hw_recorder import H264DirectMP4Writer  # noqa: PLC0415
+
+            try:
+                direct = H264DirectMP4Writer(output_path, fps, frame_w, frame_h)
+            except Exception as exc:
+                self._error = f"Failed to create event recorder: {exc}"
+                logger.exception("EventClipRecorder open failed")
+                return
+
+            # Mux pre-buffer H.264 frames synchronously — muxing is fast (no
+            # VPU encode) so no overflow risk.  Then switch to async for live.
+            for capture_ns, nals in pre_frames:
+                try:
+                    direct.write_nals(nals, capture_ns)
+                    self._frame_count += 1
+                except Exception:
+                    logger.exception("EventClipRecorder: error writing pre-frame")
+
+            self._async_writer = _AsyncNalWriter(direct)
+            self._async_writer.start_async()
+
+    def write_nals(self, nals: list, capture_ns: int) -> None:
         if self._async_writer is not None and self._async_writer.isOpened():
-            self._async_writer.write(nals, capture_ns)
+            self._async_writer.write_nals(nals, capture_ns)
             self._frame_count += 1
 
     def close(self) -> tuple[str, int, str | None]:
@@ -415,18 +446,29 @@ def _create_writer(frame_w: int, frame_h: int) -> None:
 
 def _create_h264_writer() -> None:
     global _writer, _output_path, _start_time
-    from .hw_recorder import H264DirectMP4Writer  # noqa: PLC0415
-    try:
-        direct = H264DirectMP4Writer(
-            _pending_h264_path, _pending_h264_fps, _pending_h264_w, _pending_h264_h,
-        )
-        _writer = _AsyncNalWriter(direct)
-        _output_path = _pending_h264_path
-    except Exception:
-        logger.exception("Failed to open H264DirectMP4Writer")
-        _writer = None
-        return
-    _writer.start_async()
+    if _HAS_PIKI_NAL:
+        try:
+            _writer = _nal.RustMp4Writer(
+                _pending_h264_path, _pending_h264_fps, _pending_h264_w, _pending_h264_h,
+            )
+            _output_path = _pending_h264_path
+        except Exception:
+            logger.exception("Failed to open RustMp4Writer")
+            _writer = None
+            return
+    else:
+        from .hw_recorder import H264DirectMP4Writer  # noqa: PLC0415
+        try:
+            direct = H264DirectMP4Writer(
+                _pending_h264_path, _pending_h264_fps, _pending_h264_w, _pending_h264_h,
+            )
+            _writer = _AsyncNalWriter(direct)
+            _output_path = _pending_h264_path
+        except Exception:
+            logger.exception("Failed to open H264DirectMP4Writer")
+            _writer = None
+            return
+        _writer.start_async()
     _start_time = time.monotonic()
 
 
@@ -453,7 +495,7 @@ def write_frame(frame: np.ndarray) -> None:
             _error = "VideoWriter not open"
 
 
-def write_nals(nals: list[bytes], capture_ns: int) -> None:
+def write_nals(nals: list, capture_ns: int) -> None:
     """Write a group of pre-encoded NAL units to the active H.264 recording."""
     global _frame_count, _error
     if not nals:
@@ -467,7 +509,7 @@ def write_nals(nals: list[bytes], capture_ns: int) -> None:
 
         if _writer is not None and _writer.isOpened():
             try:
-                _writer.write(nals, capture_ns)
+                _writer.write_nals(nals, capture_ns)
                 _frame_count += 1
             except Exception as e:
                 _error = str(e)
