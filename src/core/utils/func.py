@@ -145,6 +145,45 @@ def cluster_with_constraints(
     return final_rois
 
 
+def nms_indices_per_class(
+    *,
+    boxes: list[list[int]],
+    scores: list[float],
+    class_ids: list[int],
+    overlap_threshold: float = 0.3,
+) -> list[int]:
+    """Per-class NMS over (x, y, w, h) boxes; returns kept original indices.
+
+    Boxes from different classes are never compared. Within a class the
+    higher-score box wins when IoU >= overlap_threshold.
+    """
+    if not boxes:
+        return []
+
+    by_class: dict[int, list[int]] = {}
+    for i, cid in enumerate(class_ids):
+        by_class.setdefault(cid, []).append(i)
+
+    kept: list[int] = []
+    for indices in by_class.values():
+        if len(indices) == 1:
+            kept.append(indices[0])
+            continue
+        cls_boxes = [boxes[i] for i in indices]
+        cls_scores = np.array([scores[i] for i in indices], dtype=np.float32)
+        keep = cv2.dnn.NMSBoxes(
+            bboxes=cls_boxes,
+            scores=cls_scores,
+            score_threshold=0.0,
+            nms_threshold=overlap_threshold,
+        )
+        if len(keep):
+            for k in np.array(keep).flatten():
+                kept.append(indices[int(k)])
+    kept.sort()
+    return kept
+
+
 def apply_non_max_suppression(*, boxes: list[Box], overlap_threshold: float = 0.3):
     """Apply Non-Max Suppression to a list of bounding boxes to remove redundant, overlapping ROIs.
 
@@ -365,10 +404,10 @@ def slice_roi_into_tiles(
                     maybe_add_to_tiles(tx, ty)
                     if tx >= rx + rw - tile_size or tx >= buffer_w - tile_size:
                         break
-                    x += tile_size - int(tile_size * 0.25)
+                    x += tile_size - int(tile_size * 0.1)
                 if ty >= ry + rh - tile_size or ty >= buffer_h - tile_size:
                     break
-                y += tile_size - int(tile_size * 0.25)
+                y += tile_size - int(tile_size * 0.1)
 
     return tiles
 

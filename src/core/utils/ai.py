@@ -375,6 +375,7 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
         ys, xs = np.where(mask)
         if xs.size > 0:
             centroid_px: "tuple[float,float] | None" = (float(xs.mean()), float(ys.mean()))
+
             mask_u8 = mask.astype(np.uint8) * 255
             contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             polygon: "list[list[float]] | None" = []

@@ -36,6 +36,7 @@ from .event_payloads import (
 )
 from .event_log import EventLogger
 from .func import (
+    nms_indices_per_class,
     slice_roi_into_tiles,
 )
 from .hw_encoder import HwH264Encoder
@@ -43,10 +44,11 @@ from .webrtc import webrtc_publish
 from .interfaces import Box, DoubleBuffer
 from .metrics import LiveMetricsDashboard
 from .recording import (
+    NOMINAL_FPS,
     EventClipRecorder,
-    pre_buffer_append,
-    pre_buffer_snapshot,
+    H264RollingBuffer,
     write_frame,
+    write_nals,
 )
 from .shared import (
     NUM_AI_WORKERS,
@@ -111,6 +113,51 @@ _hw_encoder_dims: tuple[int, int] | None = None
 
 # Monotonic ns of the last encode call — drives the target-FPS frame skip.
 _last_encode_ns: int = 0
+
+# Rolling H.264 buffer for event + manual recording.  Created lazily on the
+# first frame when event recording is enabled; destroyed when it is disabled.
+# Lives on the ROS callback thread — push() must not be called concurrently.
+_rolling_buffer: H264RollingBuffer | None = None
+# VPU channel reserved for the always-on rolling encoder.
+_ROLLING_BUFFER_CHANNEL = 2
+
+
+def _init_rolling_buffer(width: int, height: int) -> None:
+    """Create the rolling buffer encoder on VPU channel 2 (lazy, called from
+    the ROS callback thread on the first eligible frame)."""
+    global _rolling_buffer
+    if _rolling_buffer is not None:
+        return
+    try:
+        _rolling_buffer = H264RollingBuffer(
+            channel=_ROLLING_BUFFER_CHANNEL, width=width, height=height,
+        )
+        logger.info(
+            "Rolling H.264 buffer initialised on VPU ch%d (%dx%d)",
+            _ROLLING_BUFFER_CHANNEL, _rolling_buffer.width, _rolling_buffer.height,
+        )
+    except Exception:
+        logger.exception("Failed to create rolling H.264 buffer — event recording will not work")
+
+
+def destroy_rolling_buffer() -> None:
+    """Close and discard the rolling buffer.  Safe to call from any thread."""
+    global _rolling_buffer
+    buf = _rolling_buffer
+    _rolling_buffer = None
+    if buf is not None:
+        try:
+            buf.close()
+        except Exception:
+            logger.exception("Error closing rolling H.264 buffer")
+
+
+def get_rolling_buffer_dims() -> tuple[int, int] | None:
+    """Return ``(width, height)`` if the rolling buffer is active, else None."""
+    buf = _rolling_buffer
+    if buf is None:
+        return None
+    return buf.width, buf.height
 
 # When ROS_WEBRTC_TOPIC is set, a dedicated subscription delivers
 # hardware-scaled sub-stream frames for WebRTC encoding (Phase 1 of the
@@ -478,6 +525,34 @@ def run_object_detection(
                     mask_centroid=mask_centroid_norm,
                     mask_polygon=mask_polygon_norm,
                 ))
+
+        # Cross-tile NMS: overlapping tiles can detect the same object twice
+        # (each detection then becomes a separate OC-Sort track with different
+        # IDs). Per-class IoU NMS over the global pixel boxes collapses them.
+        if len(all_detections) > 1:
+            label_to_id: dict[str, int] = {}
+            px_boxes: list[list[int]] = []
+            scores: list[float] = []
+            class_ids: list[int] = []
+            for det in all_detections:
+                ymin, xmin, ymax, xmax = det.bbox  # normalized
+                x = int(xmin * frame_w)
+                y = int(ymin * frame_h)
+                w = max(1, int((xmax - xmin) * frame_w))
+                h = max(1, int((ymax - ymin) * frame_h))
+                px_boxes.append([x, y, w, h])
+                scores.append(float(det.confidence))
+                class_ids.append(label_to_id.setdefault(det.label, len(label_to_id)))
+            keep = nms_indices_per_class(
+                boxes=px_boxes, scores=scores, class_ids=class_ids,
+                overlap_threshold=0.3,
+            )
+            if len(keep) < len(all_detections):
+                logger.info(
+                    "Cross-tile NMS: %d -> %d detections",
+                    len(all_detections), len(keep),
+                )
+                all_detections = [all_detections[i] for i in keep]
 
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
@@ -927,12 +1002,16 @@ def _start_event_recording() -> None:
 
 
 
-    pre_frames = pre_buffer_snapshot()
+    pre_frames: list[tuple[int, list[bytes]]] = []
+    if _rolling_buffer is not None:
+        pre_frames = _rolling_buffer.snapshot(event_pre_buffer_seconds.value)
 
-    if pre_frames:
-        h, w = pre_frames[0].shape[:2]
+    # Dimensions come from the rolling buffer encoder (aligned to VPU block
+    # size); fall back to a safe default if the buffer isn't ready yet.
+    if _rolling_buffer is not None:
+        w, h = _rolling_buffer.width, _rolling_buffer.height
     else:
-        h, w = 360, 640
+        h, w = 640, 1280
 
     videos_dir = Path(django_settings.MEDIA_ROOT) / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
@@ -941,7 +1020,10 @@ def _start_event_recording() -> None:
     video_path = str(videos_dir / f"event_{event_id}.mp4")
     log_path = str(videos_dir / f"event_{event_id}.log.jsonl")
 
-    actual_fps = fps_counter.fps if fps_counter.fps > 0 else 30.0
+    # Use the camera's nominal rate, NOT fps_counter.fps. The measured rate can
+    # dip below the camera rate (motion bursts, GC, etc.); muxing at that lower
+    # rate causes slow-motion playback when the pipeline catches back up.
+    actual_fps = float(NOMINAL_FPS)
 
 
     with event_trigger_classes_lock:
@@ -1178,17 +1260,38 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
 
     frame_bgr = cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR)
 
-    if event_recording_enabled.is_set():
-        pre_buffer_append(frame_bgr, event_pre_buffer_seconds.value)
+    # Recording uses the camera's native NV12 directly — fed to the hardware
+    # H.264 encoder with zero color-conversion CPU cost. `frame_bgr` above is
+    # only for the motion-overlay UI preview below.
+    #
+    # If event recording is enabled (or an event clip is currently being
+    # written), push the frame through the always-on rolling encoder on ch2 so
+    # all recording paths share a single VPU encode per frame.
+    encoded_nals: list[bytes] = []
+    if event_recording_enabled.is_set() or event_recording_active.is_set():
+        w = nv12_frame.shape[1]
+        if _rolling_buffer is None:
+            _init_rolling_buffer(w, frame_h)
+        if _rolling_buffer is not None:
+            encoded_nals = _rolling_buffer.push(
+                nv12_frame, current_time, event_pre_buffer_seconds.value,
+            )
 
     if recording_active.is_set():
-        write_frame(frame_bgr)
+        if _rolling_buffer is not None:
+            # Direct H.264 path: rolling buffer already encoded this frame.
+            if encoded_nals:
+                write_nals(encoded_nals, current_time)
+            # else: VPU returned nothing for this frame — skip gracefully.
+        else:
+            # On-demand path: rolling buffer not active, encode inline.
+            write_frame(nv12_frame)
 
     if event_recording_active.is_set():
         wrote_frame = False
         with _event_recorder_lock:
-            if _event_recorder is not None:
-                _event_recorder.write_frame(frame_bgr)
+            if _event_recorder is not None and encoded_nals:
+                _event_recorder.write_nals(encoded_nals, current_time)
                 wrote_frame = True
         if wrote_frame:
             _log_live_event_frame(mask)

@@ -23,10 +23,11 @@ from .utils.engine import move_to
 from .utils.event_log import summarize_log
 from .utils.event_payloads import build_fps_payload, build_recording_payload, build_replay_payload, build_splash_payload, build_tracker_payload
 from .utils.recording import (
+    NOMINAL_FPS,
     get_recording_stats,
     is_recording,
-    pre_buffer_clear,
     start_recording,
+    start_recording_h264,
     stop_recording,
 )
 from .utils.replay import (
@@ -49,7 +50,6 @@ from .utils.shared import (
     event_recording_enabled,
     event_trigger_classes,
     event_trigger_classes_lock,
-    fps_counter,
     is_object_detection_disabled,
     min_consecutive_frames,
     motion_detector,
@@ -642,9 +642,18 @@ def recording_start(request: HttpRequest):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = str(videos_dir / f"recording_{timestamp}.mp4")
 
-    # Use actual pipeline FPS so playback speed matches real time.
-    actual_fps = fps_counter.fps if fps_counter.fps > 0 else 30.0
-    err = start_recording(path, fps=actual_fps)
+    # Camera's nominal rate; the measured rate can dip below this during
+    # bursts and would otherwise cause slow-motion playback.
+    fps = float(NOMINAL_FPS)
+
+    from .utils import stream as _stream  # noqa: PLC0415
+    dims = _stream.get_rolling_buffer_dims()
+    if dims is not None:
+        # Rolling buffer is active — tap its output directly instead of
+        # spinning up a second on-demand VPU encode on ch2.
+        err = start_recording_h264(path, fps=fps, frame_w=dims[0], frame_h=dims[1])
+    else:
+        err = start_recording(path, fps=fps)
     if err:
         return 409, {"detail": err}
 
@@ -695,8 +704,20 @@ def recording_status(request: HttpRequest):
     return RecordingStatus(is_recording=True, **stats, **event_fields)
 
 
+_VIDEOS_CACHE_TTL_S = 10.0
+_videos_cache_lock = threading.Lock()
+# Keyed by (scheme, host) so absolute URLs stay valid across hosts.
+_videos_cache: dict[tuple[str, str], tuple[float, list[VideoInfo]]] = {}
+
+
 @api.get("/videos", response=list[VideoInfo])
 def videos_list(request: HttpRequest):
+    key = (request.scheme, request.get_host())
+    now = time.monotonic()
+    with _videos_cache_lock:
+        entry = _videos_cache.get(key)
+        if entry is not None and entry[0] > now:
+            return entry[1]
 
     results = []
     for v in Video.objects.all():
@@ -712,6 +733,9 @@ def videos_list(request: HttpRequest):
                 has_log=bool(v.log_file and v.log_file.name),
             )
         )
+
+    with _videos_cache_lock:
+        _videos_cache[key] = (now + _VIDEOS_CACHE_TTL_S, results)
     return results
 
 
@@ -942,7 +966,8 @@ def update_event_recording_config(request: HttpRequest, payload: PatchDict[Event
             event_recording_enabled.set()
         else:
             event_recording_enabled.clear()
-            pre_buffer_clear()
+            from .utils import stream as _stream  # noqa: PLC0415
+            _stream.destroy_rolling_buffer()
 
     if (v := payload.get("pre_buffer_seconds")) is not None:
         clamped = max(1, min(30, int(v)))
