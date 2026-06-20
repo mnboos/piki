@@ -782,6 +782,20 @@ def _pump_pwm_loop(duty: float, duration_s: float, stop: threading.Event) -> Non
         logger.info("Pump OFF")
 
 
+def deactivate_pump() -> None:
+    """Immediately stop the pump (cancel any in-flight soft-PWM thread)."""
+    global _pump_pwm_thread  # noqa: PLW0603
+    _pump_pwm_stop.set()
+    if _pump_pwm_thread is not None and _pump_pwm_thread.is_alive():
+        _pump_pwm_thread.join(timeout=0.5)
+    if _pump_initialised:
+        try:
+            import Hobot.GPIO as GPIO  # noqa: PLC0415
+            GPIO.output(SPLASH_GPIO_PIN, GPIO.LOW)
+        except Exception:
+            logger.exception("Failed to drive pump ENA low")
+
+
 def activate_pump(duration_s: float, duty_pct: float = 100.0) -> None:
     """Run the pump at *duty_pct* % for *duration_s* seconds, non-blocking."""
     global _pump_pwm_thread  # noqa: PLW0603

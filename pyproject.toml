@@ -16,6 +16,7 @@ dependencies = [
     "numpy==1.26.4",
     "opencv-contrib-python-headless==4.11.0.86",
     "rich==14.2.0",
+    "evdev==1.9.3",
 ]
 
 [dependency-groups]

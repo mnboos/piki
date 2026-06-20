@@ -260,6 +260,12 @@ wheels = [
 ]
 
 [[package]]
+name = "evdev"
+version = "1.9.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a5/f5/397b61091120a9ca5001041dd7bf76c385b3bfd67a0e5bcb74b852bd22a4/evdev-1.9.3.tar.gz", hash = "sha256:2c140e01ac8437758fa23fe5c871397412461f42d421aa20241dc8fe8cfccbc9", size = 32723, upload-time = "2026-02-05T21:54:24.987Z" }
+
+[[package]]
 name = "google-crc32c"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -381,6 +387,7 @@ dependencies = [
     { name = "django" },
     { name = "django-cors-headers" },
     { name = "django-ninja" },
+    { name = "evdev" },
     { name = "numpy" },
     { name = "opencv-contrib-python-headless" },
     { name = "rich" },
@@ -403,6 +410,7 @@ requires-dist = [
     { name = "django", specifier = "==5.2.11" },
     { name = "django-cors-headers", specifier = "==4.9.0" },
     { name = "django-ninja", specifier = "==1.4.3" },
+    { name = "evdev", specifier = "==1.9.3" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "opencv-contrib-python-headless", specifier = "==4.11.0.86" },
     { name = "rich", specifier = "==14.2.0" },
