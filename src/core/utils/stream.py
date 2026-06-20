@@ -782,7 +782,9 @@ def on_done(future: Future[InferenceOutput]):
             global _latest_inference_log_entries
             _latest_inference_log_entries = log_entries
 
-        aim_enabled = app_settings.aim_settings.servo_enabled
+        from .gamepad import gamepad_enabled  # noqa: PLC0415
+
+        aim_enabled = app_settings.aim_settings.servo_enabled and not gamepad_enabled.is_set()
         target_classes = {c.strip().lower() for c in (app_settings.aim_settings.target_classes or [])}
         target_lock_duration = float(app_settings.aim_settings.target_lock_duration)
 
