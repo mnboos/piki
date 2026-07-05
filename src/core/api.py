@@ -1167,6 +1167,50 @@ def activate_splash(request: HttpRequest):
 
 
 # --------------------------------------------------------------------------- #
+# Gamepad endpoints                                                             #
+# --------------------------------------------------------------------------- #
+
+
+class GamepadStatusSchema(Schema):
+    connected: bool
+    enabled: bool
+    pan: float
+    tilt: float
+
+
+@api.get("/gamepad/status", response=GamepadStatusSchema)
+def get_gamepad_status(request: HttpRequest):
+    from .utils.gamepad import gamepad_connected, gamepad_enabled, gamepad_pan, gamepad_tilt, _gamepad_state_lock  # noqa: PLC0415
+    with _gamepad_state_lock:
+        return GamepadStatusSchema(
+            connected=gamepad_connected.is_set(),
+            enabled=gamepad_enabled.is_set(),
+            pan=round(gamepad_pan, 1),
+            tilt=round(gamepad_tilt, 1),
+        )
+
+
+class GamepadEnableSchema(Schema):
+    enabled: bool
+
+
+@api.post("/gamepad/enable", response=GamepadStatusSchema)
+def gamepad_enable_endpoint(request: HttpRequest, payload: GamepadEnableSchema):
+    from .utils.gamepad import gamepad_connected, gamepad_enabled, gamepad_pan, gamepad_tilt, _gamepad_state_lock  # noqa: PLC0415
+    if payload.enabled:
+        gamepad_enabled.set()
+    else:
+        gamepad_enabled.clear()
+    with _gamepad_state_lock:
+        return GamepadStatusSchema(
+            connected=gamepad_connected.is_set(),
+            enabled=gamepad_enabled.is_set(),
+            pan=round(gamepad_pan, 1),
+            tilt=round(gamepad_tilt, 1),
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Exclusion zones                                                              #
 # --------------------------------------------------------------------------- #
 

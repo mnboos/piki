@@ -10,6 +10,7 @@ import RecordingsPanel from "@/components/RecordingsPanel.vue";
 import ServoDebugPanel from "@/components/ServoDebugPanel.vue";
 import SplashPanel from "@/components/SplashPanel.vue";
 import SplashStatusIndicator from "@/components/SplashStatusIndicator.vue";
+import GamepadStatusIndicator from "@/components/GamepadStatusIndicator.vue";
 import CameraFeed from "@/components/CameraFeed.vue";
 import DetectionOverlay from "@/components/DetectionOverlay.vue";
 import ExclusionZoneOverlay from "@/components/ExclusionZoneOverlay.vue";
@@ -187,6 +188,7 @@ watch(splashConfig, cfg => updateSplashConfig(cfg), { deep: true });
         <Toast position="top-right" />
         <div class="top-bar">
             <SplashStatusIndicator />
+            <GamepadStatusIndicator />
         </div>
         <Tabs value="camera" lazy>
             <TabList>

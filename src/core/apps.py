@@ -287,6 +287,12 @@ class CoreConfig(AppConfig):
 
             threading.Thread(target=_start_background, daemon=True, name="piki-startup").start()
 
+            def _start_gamepad():
+                from .utils.gamepad import start_gamepad_loop  # noqa: PLC0415
+                start_gamepad_loop()
+
+            threading.Thread(target=_start_gamepad, daemon=True, name="piki-gamepad-start").start()
+
         # def cleanup():
         #     print("[DJANGO SHUTDOWN] Stopping processes...")
         #     stream.executor.shutdown()

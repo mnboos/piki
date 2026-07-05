@@ -169,6 +169,20 @@ def build_event_clips_snapshot() -> dict:
     return {"clips": clips}
 
 
+def build_gamepad_payload() -> dict:
+    """Gamepad connection and enable state."""
+    from .gamepad import gamepad_connected, gamepad_enabled, gamepad_pan, gamepad_tilt, _gamepad_state_lock  # noqa: PLC0415
+    with _gamepad_state_lock:
+        pan = round(gamepad_pan, 1)
+        tilt = round(gamepad_tilt, 1)
+    return {
+        "connected": gamepad_connected.is_set(),
+        "enabled": gamepad_enabled.is_set(),
+        "pan": pan,
+        "tilt": tilt,
+    }
+
+
 def snapshot() -> dict[str, dict]:
     """Full per-topic state for a fresh WS connection."""
     return {
@@ -181,4 +195,5 @@ def snapshot() -> dict[str, dict]:
         "detections": build_detections_snapshot(),
         "rois": build_rois_snapshot(),
         "mask": build_mask_snapshot(),
+        "gamepad_status": build_gamepad_payload(),
     }

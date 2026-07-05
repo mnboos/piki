@@ -40,6 +40,13 @@ export interface PipelineFpsPayload {
     fps: number;
 }
 
+export interface GamepadStatus {
+    connected: boolean;
+    enabled: boolean;
+    pan: number;
+    tilt: number;
+}
+
 interface State {
     tracker_status: SystemStatus | null;
     pipeline_fps: PipelineFpsPayload;
@@ -50,6 +57,7 @@ interface State {
     detections: DetectionsPayload;
     rois: RoisPayload;
     mask: MaskPayload;
+    gamepad_status: GamepadStatus | null;
 }
 
 const state = reactive<State>({
@@ -62,6 +70,7 @@ const state = reactive<State>({
     detections: { frameTsNs: 0, detections: [] },
     rois: { rois: [] },
     mask: { polygons: [] },
+    gamepad_status: null,
 });
 
 const seenClipKeys = new Set<string>();
@@ -235,6 +244,9 @@ watch(data, raw => {
         case "mask":
             state.mask = payload as unknown as MaskPayload;
             break;
+        case "gamepad_status":
+            state.gamepad_status = payload as unknown as GamepadStatus;
+            break;
     }
 });
 
@@ -249,4 +261,5 @@ export const useRecordingStatus = () => computed(() => state.recording_status);
 export const useReplayStatus = () => computed(() => state.replay_status);
 export const useEventClips = () => computed(() => state.event_clips);
 export const useLastNewEventClip = () => computed(() => lastNewClip.value);
+export const useGamepadStatus = () => computed(() => state.gamepad_status);
 export const useWsStatus = () => status;
