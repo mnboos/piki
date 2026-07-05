@@ -436,7 +436,7 @@ class RealImageSmokeTests(SimpleTestCase):
         nv12 = _bgr_to_nv12_640(bgr)
         assert nv12.size == 640 * 640 * 3 // 2
 
-        _duration_ms, detections = detect_objects(nv12)
+        _duration_ms, _bpu_ms, detections = detect_objects(nv12)
 
         labels_found = {d[0] for d in detections if d[1] >= min_conf}
         assert expected_label in labels_found, (

@@ -69,6 +69,7 @@ from .shared import (
     event_recording_enabled,
     event_trigger_classes,
     event_trigger_classes_lock,
+    detection_fps_counter,
     fps_counter,
     is_object_detection_disabled,
     min_consecutive_frames,
@@ -442,6 +443,7 @@ def run_object_detection(
         return InferenceOutput(worker_pid=worker_pid, timestamp=timestamp, avg_duration=0, detections=[])
 
     _profile = bool(os.environ.get("PIKI_PROFILE"))
+    _save_tiles = bool(os.environ.get("PIKI_SAVE_TILES"))
 
     try:
         frame_w = frame_hires.shape[1]
@@ -460,12 +462,13 @@ def run_object_detection(
             logger.info("PERF stage=tile_slice ms=%.2f tiles=%d", (time.perf_counter() - _t) * 1000, len(tiles))
 
         total_duration = 0
+        total_bpu = 0
         all_detections: list[Detection] = []
 
         for tile_img, tile_x, tile_y in tiles:
-            # Save first 3 tiles for visual inspection.
+            # Optional debug: dump the first 3 tiles as JPEGs (PIKI_SAVE_TILES=1).
             global _ai_tiles_saved
-            if _ai_tiles_saved < 3:
+            if _save_tiles and _ai_tiles_saved < 3:
                 try:
                     nv12_2d = tile_img.reshape(ai_input_size * 3 // 2, ai_input_size)
                     bgr = cv2.cvtColor(nv12_2d, cv2.COLOR_YUV2BGR_NV12)
@@ -478,8 +481,9 @@ def run_object_detection(
                     logger.warning("Failed to save AI tile %d: %s (tile_img size=%d)",
                                    _ai_tiles_saved + 1, exc, tile_img.size)
 
-            duration, detections = detect_objects(tile_img)
+            duration, bpu_ms, detections = detect_objects(tile_img)
             total_duration += duration
+            total_bpu += bpu_ms
 
             for label, confidence, local_pixel_bbox, centroid_tile_px, polygon_tile_px in detections:
                 local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
@@ -554,6 +558,13 @@ def run_object_detection(
                 )
                 all_detections = [all_detections[i] for i in keep]
 
+        if _profile:
+            logger.info(
+                "PERF stage=inference tiles=%d bpu_ms=%d post_ms=%d total_ms=%d dets=%d",
+                len(tiles), total_bpu, total_duration - total_bpu, total_duration,
+                len(all_detections),
+            )
+
         avg_duration = 0 if not tiles else total_duration // len(tiles)
         return InferenceOutput(
             worker_pid=worker_pid,
@@ -571,6 +582,8 @@ def on_done(future: Future[InferenceOutput]):
     """Handle completed inference."""
     global max_output_timestamp, _locked_target_bbox, _locked_target_label, _locked_target_lost_since, _prev_aim_bbox, _smoothed_raw_coords
     active_futures.remove(future)
+    _profile = bool(os.environ.get("PIKI_PROFILE"))
+    _t_done = time.perf_counter()
     try:
         worker_pid, timestamp, inference_time, detections = future.result()
         logger.info("YOLO_DONE ts=%d raw_detections=%d duration_ms=%d", timestamp, len(detections), inference_time)
@@ -580,6 +593,9 @@ def on_done(future: Future[InferenceOutput]):
             return
 
         max_output_timestamp = timestamp
+        # Tick the effective detection rate (one accepted inference cycle). Compared
+        # against fps_counter (camera rate) in the pipeline_fps payload.
+        detection_fps_counter.tick()
 
         # Exclusion-zone filter
         from . import exclusion as _exclusion  # noqa: PLC0415
@@ -952,6 +968,17 @@ def on_done(future: Future[InferenceOutput]):
                         _start_event_recording()
                         break
 
+        if _profile:
+            # cycle_ms: submit → end of on_done (full detection→result latency).
+            # on_done_ms: CPU post-inference work on this thread (exclusion filter,
+            # EMA smoothing, tracker, IoU rematch, servo feed).
+            cycle_ms = (time.monotonic_ns() - timestamp) / 1e6
+            on_done_ms = (time.perf_counter() - _t_done) * 1000
+            logger.info(
+                "PERF stage=cycle cycle_ms=%.1f on_done_ms=%.1f det_fps=%.1f cam_fps=%.1f",
+                cycle_ms, on_done_ms, detection_fps_counter.fps, fps_counter.fps,
+            )
+
     except KeyboardInterrupt:
         logger.info("Shutting down on KeyboardInterrupt in on_done.")
     except:
@@ -1211,9 +1238,22 @@ def _publish_motion_overlays(*, mask: "Optional[np.ndarray]", rois: list, frame_
     events.publish_throttled("mask", build_mask_payload(polygons), 0.2)
 
 
+# --- process_frame profiling (PIKI_PROFILE=1) ---------------------------------
+# Ticked on the ROS callback thread. `skips` counts frames where motion produced
+# ROIs but an inference was already in flight (the single-in-flight guard dropped
+# the frame) — a direct measure of how hard that guard throttles detection rate.
+_pf_profile = bool(os.environ.get("PIKI_PROFILE"))
+_pf_frames = 0
+_pf_skips = 0
+_pf_time_ms = 0.0
+_pf_last_log = 0.0
+
+
 def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     global _latest_mask, _latest_mask_shape
+    global _pf_frames, _pf_skips, _pf_time_ms, _pf_last_log
 
+    _pf_t0 = time.perf_counter() if _pf_profile else 0.0
     current_time = time.monotonic_ns()
 
     # Hardware H.264 encode for any connected WebRTC peers. Runs on the VPU,
@@ -1258,11 +1298,9 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     _latest_mask = mask
     _latest_mask_shape = mask.shape[:2] if mask is not None else (1, 1)
 
-    frame_bgr = cv2.cvtColor(frame_lores, cv2.COLOR_GRAY2BGR)
-
     # Recording uses the camera's native NV12 directly — fed to the hardware
-    # H.264 encoder with zero color-conversion CPU cost. `frame_bgr` above is
-    # only for the motion-overlay UI preview below.
+    # H.264 encoder with zero color-conversion CPU cost. The motion-overlay UI
+    # preview below works off `frame_lores` (grayscale) directly.
     #
     # If event recording is enabled (or an event clip is currently being
     # written), push the frame through the always-on rolling encoder on ch2 so
@@ -1301,13 +1339,31 @@ def process_frame(*, nv12_frame: np.ndarray, frame_h: int):
     rois: list = []
     if has_movement:
         rois = motion_detector.create_rois(mask=mask)
-        if rois and not active_futures and not os.environ.get("DISABLE_AI"):
-            try:
-                _submit_yolo(nv12_frame=nv12_frame, rois=rois, timestamp=time.monotonic_ns())
-            except Exception:
-                logger.exception("Error in process_frame AI logic")
+        if rois and not os.environ.get("DISABLE_AI"):
+            if not active_futures:
+                try:
+                    _submit_yolo(nv12_frame=nv12_frame, rois=rois, timestamp=time.monotonic_ns())
+                except Exception:
+                    logger.exception("Error in process_frame AI logic")
+            elif _pf_profile:
+                # Movement + ROIs present but inference busy → frame skipped.
+                _pf_skips += 1
 
     _publish_motion_overlays(mask=mask if has_movement else None, rois=rois, frame_lores=frame_lores)
+
+    if _pf_profile:
+        _pf_frames += 1
+        _pf_time_ms += (time.perf_counter() - _pf_t0) * 1000
+        now_s = time.monotonic()
+        if now_s - _pf_last_log >= 2.0 and _pf_frames:
+            logger.info(
+                "PERF stage=process_frame frames=%d avg_ms=%.2f skips=%d skip_rate=%.2f",
+                _pf_frames, _pf_time_ms / _pf_frames, _pf_skips, _pf_skips / _pf_frames,
+            )
+            _pf_frames = 0
+            _pf_skips = 0
+            _pf_time_ms = 0.0
+            _pf_last_log = now_s
 
 
 def stream_nonblocking():

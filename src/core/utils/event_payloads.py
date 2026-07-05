@@ -30,7 +30,10 @@ def build_tracker_payload() -> dict:
 
 
 def build_fps_payload() -> dict:
-    return {"fps": round(_s.fps_counter.fps, 1)}
+    return {
+        "fps": round(_s.fps_counter.fps, 1),
+        "detection_fps": round(_s.detection_fps_counter.fps, 1),
+    }
 
 
 def build_detections_snapshot() -> dict:

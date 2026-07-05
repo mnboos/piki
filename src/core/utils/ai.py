@@ -279,8 +279,12 @@ def _init_model() -> None:
         print(f"Model loaded. input type: {MODEL_INPUT_TYPE}")
 
 
-def detect_objects(image: np.ndarray) -> tuple[int, list]:
-    """Run inference on a single 640×640 tile; return ``(elapsed_ms, detections)``.
+def detect_objects(image: np.ndarray) -> tuple[int, int, list]:
+    """Run inference on a single 640×640 tile; return ``(elapsed_ms, bpu_ms, detections)``.
+
+    ``elapsed_ms`` is the total time (BPU + CPU post-processing); ``bpu_ms`` is the
+    BPU ``run()`` call alone. The gap between them is the CPU post-processing cost,
+    surfaced separately so profiling can tell BPU-bound from CPU-bound.
 
     Each detection is a 5-tuple:
     ``(label_str, confidence, xyxy_px_array, centroid_tile_px, polygon_tile_px_list)``
@@ -288,14 +292,16 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
     * ``xyxy_px_array``        – ``np.array([x1,y1,x2,y2])`` in 640×640 tile pixel coords
     * ``centroid_tile_px``     – ``(cx, cy)`` float tile-pixel coords, or ``None`` if the
                                   instance mask contains no foreground pixels
-    * ``polygon_tile_px_list`` – list of contours; each contour is a flat ``[x1,y1,...]``
-                                  list in tile pixel coords, or ``None``
+    * ``polygon_tile_px_list`` – always ``None``. Polygon outlines were overlay-only
+                                  and are no longer computed (they dominated CPU cost).
     """
     global _sorted_output_names
     _init_model()  # no-op after first call
 
     t0 = time.perf_counter()
+    _t_bpu = time.perf_counter()
     outputs = _runtime.run({_model_name: {_input_name: image}})
+    bpu_dt = time.perf_counter() - _t_bpu
     outputs = outputs[_model_name]
 
     # Sort outputs into canonical order on the very first inference.
@@ -347,7 +353,7 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
             n_above_per_stride,
             img_stats,
         )
-        return round((time.perf_counter() - t0) * 1000), []
+        return round((time.perf_counter() - t0) * 1000), round(bpu_dt * 1000), []
 
     boxes    = np.concatenate(all_boxes)
     scores   = np.concatenate(all_scores)
@@ -360,36 +366,39 @@ def detect_objects(image: np.ndarray) -> tuple[int, list]:
     kept_cls    = cls_ids[indices]
     kept_mc     = mc[indices].astype(np.float32)   # (N, 32)
 
-    # Decode proto and generate per-instance binary masks.
+    # Decode proto and generate per-instance masks at PROTO resolution only.
+    # The mask centroid (used for aiming) is scale-invariant, so we compute it on
+    # the small (mh × mw ≈ 160×160) mask and scale up to tile-pixel coords. This
+    # skips the per-instance cv2.resize upsample to 640×640 — the single heaviest
+    # CPU cost per detection — and we no longer extract polygon outlines at all
+    # (they were overlay-only and never used for aim/tracking).
     proto_raw = outputs[_sorted_output_names[9]].squeeze(0)               # (160, 160, 32)
     proto = np.ascontiguousarray(proto_raw.transpose(2, 0, 1).astype(np.float32))  # (32, 160, 160)
-    masks = _process_mask(proto, kept_mc, kept_boxes, (IMG_SIZE, IMG_SIZE))  # (N, 640, 640) bool
+    masks = _process_mask(proto, kept_mc, kept_boxes, (IMG_SIZE, IMG_SIZE), upsample=False)  # (N, mh, mw) bool
+    if masks.shape[0]:
+        scale_x = IMG_SIZE / masks.shape[2]
+        scale_y = IMG_SIZE / masks.shape[1]
+    else:
+        scale_x = scale_y = 1.0
 
     results: list = []
     for i in range(len(indices)):
         label    = CLASSES[kept_cls[i]].strip()
         conf_val = float(kept_scores[i])
         box      = kept_boxes[i]
-        mask     = masks[i]  # (640, 640) bool
+        mask     = masks[i]  # (mh, mw) bool at proto resolution
 
         ys, xs = np.where(mask)
         if xs.size > 0:
-            centroid_px: "tuple[float,float] | None" = (float(xs.mean()), float(ys.mean()))
-
-            mask_u8 = mask.astype(np.uint8) * 255
-            contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            polygon: "list[list[float]] | None" = []
-            for cnt in contours:
-                eps = 0.01 * cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, eps, True)
-                if len(approx) >= 3:
-                    polygon.append(approx.reshape(-1).tolist())
-            if not polygon:
-                polygon = None
+            # proto-space centroid → 640×640 tile-pixel coords
+            centroid_px: "tuple[float,float] | None" = (
+                float(xs.mean()) * scale_x,
+                float(ys.mean()) * scale_y,
+            )
         else:
             centroid_px = None
-            polygon = None
 
-        results.append((label, conf_val, box, centroid_px, polygon))
+        # Polygon outlines are no longer produced (overlay-only, dominated CPU).
+        results.append((label, conf_val, box, centroid_px, None))
 
-    return round((time.perf_counter() - t0) * 1000), results
+    return round((time.perf_counter() - t0) * 1000), round(bpu_dt * 1000), results

@@ -130,6 +130,10 @@ class FPSCounter:
 
 
 fps_counter = FPSCounter()
+# Effective detection/inference-cycle rate (ticked once per completed inference in
+# on_done). Compared against fps_counter (camera rate) to tell whether "aim lags
+# target" is a detection-throughput problem or a control-chain problem.
+detection_fps_counter = FPSCounter()
 
 # DJANGO_RELOAD_ISSUED = Event()
 # DJANGO_RELOAD_SEMAPHORE = Semaphore(NUM_AI_WORKERS)

@@ -526,6 +526,7 @@ def _servo_loop() -> None:
     _profile = os.environ.get("PIKI_SERVO_PROFILE") == "1"
     _prof_dt: list[float] = []
     _prof_work: list[float] = []
+    _prof_stale: list[float] = []  # measurement age (s) at the moment a PWM command is issued
     _prof_prev = time.monotonic()
     _prof_report = _prof_prev
     _iter_start = _prof_prev
@@ -576,6 +577,11 @@ def _servo_loop() -> None:
                     servo_pan.value = pan_new
                     servo_tilt.value = tilt_new
                     _last_pwm_time = now
+                    if _profile and _last_measurement_time > 0.0:
+                        # How stale was the last YOLO measurement when we actuated?
+                        # This is the control-chain phase lag (servo tick + PWM
+                        # throttle + 1-frame feed delay), independent of detection fps.
+                        _prof_stale.append(now - _last_measurement_time)
 
             # else: no active lock — sit idle and hold the last position (don't touch PWM)
 
@@ -588,9 +594,16 @@ def _servo_loop() -> None:
             if _now - _prof_report >= 2.0 and _prof_dt:
                 _dt_ms = np.array(_prof_dt) * 1e3
                 _wk_ms = np.array(_prof_work) * 1e3
+                if _prof_stale:
+                    _st_ms = np.array(_prof_stale) * 1e3
+                    _stale_str = (" meas_age(ms) p50=%.0f p99=%.0f max=%.0f cmds=%d" % (
+                        float(np.percentile(_st_ms, 50)), float(np.percentile(_st_ms, 99)),
+                        float(_st_ms.max()), len(_prof_stale)))
+                else:
+                    _stale_str = " meas_age(ms) n/a (no commands issued)"
                 logger.info(
                     "[servo-profile] %d ticks/%.1fs  dt(ms) p50=%.1f p99=%.1f max=%.1f "
-                    "nominal=%.1f  work(ms) p50=%.2f p99=%.2f max=%.2f",
+                    "nominal=%.1f  work(ms) p50=%.2f p99=%.2f max=%.2f" + _stale_str,
                     len(_prof_dt), _now - _prof_report,
                     float(np.percentile(_dt_ms, 50)), float(np.percentile(_dt_ms, 99)),
                     float(_dt_ms.max()), period * 1e3,
@@ -599,6 +612,7 @@ def _servo_loop() -> None:
                 )
                 _prof_dt.clear()
                 _prof_work.clear()
+                _prof_stale.clear()
                 _prof_report = _now
 
         # Sleep until next tick.
