@@ -551,6 +551,16 @@ def run_object_detection(
                 boxes=px_boxes, scores=scores, class_ids=class_ids,
                 overlap_threshold=0.3,
             )
+            if _profile:
+                # Diagnostic for duplicate-detection debugging: log every candidate
+                # (label, score, global px [x,y,w,h]) plus the dedup in→out counts,
+                # so the real pairwise IoU of survivors can be computed offline.
+                logger.info(
+                    "PERF stage=xtile_nms in=%d out=%d cand=%s",
+                    len(all_detections), len(keep),
+                    [(all_detections[i].label, round(float(all_detections[i].confidence), 3),
+                      px_boxes[i]) for i in range(len(all_detections))],
+                )
             if len(keep) < len(all_detections):
                 logger.info(
                     "Cross-tile NMS: %d -> %d detections",
