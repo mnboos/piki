@@ -235,6 +235,92 @@ tile_size = 640
 buffer_size = (tile_size * tile_size * 3) // 2
 inference_buffer = np.zeros(buffer_size, dtype=np.uint8)
 
+
+# ---------------------------------------------------------------------------
+# Cross-tile duplicate merging
+# ---------------------------------------------------------------------------
+
+# Same-class boxes whose intersection-over-min-area meets this are unioned.
+# 0.15 collapses a frame-filling object sliced across overlapping tiles
+# (validated against on-device logs) while keeping separated targets apart.
+XTILE_MERGE_IOS = 0.15
+
+
+def _overlap_over_min(a, b) -> float:
+    """Intersection over the smaller box's area (overlap coefficient).
+
+    Preferred over IoU for cross-tile dedup: a partial slice of an object is
+    largely *contained* in the object's fuller box even when their IoU is low.
+    Boxes are normalized ``[ymin, xmin, ymax, xmax]``.
+    """
+    inter_h = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    inter_w = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = inter_h * inter_w
+    if inter <= 0.0:
+        return 0.0
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    smaller = min(area_a, area_b)
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def merge_cross_tile_duplicates(dets: list, ios_threshold: float = XTILE_MERGE_IOS) -> list:
+    """Collapse a single object that tiling split across overlapping tiles.
+
+    Each tile independently detects a frame-filling object, producing near-
+    identical boxes offset by the tile origin. IoU-NMS can't reliably merge them
+    (low mutual IoU, and ``cv2.dnn.NMSBoxes`` is version-inconsistent at the
+    boundary), and even when it does it keeps one *clipped slice*. Instead we
+    greedily union same-class boxes whose intersection-over-min-area >= threshold
+    until stable — the union box gives the object's true extent, so aim centres on
+    it and OC-SORT sees one stable track instead of flickering per-slice ids.
+
+    ``dets`` is a list of ``Detection`` (label, confidence, bbox, mask_centroid,
+    mask_polygon); bbox is normalized ``[ymin, xmin, ymax, xmax]``.
+    """
+    if len(dets) < 2:
+        return dets
+
+    from .shared import Detection  # noqa: PLC0415 — lazy to avoid func<->shared import cycle
+
+    # working entries: [bbox(list), max_conf, label, centroid_or_None, n_merged]
+    work: list = [
+        [list(d.bbox), float(d.confidence), d.label, d.mask_centroid, 1]
+        for d in dets
+    ]
+
+    merged_any = True
+    while merged_any:
+        merged_any = False
+        for i in range(len(work)):
+            for j in range(i + 1, len(work)):
+                if work[i][2] != work[j][2]:
+                    continue  # different class — never merge
+                if _overlap_over_min(work[i][0], work[j][0]) >= ios_threshold:
+                    bi, bj = work[i][0], work[j][0]
+                    work[i][0] = [min(bi[0], bj[0]), min(bi[1], bj[1]),
+                                  max(bi[2], bj[2]), max(bi[3], bj[3])]
+                    work[i][1] = max(work[i][1], work[j][1])
+                    work[i][4] += work[j][4]
+                    work.pop(j)
+                    merged_any = True
+                    break
+            if merged_any:
+                break
+
+    out: list = []
+    for bbox, conf, label, centroid, n in work:
+        # For a merged union of slices there is no single true mask, so aim at the
+        # union-box centre; a lone detection keeps its real mask centroid.
+        aim_centroid = (
+            ((bbox[1] + bbox[3]) / 2.0, (bbox[0] + bbox[2]) / 2.0) if n > 1 else centroid
+        )
+        out.append(Detection(
+            label=label, confidence=conf, bbox=bbox,
+            mask_centroid=aim_centroid, mask_polygon=None,
+        ))
+    return out
+
 def _slice_nv12_tile(*, nv12, buffer_h, tx, ty, tile_size):
     # 1. Reset the buffer to zero (only if you expect padding)
     # If padding is rare, it's faster to only zero the edges

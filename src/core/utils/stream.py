@@ -36,7 +36,7 @@ from .event_payloads import (
 )
 from .event_log import EventLogger
 from .func import (
-    nms_indices_per_class,
+    merge_cross_tile_duplicates,
     slice_roi_into_tiles,
 )
 from .hw_encoder import HwH264Encoder
@@ -530,43 +530,18 @@ def run_object_detection(
                     mask_polygon=mask_polygon_norm,
                 ))
 
-        # Cross-tile NMS: overlapping tiles can detect the same object twice
-        # (each detection then becomes a separate OC-Sort track with different
-        # IDs). Per-class IoU NMS over the global pixel boxes collapses them.
+        # Cross-tile dedup: a large object spanning several tiles is detected once
+        # per tile, producing offset near-duplicate boxes. Union same-class boxes
+        # that overlap (intersection-over-min-area) into the object's true extent —
+        # see func.merge_cross_tile_duplicates for why plain IoU-NMS fails here.
         if len(all_detections) > 1:
-            label_to_id: dict[str, int] = {}
-            px_boxes: list[list[int]] = []
-            scores: list[float] = []
-            class_ids: list[int] = []
-            for det in all_detections:
-                ymin, xmin, ymax, xmax = det.bbox  # normalized
-                x = int(xmin * frame_w)
-                y = int(ymin * frame_h)
-                w = max(1, int((xmax - xmin) * frame_w))
-                h = max(1, int((ymax - ymin) * frame_h))
-                px_boxes.append([x, y, w, h])
-                scores.append(float(det.confidence))
-                class_ids.append(label_to_id.setdefault(det.label, len(label_to_id)))
-            keep = nms_indices_per_class(
-                boxes=px_boxes, scores=scores, class_ids=class_ids,
-                overlap_threshold=0.3,
-            )
-            if _profile:
-                # Diagnostic for duplicate-detection debugging: log every candidate
-                # (label, score, global px [x,y,w,h]) plus the dedup in→out counts,
-                # so the real pairwise IoU of survivors can be computed offline.
+            n_before = len(all_detections)
+            all_detections = merge_cross_tile_duplicates(all_detections)
+            if len(all_detections) < n_before:
                 logger.info(
-                    "PERF stage=xtile_nms in=%d out=%d cand=%s",
-                    len(all_detections), len(keep),
-                    [(all_detections[i].label, round(float(all_detections[i].confidence), 3),
-                      px_boxes[i]) for i in range(len(all_detections))],
+                    "Cross-tile merge: %d -> %d detections",
+                    n_before, len(all_detections),
                 )
-            if len(keep) < len(all_detections):
-                logger.info(
-                    "Cross-tile NMS: %d -> %d detections",
-                    len(all_detections), len(keep),
-                )
-                all_detections = [all_detections[i] for i in keep]
 
         if _profile:
             logger.info(
