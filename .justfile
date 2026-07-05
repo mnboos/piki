@@ -1,5 +1,7 @@
 set dotenv-load
 
+set windows-powershell := true
+
 _BASE     := "https://archive.d-robotics.cc/downloads/rdk_model_zoo/rdk_x5/Ultralytics_YOLO_OE_1.2.8"
 _MODEL_DIR := "model"
 _NAL_DIR  := justfile_directory() / "piki_nal"
