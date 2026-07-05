@@ -2,7 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/piki.iml" filepath="$PROJECT_DIR$/.idea/piki.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/pi-ki.iml" filepath="$PROJECT_DIR$/.idea/pi-ki.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/piki_nal.iml" filepath="$PROJECT_DIR$/.idea/piki_nal.iml" />
     </modules>
   </component>
 </project>

@@ -3,6 +3,8 @@
   <component name="insyncwithfoo.ryecharm.configurations.ruff.Override">
     <option name="names">
       <map>
+        <entry key="crossPlatformExecutableResolution" value="true" />
+        <entry key="executable" value="true" />
         <entry key="formatOnOptimizeImports" value="true" />
         <entry key="formatOnReformat" value="true" />
         <entry key="formatting" value="true" />
