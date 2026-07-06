@@ -347,6 +347,45 @@ def _slice_nv12_tile(*, nv12, buffer_h, tx, ty, tile_size):
     return inference_buffer  # This is a 1D view of the pre-allocated memory
 
 
+def build_full_frame_tile(*, nv12: np.ndarray, frame_h: int, tile_size: int,
+                          downscale: int) -> np.ndarray:
+    """Build ONE model-input NV12 tile covering the whole frame, downscaled.
+
+    Stride-samples the full ``(frame_h × frame_w)`` NV12 frame by ``downscale``
+    and letterboxes it into the top of the ``tile_size × tile_size`` model buffer
+    (bottom zero-padded — letterbox, not anamorphic stretch). No crop: the whole
+    FOV is covered, so a detection at model px ``(bx, by)`` maps to full-frame
+    normalized coords ``(bx*downscale/frame_w, by*downscale/frame_h)``.
+
+    Used by the single-frame inference path to avoid tiling a large object into
+    per-tile duplicates. Returns the flat NV12 buffer (1-D view of the shared
+    ``inference_buffer``).
+    """
+    frame_w = nv12.shape[1]
+    inference_buffer.fill(0)
+
+    # Y plane (frame_h × frame_w) → stride-sampled (frame_h//ds × frame_w//ds).
+    y_src = nv12[0:frame_h:downscale, 0:frame_w:downscale]
+    y_dest = inference_buffer[:tile_size * tile_size].reshape(tile_size, tile_size)
+    yh, yw = y_src.shape
+    y_dest[:yh, :yw] = y_src
+
+    # UV plane: rows [frame_h : frame_h*3//2], interleaved U,V pairs. View as
+    # (rows, pairs, 2), stride both axes, flatten back to interleaved UVUV — this
+    # preserves the U/V pairing (a naive [::ds, ::ds] on the raw plane would mix
+    # U and V columns).
+    uv_src = (
+        nv12[frame_h:frame_h + frame_h // 2]
+        .reshape(frame_h // 2, frame_w // 2, 2)[::downscale, ::downscale]
+        .reshape(frame_h // (2 * downscale), frame_w // downscale)
+    )
+    uv_dest = inference_buffer[tile_size * tile_size:].reshape(tile_size // 2, tile_size)
+    uh, uw = uv_src.shape
+    uv_dest[:uh, :uw] = uv_src
+
+    return inference_buffer
+
+
 def OLD_slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:
     # ── Y plane ──────────────────────────────────────────────────────────────
     # Rows are the actual luminance rows [ty, ty+tile_size).  When the source
