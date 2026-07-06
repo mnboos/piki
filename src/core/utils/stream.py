@@ -36,7 +36,6 @@ from .event_payloads import (
 )
 from .event_log import EventLogger
 from .func import (
-    build_full_frame_tile,
     merge_cross_tile_duplicates,
     slice_roi_into_tiles,
 )
@@ -434,10 +433,6 @@ def _compute_iou(a: Sequence[float], b: Sequence[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _clamp01(v: float) -> float:
-    return 0.0 if v < 0.0 else 1.0 if v > 1.0 else v
-
-
 def run_object_detection(
     frame_hires: np.ndarray,
     rois: list[Box],
@@ -449,7 +444,6 @@ def run_object_detection(
 
     _profile = bool(os.environ.get("PIKI_PROFILE"))
     _save_tiles = bool(os.environ.get("PIKI_SAVE_TILES"))
-    _single_frame = bool(os.environ.get("PIKI_SINGLE_FRAME"))
 
     try:
         frame_w = frame_hires.shape[1]
@@ -457,29 +451,15 @@ def run_object_detection(
 
 
         _t = time.perf_counter()
-        if _single_frame:
-            # One inference over the whole frame downscaled to fit the model input,
-            # instead of N native tiles. Avoids slicing a large object into per-tile
-            # duplicates; `tile_scale` maps the downscaled model px back to full-frame.
-            tile_scale = max(1, -(-frame_w // ai_input_size))  # ceil(frame_w / model)
-            tiles = [(
-                build_full_frame_tile(
-                    nv12=frame_hires, frame_h=frame_h,
-                    tile_size=ai_input_size, downscale=tile_scale,
-                ), 0, 0,
-            )]
-        else:
-            tile_scale = 1
-            tiles = slice_roi_into_tiles(
-                frame=frame_hires,
-                rois=rois,
-                tile_size=ai_input_size,
-                preview_downscale_factor=preview_downscale_factor,
-                model_input_type=MODEL_INPUT_TYPE,
-            )
+        tiles = slice_roi_into_tiles(
+            frame=frame_hires,
+            rois=rois,
+            tile_size=ai_input_size,
+            preview_downscale_factor=preview_downscale_factor,
+            model_input_type=MODEL_INPUT_TYPE,
+        )
         if _profile:
-            logger.info("PERF stage=tile_slice ms=%.2f tiles=%d single_frame=%s scale=%d",
-                        (time.perf_counter() - _t) * 1000, len(tiles), _single_frame, tile_scale)
+            logger.info("PERF stage=tile_slice ms=%.2f tiles=%d", (time.perf_counter() - _t) * 1000, len(tiles))
 
         total_duration = 0
         total_bpu = 0
@@ -508,26 +488,24 @@ def run_object_detection(
             for label, confidence, local_pixel_bbox, centroid_tile_px, polygon_tile_px in detections:
                 local_px_xmin, local_px_ymin, local_px_xmax, local_px_ymax = local_pixel_bbox
 
-                # `tile_scale` is 1 for native tiles; for the single downscaled
-                # frame it maps model px back to full-frame px.
-                global_px_xmin = local_px_xmin * tile_scale + tile_x
-                global_px_ymin = local_px_ymin * tile_scale + tile_y
-                global_px_xmax = local_px_xmax * tile_scale + tile_x
-                global_px_ymax = local_px_ymax * tile_scale + tile_y
+                global_px_xmin = local_px_xmin + tile_x
+                global_px_ymin = local_px_ymin + tile_y
+                global_px_xmax = local_px_xmax + tile_x
+                global_px_ymax = local_px_ymax + tile_y
 
                 final_norm_coords = [
-                    _clamp01(global_px_ymin / frame_h),
-                    _clamp01(global_px_xmin / frame_w),
-                    _clamp01(global_px_ymax / frame_h),
-                    _clamp01(global_px_xmax / frame_w),
+                    global_px_ymin / frame_h,
+                    global_px_xmin / frame_w,
+                    global_px_ymax / frame_h,
+                    global_px_xmax / frame_w,
                 ]
 
                 # Map mask centroid from tile-pixel → global normalized coords.
                 if centroid_tile_px is not None:
                     cx_tile, cy_tile = centroid_tile_px
                     mask_centroid_norm: "tuple[float,float] | None" = (
-                        _clamp01((cx_tile * tile_scale + tile_x) / frame_w),
-                        _clamp01((cy_tile * tile_scale + tile_y) / frame_h),
+                        (cx_tile + tile_x) / frame_w,
+                        (cy_tile + tile_y) / frame_h,
                     )
                 else:
                     mask_centroid_norm = None

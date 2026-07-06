@@ -1,11 +1,14 @@
-"""Offline tests for cross-tile duplicate merging + single-frame NV12 tiling.
+"""Offline tests for cross-tile duplicate merging + NV12 tile independence.
 
 Verifies core.utils.func against on-device data, no device deps. Runnable on any
 platform: `uv run pytest src/core/utils/test_func.py`.
 """
 import numpy as np
 
-from core.utils.func import build_full_frame_tile, merge_cross_tile_duplicates
+from core.utils.func import (
+    merge_cross_tile_duplicates,
+    slice_roi_into_tiles,
+)
 from core.utils.shared import Detection
 
 _FW, _FH = 1280.0, 640.0
@@ -71,60 +74,34 @@ def test_single_detection_is_passed_through_unchanged():
     assert out[0].mask_centroid == (0.5, 0.5)
 
 
-# --- single-frame NV12 downscale (build_full_frame_tile) ---------------------
-
-_MODEL = 640
+# --- NV12 tile buffer independence (regression: buffer aliasing) -------------
 
 
-def _make_nv12(frame_h: int, frame_w: int) -> np.ndarray:
-    """Synthetic NV12 with a chroma pattern that catches U/V mixing.
+def test_tiles_do_not_alias_the_same_buffer():
+    """Each NV12 tile must be independent memory.
 
-    Y[y,x]      = x & 0xFF               (column gradient)
-    U[r,c]      = (c * 3) & 0xFF         (encodes chroma column -> catches wrong
-                                          column subsampling)
-    V[r,c]      = 200                    (constant -> catches U/V swap)
+    Regression for the buffer-aliasing bug: `_slice_nv12_tile` returned the shared
+    module-global `inference_buffer`, so `slice_roi_into_tiles` collected N tuples
+    all referencing the same array (holding only the LAST tile). `detect_objects`
+    then saw the same image N times → identical detections smeared across the
+    frame. Fails (red) on the buggy code; passes after each tile is its own array.
     """
-    y = np.tile((np.arange(frame_w, dtype=np.uint8) & 0xFF), (frame_h, 1))
-    uv = np.zeros((frame_h // 2, frame_w // 2, 2), dtype=np.uint8)
-    uv[:, :, 0] = (np.arange(frame_w // 2, dtype=np.int32) * 3 & 0xFF).astype(np.uint8)
-    uv[:, :, 1] = 200
-    return np.vstack([y, uv.reshape(frame_h // 2, frame_w)])
+    # 1280x640 NV12; left half = 50, right half = 200 (Y and UV planes).
+    nv12 = np.zeros((640 * 3 // 2, 1280), dtype=np.uint8)
+    nv12[:, :640] = 50
+    nv12[:, 640:] = 200
 
+    # Two small ROIs (preview space, ds=2): left → tile tx=0, right → tile tx=640.
+    rois = [(110, 100, 100, 100), (430, 100, 100, 100)]
+    tiles = slice_roi_into_tiles(
+        frame=nv12, rois=rois, tile_size=640,
+        preview_downscale_factor=2, model_input_type="NV12",
+    )
 
-def test_build_full_frame_tile_downscales_y_uv_correctly():
-    frame_h, frame_w, ds = 640, 1280, 2
-    nv12 = _make_nv12(frame_h, frame_w)
-    tile = build_full_frame_tile(nv12=nv12, frame_h=frame_h, tile_size=_MODEL, downscale=ds)
-
-    t2d = np.asarray(tile).reshape(_MODEL * 3 // 2, _MODEL)
-    y_plane = t2d[:_MODEL]              # 640 x 640
-    uv_plane = t2d[_MODEL:]            # 320 x 640
-    ch, cw = frame_h // ds, frame_w // ds   # content 320 x 640
-
-    # Y: content = every 2nd source pixel; padding zeroed.
-    assert np.array_equal(y_plane[:ch, :cw], nv12[0:frame_h:ds, 0:frame_w:ds])
-    assert np.count_nonzero(y_plane[ch:]) == 0
-
-    # UV: even cols carry U (the c*3 pattern from every 2nd chroma column),
-    # odd cols carry V (=200). This fails loudly if U/V are swapped or columns
-    # are subsampled wrong.
-    uv_content = uv_plane[: ch // 2, :cw]          # 160 x 640 interleaved
-    out_cols = cw // 2                              # 320 chroma pairs
-    expected_u = ((np.arange(out_cols) * ds) * 3 & 0xFF).astype(np.uint8)
-    assert np.array_equal(uv_content[:, 0::2], np.tile(expected_u, (ch // 2, 1)))
-    assert np.all(uv_content[:, 1::2] == 200)
-    assert np.count_nonzero(uv_plane[ch // 2:]) == 0
-
-
-def test_build_full_frame_tile_survives_cv2_nv12_conversion():
-    import cv2
-    nv12 = _make_nv12(640, 1280)
-    tile = build_full_frame_tile(nv12=nv12, frame_h=640, tile_size=_MODEL, downscale=2)
-    t2d = np.asarray(tile).reshape(_MODEL * 3 // 2, _MODEL)
-    bgr = cv2.cvtColor(t2d, cv2.COLOR_YUV2BGR_NV12)   # must not raise
-    assert bgr.shape == (_MODEL, _MODEL, 3)
-    # Content carries the Y gradient (varies across columns). Padding rows are a
-    # single uniform colour — NV12 zero-pad is non-neutral chroma (green), not
-    # black; the native tile slicer zero-pads identically.
-    assert bgr[:320].std() > 0
-    assert np.unique(bgr[400].reshape(-1, 3), axis=0).shape[0] == 1
+    assert len(tiles) == 2, f"expected 2 distinct tiles, got {len(tiles)}"
+    # List-level checks (the actual failure path):
+    assert tiles[0][0] is not tiles[1][0], "tiles alias the same buffer object"
+    assert not np.array_equal(tiles[0][0], tiles[1][0]), "tiles hold identical pixels"
+    # And each tile holds its own region's content, not the last tile's.
+    assert tiles[0][0].max() == 50
+    assert tiles[1][0].max() == 200

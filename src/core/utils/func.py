@@ -229,12 +229,6 @@ def _slice_bgr_tile(frame: np.ndarray, tx: int, ty: int, tile_size: int) -> np.n
     tile = frame[ty : ty + tile_size, tx : tx + tile_size]
     return tile if tile.flags["C_CONTIGUOUS"] else np.ascontiguousarray(tile)
 
-# Pre-allocate this buffer ONCE during initialization
-# tile_size * tile_size (Y) + (tile_size * tile_size // 2) (UV)
-tile_size = 640
-buffer_size = (tile_size * tile_size * 3) // 2
-inference_buffer = np.zeros(buffer_size, dtype=np.uint8)
-
 
 # ---------------------------------------------------------------------------
 # Cross-tile duplicate merging
@@ -322,68 +316,28 @@ def merge_cross_tile_duplicates(dets: list, ios_threshold: float = XTILE_MERGE_I
     return out
 
 def _slice_nv12_tile(*, nv12, buffer_h, tx, ty, tile_size):
-    # 1. Reset the buffer to zero (only if you expect padding)
-    # If padding is rare, it's faster to only zero the edges
-    inference_buffer.fill(0)
-    
-    # 2. Define the Y-plane destination view (shaped as 2D for easy copying)
-    y_dest = inference_buffer[:tile_size*tile_size].reshape(tile_size, tile_size)
-    
-    # 3. Slice and copy Y (NumPy handles the truncation via shape matching)
+    # Each tile MUST be its own array. A caller (`slice_roi_into_tiles`) collects
+    # several tiles into a list before any is consumed, so returning a shared
+    # scratch buffer aliases them all to the last tile — every `detect_objects`
+    # then sees the same image, producing identical detections smeared across the
+    # frame at different tile offsets. Regression: test_tiles_do_not_alias_the_same_buffer.
+    buf = np.zeros(tile_size * tile_size * 3 // 2, dtype=np.uint8)
+
+    # Y-plane destination view (shaped 2D for easy copying).
+    y_dest = buf[:tile_size * tile_size].reshape(tile_size, tile_size)
     y_src = nv12[ty : ty + tile_size, tx : tx + tile_size]
     h, w = y_src.shape
     y_dest[:h, :w] = y_src
-    
-    # 4. Define the UV-plane destination view
+
+    # UV-plane destination view.
     uv_start = tile_size * tile_size
-    uv_dest = inference_buffer[uv_start:].reshape(tile_size // 2, tile_size)
-    
-    # 5. Slice and copy UV
+    uv_dest = buf[uv_start:].reshape(tile_size // 2, tile_size)
     uv_y = buffer_h + (ty // 2)
     uv_src = nv12[uv_y : uv_y + (tile_size // 2), tx : tx + tile_size]
     h_uv, w_uv = uv_src.shape
     uv_dest[:h_uv, :w_uv] = uv_src
 
-    return inference_buffer  # This is a 1D view of the pre-allocated memory
-
-
-def build_full_frame_tile(*, nv12: np.ndarray, frame_h: int, tile_size: int,
-                          downscale: int) -> np.ndarray:
-    """Build ONE model-input NV12 tile covering the whole frame, downscaled.
-
-    Stride-samples the full ``(frame_h × frame_w)`` NV12 frame by ``downscale``
-    and letterboxes it into the top of the ``tile_size × tile_size`` model buffer
-    (bottom zero-padded — letterbox, not anamorphic stretch). No crop: the whole
-    FOV is covered, so a detection at model px ``(bx, by)`` maps to full-frame
-    normalized coords ``(bx*downscale/frame_w, by*downscale/frame_h)``.
-
-    Used by the single-frame inference path to avoid tiling a large object into
-    per-tile duplicates. Returns the flat NV12 buffer (1-D view of the shared
-    ``inference_buffer``).
-    """
-    frame_w = nv12.shape[1]
-    inference_buffer.fill(0)
-
-    # Y plane (frame_h × frame_w) → stride-sampled (frame_h//ds × frame_w//ds).
-    y_src = nv12[0:frame_h:downscale, 0:frame_w:downscale]
-    y_dest = inference_buffer[:tile_size * tile_size].reshape(tile_size, tile_size)
-    yh, yw = y_src.shape
-    y_dest[:yh, :yw] = y_src
-
-    # UV plane: rows [frame_h : frame_h*3//2], interleaved U,V pairs. View as
-    # (rows, pairs, 2), stride both axes, flatten back to interleaved UVUV — this
-    # preserves the U/V pairing (a naive [::ds, ::ds] on the raw plane would mix
-    # U and V columns).
-    uv_src = (
-        nv12[frame_h:frame_h + frame_h // 2]
-        .reshape(frame_h // 2, frame_w // 2, 2)[::downscale, ::downscale]
-        .reshape(frame_h // (2 * downscale), frame_w // downscale)
-    )
-    uv_dest = inference_buffer[tile_size * tile_size:].reshape(tile_size // 2, tile_size)
-    uh, uw = uv_src.shape
-    uv_dest[:uh, :uw] = uv_src
-
-    return inference_buffer
+    return buf
 
 
 def OLD_slice_nv12_tile(*,nv12: np.ndarray, buffer_h: int, tx: int, ty: int, tile_size: int) -> np.ndarray:
